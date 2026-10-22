@@ -414,6 +414,7 @@ export default Object.freeze({
 
   'cli.taskModeOnce': 'Opcję --task-mode można podać tylko raz.',
   'cli.taskModeValue': 'Opcja --task-mode wymaga wartości implementation albo analysis.',
+  'cli.missingValue': 'Opcja {option} wymaga wartości.',
   'cli.reviewProfileOnce': 'Opcję --review-profile można podać tylko raz.',
   'cli.reviewProfileValue': 'Opcja --review-profile wymaga wartości {choices}.',
   'cli.codexModelOnce': 'Opcję --codex-model można podać tylko raz.',

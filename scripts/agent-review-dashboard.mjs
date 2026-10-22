@@ -938,6 +938,9 @@ export function parseAgentArguments(argumentsList, profile) {
         argument === '--task-mode'
           ? argumentsList[(index += 1)]
           : argument.slice('--task-mode='.length);
+      if (typeof value !== 'string') {
+        return { error: t(locale, 'cli.missingValue', { option: '--task-mode' }) };
+      }
       if (!TASK_MODES.includes(value)) {
         return { error: t(locale, 'cli.taskModeValue') };
       }
@@ -956,6 +959,11 @@ export function parseAgentArguments(argumentsList, profile) {
         argument === '--review-profile'
           ? argumentsList[(index += 1)]
           : argument.slice('--review-profile='.length);
+      if (typeof value !== 'string') {
+        return {
+          error: t(locale, 'cli.missingValue', { option: '--review-profile' }),
+        };
+      }
       if (!Object.hasOwn(reviewer.profiles, value)) {
         return {
           error: t(locale, 'cli.reviewProfileValue', {
@@ -975,6 +983,9 @@ export function parseAgentArguments(argumentsList, profile) {
         argument === '--codex-model'
           ? argumentsList[(index += 1)]
           : argument.slice('--codex-model='.length);
+      if (typeof value !== 'string') {
+        return { error: t(locale, 'cli.missingValue', { option: '--codex-model' }) };
+      }
       if (!isValidCodexModel(value)) {
         return { error: t(locale, 'cli.codexModelValue') };
       }
@@ -987,6 +998,9 @@ export function parseAgentArguments(argumentsList, profile) {
         argument === '--sol-effort'
           ? argumentsList[(index += 1)]
           : argument.slice('--sol-effort='.length);
+      if (typeof value !== 'string') {
+        return { error: t(locale, 'cli.missingValue', { option: '--sol-effort' }) };
+      }
       if (!implementer.allowedEfforts.includes(value)) {
         return {
           error: t(locale, 'cli.solEffortValue', {

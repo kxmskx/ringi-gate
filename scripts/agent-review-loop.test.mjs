@@ -11236,7 +11236,7 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
   }
   assert.match(
     parseAgentArguments(['task.md', '--sol-effort']).error,
-    /medium, high, xhigh albo max/,
+    /Opcja --sol-effort wymaga wartości\./,
   );
   assert.match(
     parseAgentArguments(['task.md', '--sol-effort=high', '--sol-effort=max'])
@@ -11257,6 +11257,41 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
   );
   assert.match(parseAgentArguments(['task.md', '--unknown']).error, /Nieznana/);
   assert.match(parseAgentArguments([]).error, /dokładnie jedna/);
+});
+
+test('a CLI option without a value is an argument error', () => {
+  // A missing value must not reach the option's own validation as undefined:
+  // --review-profile would look up a profile named "undefined".
+  const reviewer = internal.resolveRunnerProfile(TEST_PROFILE).reviewer;
+  const profileWithUndefinedName = deepFreeze({
+    ...TEST_PROFILE,
+    reviewer: {
+      ...reviewer,
+      // A single-attempt profile: the fallback profile's two attempts would
+      // make the copy invalid.
+      profiles: { ...reviewer.profiles, undefined: reviewer.profiles.standard },
+    },
+  });
+  for (const option of [
+    '--task-mode',
+    '--codex-model',
+    '--sol-effort',
+    '--review-profile',
+  ]) {
+    assert.match(
+      parseAgentArguments(['task.md', option], profileWithUndefinedName).error,
+      /wymaga wartości\./,
+      option,
+    );
+  }
+  // The name itself stays a valid review profile when it is given as a value.
+  assert.equal(
+    parseAgentArguments(
+      ['task.md', '--review-profile', 'undefined'],
+      profileWithUndefinedName,
+    ).reviewProfile,
+    'undefined',
+  );
 });
 
 test('CLI usage explicitly lists the Sol effort and critical-opus', async () => {
@@ -22800,8 +22835,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   }
   assert.deepEqual([...used].filter((key) => !Object.hasOwn(enMessages, key)), []);
   assert.deepEqual(keys.filter((key) => !used.has(key)), []);
-  // 340 + runner.modified, runner.unverifiable, runner.modifiedResume.
-  assert.equal(keys.length, 343);
+  // 341 + runner.modified, runner.unverifiable, runner.modifiedResume,
+  // cli.missingValue.
+  assert.equal(keys.length, 344);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);

@@ -11256,6 +11256,32 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
     /tylko raz/,
   );
   assert.match(parseAgentArguments(['task.md', '--unknown']).error, /Nieznana/);
+
+  // Missing values for options that take one are always argument errors,
+  // even if a review profile literally named "undefined" exists (Object.hasOwn
+  // would otherwise look up the string key "undefined").
+  for (const argumentsList of [
+    ['task.md', '--review-profile'],
+    ['task.md', '--task-mode'],
+    ['task.md', '--codex-model'],
+    ['task.md', '--sol-effort'],
+  ]) {
+    const result = parseAgentArguments(argumentsList);
+    assert.ok(result.error, `expected error for ${argumentsList.join(' ')}`);
+    assert.doesNotMatch(result.error, /undefined/);
+  }
+  // A profile named "undefined" must not be selected by a bare flag.
+  const profilesWithUndefined = {
+    ...REVIEW_PROFILES,
+    undefined: REVIEW_PROFILES.critical,
+  };
+  assert.equal(Object.hasOwn(profilesWithUndefined, undefined), true);
+  assert.equal(Object.hasOwn(profilesWithUndefined, 'undefined'), true);
+  // The parser rejects the missing value before the hasOwn lookup.
+  assert.match(
+    parseAgentArguments(['task.md', '--review-profile']).error,
+    /critical, critical-opus, standard albo economy/,
+  );
   assert.match(parseAgentArguments([]).error, /dokładnie jedna/);
 });
 

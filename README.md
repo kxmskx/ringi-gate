@@ -427,6 +427,8 @@ Reference and examples: [docs/profile.md](docs/profile.md),
 - Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
+If Ringi Gate is useful to you, a star helps others find it.
+
 ## License
 
 Copyright 2026 Daniel Komór. Licensed under the Apache License 2.0; see

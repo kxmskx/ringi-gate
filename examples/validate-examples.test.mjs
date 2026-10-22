@@ -186,7 +186,11 @@ test('example task classes select gates and review', () => {
   assert.equal(typo.quality.independentReviewRequired, false);
   assert.equal(typo.quality.policy, 'docs/task-classes.md');
   assert.deepEqual(typo.checks.slice(0, 2), ['pnpm docs:check', 'git diff --check']);
-  assert.equal(withClass('docs-contract').quality.independentReviewRequired, true);
+  const contract = withClass('docs-contract');
+  assert.equal(contract.quality.independentReviewRequired, true);
+  assert.equal(contract.quality.policy, 'docs/task-classes.md');
+  assert.deepEqual(contract.checks, ['pnpm docs:check', 'git diff --check',
+    'pnpm test', 'pnpm --filter @example/api run test:integration']);
   // Classes the profile does not declare are rejected.
   assert.throws(() => withClass('critical'), { code: 'INVALID_TASK_CLASS' });
 });
@@ -318,4 +322,63 @@ test('task class and docs rule validation is fail-closed', () => {
       code: 'INVALID_CONFIGURATION',
     });
   }
+});
+
+// Stub runner: answers `git diff` with the given paths (NUL-separated, like `git diff -z`)
+// and anything else with empty output, so no process starts
+const candidateRunner = (paths) => ({
+  async run(program, args) {
+    return {
+      code: 0, signal: null,
+      stdout: args[0] === 'diff' ? paths.map((path) => `${path}\0`).join('') : '',
+      stderr: '', timedOut: false,
+    };
+  },
+});
+
+test('docs candidate rule accepts handbook/ when the profile adds it', async () => {
+  const { docsCandidatePolicy: docsPolicy } = PROFILE;
+  const profile = {
+    ...PROFILE,
+    docsCandidatePolicy: {
+      ...docsPolicy,
+      allowedPrefixes: [...docsPolicy.allowedPrefixes, 'handbook/'],
+      excludedPrefixes: [...docsPolicy.excludedPrefixes, 'handbook/agents/'],
+    },
+  };
+  const check = (paths) =>
+    internal.assertDocsCandidate({
+      runner: candidateRunner(paths),
+      cwd: '/synthetic/repository',
+      stage: 'post-codex',
+      profile,
+    });
+  // handbook/ is allowed because the profile adds it, as in docs/profile.md.
+  await check(['handbook/guide.md']);
+  // The exclusions and the extension list still apply
+  for (const path of ['handbook/agents/notes.md', 'SECURITY.md', 'handbook/data.json']) {
+    await assert.rejects(() => check([path]), { code: 'DOCS_CANDIDATE_REJECTED' });
+  }
+});
+
+test('required gate rule without message uses the default text', async () => {
+  const [{ message, ...ruleWithoutMessage }] = PROFILE.requiredGateRules;
+  const profile = { ...PROFILE, requiredGateRules: [ruleWithoutMessage] };
+  const [rule] = internal.resolveRunnerProfile(profile).requiredGateRules;
+  assert.equal(rule.message, undefined);
+  const run = (checks) =>
+    internal.assertRequiredGates({
+      runner: candidateRunner(['packages/api/schema.sql']),
+      cwd: '/synthetic/repository',
+      stage: 'post-codex',
+      task: { mode: 'implementation', checks },
+      profile,
+    });
+  // Touching the rule's paths without requesting its check stops the run
+  await assert.rejects(() => run(['pnpm lint']), {
+    code: 'API_INTEGRATION_GATE',
+    message: /pnpm --filter @example\/api run test:integration/,
+  });
+  // With the check requested, the rule does not apply.
+  await run(['pnpm lint', 'pnpm --filter @example/api run test:integration']);
 });

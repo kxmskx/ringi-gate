@@ -28,11 +28,19 @@ It verifies that:
 - the same task is rejected with `UNSUPPORTED_CHECK` under the profile the
   CLI uses (`PROFILE` from `scripts/agent-review-profile.mjs`), which does not
   define the integration check;
-- the profile's task classes select the check set and the review decision,
-  and a class the profile does not declare is rejected with
+- the profile's task classes select the check set and the review decision
+  (for docs-contract, the docs set followed by the checks requested in the
+  task), and a class the profile does not declare is rejected with
   `INVALID_TASK_CLASS`;
 - a few invalid profile variants, including invalid task schemas, task
   classes and docs candidate rules, are rejected with `INVALID_CONFIGURATION`;
 - the template provider passes the provider conformance suite, can be
   registered with `providerModules` in the example profile, and a variant
   without an enforced sandbox is refused with `PROVIDER_ROLE_NOT_ALLOWED`.
+- the docs candidate rule accepts `handbook/` when the profile adds it (as in
+  [docs/profile.md](../docs/profile.md#docscandidatepolicy)), and still
+  rejects `handbook/agents/`, `SECURITY.md` and files that are not `.md`,
+  with `DOCS_CANDIDATE_REJECTED`;
+- a `requiredGateRules` entry without `message` is accepted, and touching its
+  paths without requesting its check stops with the rule's `code` and the
+  default text, which names the check.

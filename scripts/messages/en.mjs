@@ -23,6 +23,7 @@ export default Object.freeze({
   'process.concurrent': 'A concurrent process start was blocked.',
   'process.invalidArgs': 'Process arguments must be an array of strings.',
   'process.exitCode': 'exit code {code}',
+  'process.inputNotRead': 'the program exited with 0 without reading its whole input ({error}).',
   'process.stdoutLimit': '{label}: exact stdout exceeded the limit of {limit} bytes.',
   'process.timeout': '{label}: timed out.',
   'program.notFound': 'Program {name} not found in PATH.',

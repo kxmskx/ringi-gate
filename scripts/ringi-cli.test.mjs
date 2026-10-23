@@ -1237,6 +1237,9 @@ test('ringi run --dry-run: profile from ringi.config.mjs, same plan as scripts/a
       NO_COLOR: '1',
     };
     delete env.CI;
+    // node --test sets FORCE_COLOR for a terminal; with NO_COLOR Node warns
+    // on stderr, which the test expects empty.
+    delete env.FORCE_COLOR;
     git(project, ['init', '--quiet', '--initial-branch', 'main']);
     git(project, ['config', 'user.name', 'Synthetic Tester']);
     git(project, ['config', 'user.email', 'tester@example.invalid']);

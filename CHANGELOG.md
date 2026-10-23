@@ -5,6 +5,17 @@ newest first. The first tagged version will be `0.1.0`.
 
 ## Unreleased
 
+### 2026-10-23
+
+- An agent CLI that exits before reading its whole prompt from stdin no
+  longer crashes the runner with an unhandled `EPIPE` (no JSON report on
+  stdout). A failing exit is the agent's own failure, as before; an exit
+  with 0 without the whole prompt read stops with `PROCESS_ERROR`. Stop
+  codes and report fields of other runs are unchanged.
+- The tests that expect an empty stderr from a child run with `NO_COLOR`
+  remove `FORCE_COLOR` from its environment, so they pass when `node --test`
+  writes to a terminal.
+
 ### 2026-10-22
 
 - Documentation, examples, templates and code comments describe the tool

@@ -1,11 +1,26 @@
 # Changelog
 
-Ringi Gate has no release yet. This file lists notable changes on `main`,
-newest first. The first tagged version will be `0.1.0`.
+This file lists notable changes of Ringi Gate, newest first. Each version
+is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
+is published by hand, without provenance; later versions are published by
+`.github/workflows/release.yml`.
 
-## Unreleased
+## 0.1.0 — 2026-10-23
+
+The first release. It contains every change listed below.
 
 ### 2026-10-23
+
+- Release 0.1.0: `package.json` has version `0.1.0` and `"private": false`.
+- `.github/workflows/release.yml` checks that npm in the job is 11.5.1 or
+  newer and fails otherwise, without installing another npm. It uses no
+  npm token: it publishes through npm trusted publishing from the version
+  after 0.1.0. Version 0.1.0 is published by hand, without provenance. The
+  workflow test checks that neither workflow uses a secret or
+  `NODE_AUTH_TOKEN`.
+- README: installation from npm (`npm install --global ringi-gate`,
+  `npx ringi-gate`, `npm install --save-dev ringi-gate`) from version 0.1.0;
+  running from a checkout stays an alternative.
 
 - An agent CLI that exits before reading its whole prompt from stdin no
   longer crashes the runner with an unhandled `EPIPE` (no JSON report on

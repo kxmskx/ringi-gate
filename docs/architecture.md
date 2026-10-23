@@ -24,7 +24,8 @@ the repository it works on; the scripts are bound to a project by placing
 them in that project's `scripts/` directory and replacing the profile
 module. The `ringi` command instead works on the Git repository of the
 current directory, with that repository's `ringi.config.mjs` (see
-[cli.md](cli.md)). There is no installer or published package yet.
+[cli.md](cli.md)). From version 0.1.0 the command is installed from the npm
+package `ringi-gate`; it also runs from a checkout.
 
 ## Roles
 

@@ -1,13 +1,13 @@
 name: release
 
 # Publishes ringi-gate to npm with provenance, through npm trusted publishing
-# (OIDC from GitHub Actions): no NPM_TOKEN secret. If the first release
-# cannot use trusted publishing, the procedure is described in the release
-# plan, not in this workflow.
+# (OIDC from GitHub Actions), from the version after 0.1.0. Version 0.1.0 is
+# published by hand, without provenance; this workflow uses no npm token.
 #
 # Requirements: a GitHub environment named `release` in the repository
 # settings, and npm 11.5.1 or newer in the job (trusted publishing does not
-# work with older npm versions).
+# work with older npm versions; the job checks it and does not install
+# another npm).
 on:
   push:
     tags: ['v*']
@@ -33,6 +33,17 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Check npm version
+        run: |
+          node --input-type=module -e '
+            const version = process.argv[1];
+            const [major, minor, patch] = version.split(/[.-]/).map(Number);
+            if (!(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))))) {
+              console.error(`npm ${version} is older than 11.5.1, which trusted publishing needs.`);
+              process.exit(1);
+            }
+          ' "$(npm --version)"
 
       - name: Prepare pnpm in the Corepack cache
         run: |
@@ -65,4 +76,5 @@ jobs:
             }
           '
 
-      - run: npm publish --provenance --access public
+      - name: Publish
+        run: npm publish --provenance --access public

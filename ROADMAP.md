@@ -61,7 +61,8 @@ Everything below "Planned" is a plan, not a feature. The
   provider for a fictional CLI is in `examples/providers/`. No adapter for
   another real CLI is included. See [docs/providers.md](docs/providers.md).
 - `ringi init`, `ringi doctor`, `ringi run`. One command (`bin/ringi.mjs`,
-  run with Node.js from a checkout; no npm package yet) for any Git
+  installed from the npm package `ringi-gate` from 0.1.0 or run with
+  Node.js from a checkout) for any Git
   repository: `init` writes `ringi.config.mjs` (gates inferred from
   `package.json`) and an English task template and never overwrites a file;
   `doctor` runs read-only checks with the runner's own preflight functions;
@@ -102,7 +103,7 @@ Everything below "Planned" is a plan, not a feature. The
   options, `claude --settings` checked on parsed JSON (sandbox, network and
   plugin keys), a `claude` reviewer argv without `--tools` refused, and more
   reserved program names (`scripts/providers/`).
-- npm package layout, not yet published. `package.json` lists the packaged
+- npm package layout. `package.json` lists the packaged
   files in `files`; `scripts/ringi-package.test.mjs` checks the `npm pack`
   file list and installs the packed tarball offline with npm and pnpm in a
   synthetic repository.
@@ -113,9 +114,13 @@ Everything below "Planned" is a plan, not a feature. The
   example in `node_modules`.
 - CI and release workflows. `.github/workflows/test.yml` runs `npm ci` and
   `npm test` on Linux and macOS with Node.js 24;
-  `.github/workflows/release.yml` is set up to publish to npm with
-  provenance through npm trusted publishing on a `v*` tag, behind the
-  `release` GitHub environment; it has not run yet.
+  `.github/workflows/release.yml` publishes to npm with provenance on a
+  `v*` tag, behind the `release` GitHub environment, through npm trusted
+  publishing, without an npm token, from the version after 0.1.0; it has
+  not run yet.
+- Release 0.1.0. `package.json` has version `0.1.0` and
+  `"private": false`; version 0.1.0 is published by hand, without
+  provenance.
 - Public repository at
   [github.com/kxmskx/ringi-gate](https://github.com/kxmskx/ringi-gate).
 - An agent CLI that exits before reading its whole prompt. The runner no
@@ -138,6 +143,5 @@ Everything below "Planned" is a plan, not a feature. The
   (Node.js/pnpm first).
 - Documentation of the configuration contract, the task format, the report
   format (`schemaVersion`), the stop codes and the threat model.
-- Release 0.1.0: publication of the `ringi-gate` npm package with provenance
-  (`package.json` is still `"private": true` at version `0.0.0`).
-- Before the first npm release: npm trusted publishing for the package.
+- After the first publication: npm trusted publishing configured for the
+  package, so that `release.yml` publishes the versions after 0.1.0.

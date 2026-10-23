@@ -239,7 +239,8 @@ Details: [docs/architecture.md](docs/architecture.md).
 ## Quickstart (today)
 
 What works today is the runner core, the `ringi` command that runs it on a
-project from a checkout, and the test suite.
+project (installed from npm or from a checkout), and the test suite. The
+steps below set up a checkout of this repository.
 
 Requirements:
 
@@ -258,8 +259,10 @@ The runner has no runtime dependencies beyond Node.js built-ins.
 
 ### Running the runner on a project
 
-There is no npm package and no installer yet. Clone ringi-core and run its
-entry point with Node.js from the root of the target repository; below,
+From version 0.1.0 the runner is installed from npm (see
+[Installation from npm](#installation-from-npm)); below, `ringi` stands for
+that command. The alternative is a checkout: clone ringi-core and run its
+entry point with Node.js from the root of the target repository, so
 `ringi` stands for `node /path/to/ringi-core/bin/ringi.mjs` (see
 [docs/cli.md](docs/cli.md)). Keep that checkout outside the target
 repository and outside any directory the implementer can write to. The run
@@ -329,19 +332,26 @@ aliases of the same sections (with `locale: 'pl'` the Polish names are
 canonical and the English ones aliases); see [examples/](examples/) and
 [docs/architecture.md](docs/architecture.md#task-file).
 
-### Installation from npm (planned, after the first release)
+### Installation from npm
 
-The package `ringi-gate` is not published yet; until it is, use the
-checkout as described above. `package.json` already lists the files of the
-package, and the test suite packs it and installs the tarball offline (see
-[docs/testing.md](docs/testing.md#package-tests)). After the first release
-the planned installation is:
+Ringi Gate is distributed on npm as `ringi-gate` from version 0.1.0.
+Version 0.1.0 is published by hand, without provenance; later versions are
+published with provenance from their `v<version>` tag by
+`.github/workflows/release.yml` (see [CHANGELOG.md](CHANGELOG.md)). The
+package installs the command `ringi`; the test suite packs the package and
+installs the tarball offline (see
+[docs/testing.md](docs/testing.md#package-tests)).
 
 ```sh
 npm install --global ringi-gate     # recommended: outside the target repository
 npx ringi-gate --version            # or from the npm cache, also outside it
 npm install --save-dev ringi-gate   # possible; in a pnpm project: pnpm add --save-dev ringi-gate
 ```
+
+Through `npx`, name the package (`npx ringi-gate doctor`): `npx ringi`
+outside a project that has `ringi-gate` installed looks for a different
+package named `ringi`. Running from a checkout, as described above, stays
+an alternative.
 
 The recommended installation is outside the target repository, globally
 or through `npx` from the npm cache. A dev dependency puts the runner's
@@ -413,11 +423,10 @@ Reference and examples: [docs/profile.md](docs/profile.md),
   prompts name no provider, model or project; the Polish ones are the
   original texts. Task section headings are English by default, with Polish
   aliases accepted.
-- No published package and no installer: `ringi` runs from a checkout of
-  this repository. `ringi-gate` is the package name in `package.json`; the
-  command is `ringi`. The package contents and an offline installation of
-  the packed tarball are tested; publishing is planned (see
-  [Installation from npm](#installation-from-npm-planned-after-the-first-release)).
+- From version 0.1.0 the npm package is `ringi-gate` and the command is
+  `ringi`; it also runs from a checkout of this repository. The package
+  contents and an offline installation of the packed tarball are tested
+  (see [Installation from npm](#installation-from-npm)).
 
 ## Get involved
 

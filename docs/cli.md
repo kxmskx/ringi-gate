@@ -9,8 +9,10 @@ three commands:
 - `ringi run <task.md> [options]` runs the writer, the gates and the
   independent review.
 
-There is no npm package yet and no installer. Run the entry point with
-Node.js from a checkout of ringi-core, for example:
+From version 0.1.0 the npm package `ringi-gate` installs the command
+(see [Installation from npm](../README.md#installation-from-npm)). The
+alternative is to run the entry point with Node.js from a checkout of
+ringi-core, for example:
 
 ```sh
 node /path/to/ringi-core/bin/ringi.mjs doctor

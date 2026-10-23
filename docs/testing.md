@@ -152,8 +152,11 @@ so installing the tarball fetches nothing.
   run stops with `RUNNER_MODIFIED` at stage `post-codex`, and the round's own
   failure is kept as an integrity violation.
 - **Workflows:** a text check of `.github/workflows/` (not a YAML parser):
-  actions pinned to a commit SHA, no `pull_request_target`, no secrets, a
-  read-only token by default, `id-token: write` only in the release job.
+  actions pinned to a commit SHA, no `pull_request_target`, a read-only
+  token by default, `id-token: write` only in the release job; no secrets
+  and no `NODE_AUTH_TOKEN` in either workflow; the release job's npm
+  version check, run
+  against sample versions, fails below 11.5.1.
 
 The workflows themselves are not run by the tests.
 

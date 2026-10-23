@@ -326,15 +326,17 @@ test('package contents: npm pack lists the runner, its docs and examples, withou
 });
 
 // A text check of the workflows, not a YAML parser: actions pinned to a
-// commit, no privileged trigger, no secrets, read-only token by default.
-test('workflows: actions pinned to a commit SHA, no pull_request_target, no secrets, read-only token', async () => {
+// commit, no privileged trigger, read-only token by default, and no secrets:
+// release.yml publishes through npm trusted publishing, without an npm token.
+test('workflows: actions pinned to a commit SHA, no pull_request_target, read-only token, no secrets', async () => {
   const directory = join(runnerRoot, '.github', 'workflows');
   assert.deepEqual((await readdir(directory)).sort(), ['release.yml', 'test.yml']);
   const read = async (name) => readFile(join(directory, name), 'utf8');
   for (const name of ['release.yml', 'test.yml']) {
     const text = await read(name);
     assert.doesNotMatch(text, /\t/, name);
-    assert.doesNotMatch(text, /pull_request_target|secrets\.|NPM_TOKEN:|workflow_run/, name);
+    assert.doesNotMatch(text, /pull_request_target|workflow_run/, name);
+    assert.doesNotMatch(text, /secrets|NODE_AUTH_TOKEN|NPM_TOKEN/, name);
     assert.match(text, /^permissions:\n {2}contents: read\n\n/m, name);
     const uses = [...text.matchAll(/^\s*-?\s*uses:\s*(.+)$/gm)].map(([, value]) => value);
     assert.ok(uses.length >= 2, name);
@@ -358,12 +360,39 @@ test('workflows: actions pinned to a commit SHA, no pull_request_target, no secr
   assert.match(testWorkflow, /os: \[ubuntu-latest, macos-latest\]/);
   assert.doesNotMatch(testWorkflow, /id-token|write/);
   const release = await read('release.yml');
+  assert.match(release, /^jobs:\n {2}publish:\n/m);
+  assert.equal([...release.matchAll(/runs-on:/g)].length, 1, 'one job');
   assert.match(release, /^on:\n {2}push:\n {4}tags: \['v\*'\]\n {2}workflow_dispatch:\n\n/m);
   assert.match(release, /^ {4}environment: release$/m);
   assert.match(release, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write\n {4}steps:/m);
   assert.equal([...release.matchAll(/write/g)].length, 1);
   assert.match(release, /registry-url: 'https:\/\/registry\.npmjs\.org'/);
-  assert.match(release, /^ {6}- run: npm publish --provenance --access public$/m);
+  // The last step publishes through trusted publishing alone.
+  assert.match(
+    release,
+    /\n {6}- name: Publish\n {8}run: npm publish --provenance --access public\n$/,
+  );
+  // The npm version check runs before npm ci and fails below 11.5.1.
+  const check = release.match(
+    /\n {6}- name: Check npm version\n {8}run: \|\n {10}node --input-type=module -e '\n([^']+)' "\$\(npm --version\)"\n/,
+  );
+  assert.ok(check, 'npm version check');
+  assert.ok(check.index < release.indexOf('- run: npm ci'));
+  assert.doesNotMatch(release, /npm (?:install|i) (?:-g|--global)/);
+  for (const [version, status] of [
+    ['11.5.1', 0],
+    ['11.17.0', 0],
+    ['12.0.0', 0],
+    ['11.5.0', 1],
+    ['11.4.9', 1],
+    ['10.9.2', 1],
+    ['', 1],
+  ]) {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', check[1], version], {
+      encoding: 'utf8',
+    });
+    assert.equal(child.status, status, `npm ${version}: ${child.stderr}`);
+  }
 });
 
 // Stand-in programs: git and node (the real ones), and agent CLIs that only

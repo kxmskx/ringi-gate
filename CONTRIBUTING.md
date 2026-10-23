@@ -189,10 +189,11 @@ runs in the public repository.
 only on a `v*` tag or by hand, runs in the `release` environment (whose
 required reviewers approve each run), repeats `npm ci` and `npm test`,
 checks that the tag is `v` plus the `version` in `package.json` and that
-`private` is `false`, and runs `npm publish --provenance --access public`
-with npm trusted publishing (`id-token: write`, no npm token). While
-`package.json` has `"private": true`, the check stops the workflow before
-`npm publish`.
+`private` is `false`, checks that npm is 11.5.1 or newer, and runs
+`npm publish --provenance --access public` with npm trusted publishing
+(`id-token: write`) and no npm token. It publishes the versions after
+0.1.0; version 0.1.0 is published by hand, without provenance. While `package.json` has
+`"private": true`, the check stops the workflow before `npm publish`.
 
 Please also read the [code of conduct](CODE_OF_CONDUCT.md).
 

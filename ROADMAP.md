@@ -86,6 +86,42 @@ Everything below "Planned" is a plan, not a feature. The
 - Name and license. The project is Ringi Gate (package name `ringi-gate`,
   the command stays `ringi`), licensed under the Apache License 2.0
   (`LICENSE`, `NOTICE`).
+- Integrity checks after the gates and the review. The Git directory
+  fingerprint, the private index (against a new one built from `HEAD`) and
+  the project profile are compared again after the gates and after the
+  review (`UNEXPECTED_GIT_MUTATION`, `PROFILE_MODIFIED`). Preflight refuses
+  symbolic links among the `.git` entries the fingerprint reads; without a
+  private index a core Git command stops (`INTEGRITY_CHECK_FAILED`).
+- Implementer process watch (best effort). While the implementer CLI runs, the
+  default process runner reads the process table, kills the processes and
+  process groups it saw when the CLI exits, and stops with
+  `IMPLEMENTER_PROCESS_SURVIVED` when one survived or the table cannot be
+  read. A process that escapes between two readings is not found (see
+  [SECURITY.md](SECURITY.md#what-the-runner-does-not-guarantee)).
+- Stricter provider argument checks. More refused `codex` `-c` overrides and
+  options, `claude --settings` checked on parsed JSON (sandbox, network and
+  plugin keys), a `claude` reviewer argv without `--tools` refused, and more
+  reserved program names (`scripts/providers/`).
+- npm package layout, not yet published. `package.json` lists the packaged
+  files in `files`; `scripts/ringi-package.test.mjs` checks the `npm pack`
+  file list and installs the packed tarball offline with npm and pnpm in a
+  synthetic repository.
+- Runner fingerprint. The runner records the SHA-256 of every module it
+  imports when it loads and stops with `RUNNER_MODIFIED` when one changes
+  during the run; reports have a `runner` field. `ringi doctor` warns
+  (`runner-location`) when the runner lies inside the repository, for
+  example in `node_modules`.
+- CI and release workflows. `.github/workflows/test.yml` runs `npm ci` and
+  `npm test` on Linux and macOS with Node.js 24;
+  `.github/workflows/release.yml` is set up to publish to npm with
+  provenance through npm trusted publishing on a `v*` tag, behind the
+  `release` GitHub environment; it has not run yet.
+- Public repository at
+  [github.com/kxmskx/ringi-gate](https://github.com/kxmskx/ringi-gate).
+- An agent CLI that exits before reading its whole prompt. The runner no
+  longer crashes on `EPIPE`; a failing exit stays the agent's own failure,
+  and an exit with 0 without the whole prompt read stops with
+  `PROCESS_ERROR`.
 
 ## Planned (not implemented)
 
@@ -102,6 +138,6 @@ Everything below "Planned" is a plan, not a feature. The
   (Node.js/pnpm first).
 - Documentation of the configuration contract, the task format, the report
   format (`schemaVersion`), the stop codes and the threat model.
-- Release 0.1.0: a new public repository with a clean initial commit and npm
-  publication with provenance.
-- Before any public release: publication security checklist.
+- Release 0.1.0: publication of the `ringi-gate` npm package with provenance
+  (`package.json` is still `"private": true` at version `0.0.0`).
+- Before the first npm release: npm trusted publishing for the package.

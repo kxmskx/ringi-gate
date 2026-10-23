@@ -23,6 +23,7 @@ export default Object.freeze({
   'process.concurrent': 'Próba równoległego uruchomienia procesu została zablokowana.',
   'process.invalidArgs': 'Argumenty procesu muszą być tablicą stringów.',
   'process.exitCode': 'kod zakończenia {code}',
+  'process.inputNotRead': 'program zakończył się kodem 0, nie odczytawszy całego wejścia ({error}).',
   'process.stdoutLimit': '{label}: dokładny stdout przekroczył limit {limit} bajtów.',
   'process.timeout': '{label}: przekroczono timeout.',
   'program.notFound': 'Nie znaleziono programu {name} w PATH.',

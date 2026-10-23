@@ -574,6 +574,9 @@ test('package installation: the packed tarball installs offline and ringi runs f
     // run --dry-run: the preflight with the real pnpm and the stand-in CLIs.
     const runEnvironment = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NO_COLOR: '1' };
     delete runEnvironment.CI;
+    // node --test sets FORCE_COLOR for a terminal; with NO_COLOR Node warns
+    // on stderr, which the test expects empty.
+    delete runEnvironment.FORCE_COLOR;
     const run = spawnSync(ringiLink, ['run', EXAMPLE_TASK_PATH, '--dry-run'], {
       cwd: project,
       env: runEnvironment,

@@ -1517,6 +1517,13 @@ export function createProcessRunner({
           } else stdoutDiagnostic.append(chunk);
         });
         child.stderr?.on('data', (chunk) => stderrDiagnostic.append(chunk));
+        // A program that exits before taking its whole input closes the pipe
+        // (EPIPE, ERR_STREAM_DESTROYED): the error is kept, not thrown, and
+        // the run settles on the program's exit.
+        let stdinError;
+        child.stdin?.on('error', (error) => {
+          stdinError ??= error;
+        });
         // killProcessGroupOnExit (best effort): when the program exits, the
         // processes left in its group (spawned detached) are killed, also
         // before one that holds the output pipes lets the run settle.
@@ -1580,9 +1587,25 @@ export function createProcessRunner({
                   stderrTruncated: stderrDiagnostic.wasTruncated(),
                   stdoutLimitExceeded: stdoutExact?.limitExceeded() ?? false,
                 };
+          // A program that exits with 0 without having taken its whole input
+          // did not get the task it reports on (PROCESS_ERROR); a failing
+          // exit is the program's own failure.
+          const settle = () => {
+            if (stdinError && code === 0 && !cancelled) {
+              rejectPromise(
+                new Error(
+                  msg('process.inputNotRead', {
+                    error: stdinError.code ?? stdinError.message,
+                  }),
+                ),
+              );
+              return;
+            }
+            resolvePromise(outcome());
+          };
           if (!options.killProcessGroupOnExit) {
             active = undefined;
-            resolvePromise(outcome());
+            settle();
             return;
           }
           // The process check settles the run; until then no other process
@@ -1592,7 +1615,7 @@ export function createProcessRunner({
             .then((check) => {
               active = undefined;
               if (check.status === 'clean') {
-                resolvePromise(outcome());
+                settle();
                 return;
               }
               rejectPromise(

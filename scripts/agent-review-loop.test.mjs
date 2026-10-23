@@ -6868,6 +6868,41 @@ test('arguments with spaces and metacharacters stay a single argument', async ()
   assert.equal(child.stdout, dangerous);
 });
 
+// A prompt larger than the pipe buffer: the program's exit closes the pipe
+// before the runner has written it (EPIPE).
+const PROMPT_OVER_PIPE_BUFFER = 'x'.repeat(4 * 1024 * 1024);
+
+test('a program that fails without reading its input settles on its own exit', async () => {
+  const runner = createProcessRunner({ output: { write() {} } });
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const child = await runner.run('/bin/sh', ['-c', 'echo failed >&2; exit 1'], {
+      stage: 'codex',
+      input: PROMPT_OVER_PIPE_BUFFER,
+    });
+    assert.equal(child.code, 1);
+    assert.equal(child.stderr, 'failed\n');
+  }
+  assert.equal(runner.hasActiveProcess(), false);
+});
+
+test('a program that exits with 0 without reading its input is a process error', async () => {
+  const runner = createProcessRunner({ output: { write() {} } });
+  await assert.rejects(
+    internal.requiredRun(
+      runner,
+      '/bin/sh',
+      ['-c', 'exec 0<&-; sleep 0.2; exit 0'],
+      { stage: 'codex', input: PROMPT_OVER_PIPE_BUFFER },
+      'Syntetyczny agent',
+    ),
+    (error) =>
+      error.code === 'PROCESS_ERROR' &&
+      error.stage === 'codex' &&
+      /^Syntetyczny agent: .*\((EPIPE|ERR_STREAM_DESTROYED)\)\.$/.test(error.message),
+  );
+  assert.equal(runner.hasActiveProcess(), false);
+});
+
 test('exact stdout over 128 KiB stays complete within its own limit', async () => {
   const runner = createProcessRunner({ output: { write() {} } });
   const size = 160 * 1024;
@@ -12986,7 +13021,7 @@ test('activity: writer/consumer projection bounds entries and bytes; summaries c
 
 test('activity: process byte observer receives fragments and cannot change exit/result', async () => {
   const child = new EventEmitter();
-  child.stdin = { end() {} };
+  child.stdin = { end() {}, on() {} };
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   const runner = createProcessRunner({ spawnImpl: () => child });
@@ -22836,8 +22871,8 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   assert.deepEqual([...used].filter((key) => !Object.hasOwn(enMessages, key)), []);
   assert.deepEqual(keys.filter((key) => !used.has(key)), []);
   // 341 + runner.modified, runner.unverifiable, runner.modifiedResume,
-  // cli.missingValue.
-  assert.equal(keys.length, 344);
+  // cli.missingValue, process.inputNotRead.
+  assert.equal(keys.length, 345);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);

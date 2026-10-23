@@ -38,7 +38,7 @@ The first release. It contains every change listed below.
   stop codes, report fields and prompts are unchanged.
 - The package tests accept both manifest states: unreleased
   (`"private": true`, version `0.0.0`) and a release (`"private": false`,
-  any other version). Name, license, `bin` and `files` are checked in both;
+  any other x.y.z version). Name, license, `bin` and `files` are checked in both;
   the tarball name and `ringi --version` follow the version in
   `package.json`.
 - The profile written by `ringi init` starts with the comment

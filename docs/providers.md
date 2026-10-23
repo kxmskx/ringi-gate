@@ -99,7 +99,7 @@ reason }`:
 | `noCommandNetwork` | Commands the agent runs reach no network host. |
 | `noUserConfiguration` | User and project configuration of the CLI (rules, hooks, plugins, MCP servers, settings files) is not loaded. |
 | `pathGuards` | Commands find the core's guard directory first on `PATH`. |
-| `isolatedEnvironment` | The process gets only the core's environment. This isolates variables (no API keys or tokens), not the file system: the writer environment keeps the user's `HOME` and, when set, `CODEX_HOME`, and the reviewer environment also keeps `CLAUDE_CONFIG_DIR`, so a CLI can still read credential files of other CLIs there. |
+| `isolatedEnvironment` | The process gets only the core's environment. This isolates variables (no API keys or tokens), not the file system: the implementer environment keeps the user's `HOME` and, when set, `CODEX_HOME`, and the reviewer environment also keeps `CLAUDE_CONFIG_DIR`, so a CLI can still read credential files of other CLIs there. |
 | `schemaOutput` | The CLI constrains the result to the core's JSON schema. |
 | `explicitResume` | A correction round resumes the session by its ID only. |
 | `readOnlyTools` | The role has file reading tools only, in every mode. |
@@ -141,13 +141,13 @@ of the module.
   core copies it once and uses only the copy (see [Contract](#contract)).
   Before the process starts, the core scans the copy against the
   [forbidden-argument list](#forbidden-arguments) (`PROVIDER_CONTRACT_VIOLATION`,
-  stage `codex` for the writer, `claude` for the reviewer). The scan is a
+  stage `codex` for the implementer, `claude` for the reviewer). The scan is a
   safety net against known mistakes, not a guarantee: an argument outside
   the list can still weaken a CLI. Values the core passed in (paths, model,
   output schema and, for the built-in providers, the session ID) are not
   inspected.
 - **Environment.** The environment a module returns must equal the core's:
-  the isolated writer environment with the guard directory first on `PATH`,
+  the isolated implementer environment with the guard directory first on `PATH`,
   or the reviewer's allowlisted environment. Adding, dropping or changing
   a variable is `PROVIDER_CONTRACT_VIOLATION`.
 - **Model, efforts and modes.** The core model rule and the module's
@@ -167,7 +167,7 @@ of the module.
 - **Reviewer fallback.** Only the three known reasons allow a fallback,
   whatever `fallbackReason` returns.
 - **Git and working tree.** For every module from `providerModules` the core
-  applies the checks of the Claude Code writer, whatever the module
+  applies the checks of the Claude Code implementer, whatever the module
   declares: repository layout in preflight, process group and the process
   groups seen by the process watch killed when the CLI exits (best effort;
   `IMPLEMENTER_PROCESS_SURVIVED` when one survives or the process table is

@@ -37,7 +37,7 @@ means the implementer.
 | Role | Tool | Access |
 | --- | --- | --- |
 | Implementer (writer) | Codex CLI (`codex exec`, default) or Claude Code CLI (`claude -p`, experimental, when the profile selects it) | Real working tree. Codex: sandbox `workspace-write` (implementation) or `read-only` (analysis), network access disabled, approvals disabled. Claude Code: see [Claude Code as implementer](#claude-code-as-implementer). `git`, `pnpm`, `corepack` and other package managers on its `PATH` are guard scripts (see below). |
-| Gates | The runner itself | Runs the checks from the profile after the writer, with `shell: false`, outside the Codex sandbox and with the user's permissions. Only the environment is isolated: separate home, configuration, cache and temporary directories, an empty npm user configuration, global Git configuration disabled, Corepack network disabled. |
+| Gates | The runner itself | Runs the checks from the profile after the writer, with `shell: false`, outside the implementer's sandbox and with the user's permissions. Only the environment is isolated: separate home, configuration, cache and temporary directories, an empty npm user configuration, global Git configuration disabled, Corepack network disabled. |
 | Reviewer | Claude Code CLI (`claude -p`, default; the only built-in reviewer) | A read-only copy of the repository. Tools limited to `Read`, `Glob` and `Grep`; permission mode `dontAsk`; no session persistence; slash commands disabled. |
 | Decision | A human | Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`; the runner never sets it to `true`. |
 
@@ -181,7 +181,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   a start time, Windows), rejects the round with
   `IMPLEMENTER_PROCESS_SURVIVED` (stage `codex`); the post-round checks
   still run and are added as integrity violations. A process is found
-  only if a reading sees it, or its parent or group, while that is still
+  only if a reading detects it, or its parent or group, while that is still
   in the CLI's tree or a recorded group: the window is the interval plus
   the time `ps` takes. The probe's case (a wrapper shell that starts
   `nohup … &` and ends) is covered only when a reading falls within the

@@ -1408,7 +1408,7 @@ function watchProcessTree(
           try {
             kill(-pgid, 'SIGKILL');
           } catch {
-            // ESRCH or EPERM: the next reading decides.
+            // ESRCH or EPERM: the next reading determines the outcome.
           }
         }
         for (const pid of left) {
@@ -1518,8 +1518,11 @@ export function createProcessRunner({
         });
         child.stderr?.on('data', (chunk) => stderrDiagnostic.append(chunk));
         // A program that exits before taking its whole input closes the pipe
-        // (EPIPE, ERR_STREAM_DESTROYED): the error is kept, not thrown, and
-        // the run settles on the program's exit.
+        // (EPIPE, ERR_STREAM_DESTROYED): the first such error is kept, never
+        // thrown. It is read only when the run settles (after 'close' and,
+        // with killProcessGroupOnExit, after the process check): then it
+        // turns an exit code 0 into PROCESS_ERROR, while a non-zero exit or
+        // an interruption is reported as it is.
         let stdinError;
         child.stdin?.on('error', (error) => {
           stdinError ??= error;

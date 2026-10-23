@@ -17287,7 +17287,7 @@ test('agent roles validation: implementer and reviewer are fail-closed before pr
     ),
   ];
   for (const [index, profile] of invalidProfiles.entries()) {
-    await assertProfileRejected(profile, `E5A invalid profile ${index}`);
+    await assertProfileRejected(profile, `invalid agent roles profile ${index}`);
     assert.throws(
       () => parseAgentArguments(['task.md'], profile),
       (error) => error.code === 'INVALID_CONFIGURATION',
@@ -18019,7 +18019,7 @@ test('claude implementer profile: passes validation, model and effort follow the
     withReviewer({ ...ROLES_REVIEWER, provider: 'codex' }),
   ];
   for (const [index, profile] of invalidProfiles.entries()) {
-    await assertProfileRejected(profile, `E5B invalid profile ${index}`);
+    await assertProfileRejected(profile, `invalid claude implementer profile ${index}`);
   }
   // CLI options within the claude profile allowlist.
   assert.equal(
@@ -19206,12 +19206,16 @@ test('process watch: a survivor or an unreadable process table is IMPLEMENTER_PR
   assert.equal(reads, 0);
 });
 
-// A process is identified by its PID and
-// start time. A recorded process that changed its group is still killed (or
-// stops the run); a recorded PID present with another start time stops the
-// run; a PID or group number reused by a foreign process is never
-// killed; a process table that fails, times out or cannot be processed in
-// the middle of the round stops the run instead of crashing it.
+// A process is identified by its PID and start time (the opaque start text
+// of the table). A recorded process that changed its group is killed by PID,
+// and its new group too when it leads it; one that cannot be killed stops
+// the run. A recorded PID present with another start time stops the run and
+// nothing is killed. A PID that was absent at a reading and later belongs to
+// a foreign process, or a group number whose leader is a foreign process, is
+// never recorded or killed; a recorded process in such a group is killed by
+// PID, the group never. A process table that fails, times out, throws or
+// cannot be processed in the middle of the round stops the run instead of
+// crashing it.
 test('process watch: identity is PID + start time; a recorded process that changed its group is killed or stops the run, a reused PID or group is never killed, a failing ps stops the run', async () => {
   const P = 4_000_001;
   const R = 4_000_005;

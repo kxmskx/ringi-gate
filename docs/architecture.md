@@ -29,16 +29,17 @@ package `ringi-gate`; it also runs from a checkout.
 
 ## Roles
 
-The profile chooses the provider of each role (see
-[docs/providers.md](providers.md)); the tools below are the built-in
-providers, with the default profile setting marked. "The writer" below
+A role is defined by its requirements, and the profile chooses the provider
+of each role (see [docs/providers.md](providers.md#implementer-requirements));
+the tools below are the built-in modules, as examples, with the default
+profile setting marked. "The writer" below
 means the implementer.
 
 | Role | Tool | Access |
 | --- | --- | --- |
-| Implementer (writer) | Codex CLI (`codex exec`, default) or Claude Code CLI (`claude -p`, experimental, when the profile selects it) | Real working tree. Codex: sandbox `workspace-write` (implementation) or `read-only` (analysis), network access disabled, approvals disabled. Claude Code: see [Claude Code as implementer](#claude-code-as-implementer). `git`, `pnpm`, `corepack` and other package managers on its `PATH` are guard scripts (see below). |
+| Implementer (writer) | Any provider that meets the [implementer requirements](providers.md#implementer-requirements). Built-in: Codex CLI (`codex exec`, default) or Claude Code CLI (`claude -p`, experimental) | Real working tree, in the sandbox the module declares. Codex: sandbox `workspace-write` (implementation) or `read-only` (analysis), network access disabled, approvals disabled. Claude Code: see [Claude Code as implementer](#claude-code-as-implementer). `git`, `pnpm`, `corepack` and other package managers on its `PATH` are guard scripts (see below). |
 | Gates | The runner itself | Runs the checks from the profile after the writer, with `shell: false`, outside the implementer's sandbox and with the user's permissions. Only the environment is isolated: separate home, configuration, cache and temporary directories, an empty npm user configuration, global Git configuration disabled, Corepack network disabled. |
-| Reviewer | Claude Code CLI (`claude -p`, default; the only built-in reviewer) | A read-only copy of the repository. Tools limited to `Read`, `Glob` and `Grep`; permission mode `dontAsk`; no session persistence; slash commands disabled. |
+| Reviewer | Any provider whose reviewer role declares read-only tools ([role rules](providers.md#role-rules)). Built-in: Claude Code CLI (`claude -p`, default) | A read-only copy of the repository. Claude Code: tools limited to `Read`, `Glob` and `Grep`; permission mode `dontAsk`; no session persistence; slash commands disabled. |
 | Decision | A human | Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`; the runner never sets it to `true`. |
 
 Exactly one writer works per round, and the runner refuses to start a second
@@ -52,9 +53,15 @@ The reviewer runs with an allowlisted set of environment variables.
 ### Roles and providers
 
 The runner has two agent roles, `implementer` (the writer) and
-`reviewer`, and provider modules that serve them: the built-in `codex` and
-`claude` modules in `scripts/providers/`, and modules a profile passes in
-`providerModules` (objects, never paths). Each module follows the provider
+`reviewer`. A role is defined by its requirements
+([implementer requirements](providers.md#implementer-requirements),
+[role rules](providers.md#role-rules)), not by a CLI; any provider module
+that meets them can serve it. The built-in `codex` and `claude` modules in
+`scripts/providers/` are examples and the defaults (`codex` as the
+implementer, `claude` as the reviewer, changed in the profile); other
+modules come from a profile's `providerModules` (objects, never paths).
+Stability follows the criteria in [providers.md](providers.md#stability).
+Each module follows the provider
 contract in [providers.md](providers.md): `id`, `program`, `versionArgs`,
 `roles`, `efforts`, `isValidModel`, and per role the task modes, stability,
 known limits, a security declaration for each safety guarantee, and the
@@ -90,8 +97,9 @@ report validation, the snapshot and all integrity checks.
 The profile's `implementer` and `reviewer` sections (see
 [profile.md](profile.md#implementer)) choose the provider, model, effort
 and review profiles; without them the core defaults apply. CLI options
-`--codex-model`, `--sol-effort` and `--review-profile` override these values
-within the profile's allowlists. In the default `reviewer`, the review
+`--implementer-model`, `--implementer-effort` and `--review-profile`
+override these values within the profile's allowlists (`--codex-model` and
+`--sol-effort` are deprecated aliases of the first two). In the default `reviewer`, the review
 profile `critical` (default) has two attempts and may fall back to the
 second model only for model unavailability, capacity or usage limit errors;
 other profiles have a single attempt.
@@ -113,11 +121,11 @@ directory (and in the user's home) failed with "Operation not permitted".
 | No approval prompts (`-a never`) | `--permission-mode dontAsk` (analysis) or `acceptEdits` (implementation) with `--permission-prompts none`: anything that would prompt is denied. Never `--dangerously-skip-permissions` or `bypassPermissions`. |
 | Sandbox by task mode | analysis: `--tools Read,Glob,Grep` (no edit or command tool). implementation: `--tools Read,Glob,Grep,Edit,Write,Bash`. File tools: `--restricted` confines them to the working directory (the repository root), and their writes to settings, Git and tool-configuration files are left to a person, so they are denied. Bash: any command is auto-allowed inside the sandbox (`autoAllowBashIfSandboxed`), which limits writes to the working directory **including `.git`** and the paths the sandbox itself allows, such as temporary directories; the core therefore checks the Git directory after every round (below). No `--add-dir` and no `--allowedTools`. |
 | No network for commands (`network_access=false`) | `--settings` with `sandbox.enabled: true`, `sandbox.network.allowedDomains: []`, `sandbox.network.strictAllowlist: true` (hosts outside the empty list are denied without a prompt), `sandbox.allowUnsandboxedCommands: false` (no command runs outside the sandbox) and `sandbox.autoAllowBashIfSandboxed: true`. `--disallowedTools WebFetch,WebSearch`. |
-| Unavailable sandbox stops the run | `sandbox.failIfUnavailable: true`: the CLI exits at startup instead of running commands unsandboxed; the runner stops with `PROCESS_FAILED` (stage `codex`). Preflight accepts only macOS and Linux and Claude Code versions from 2.1.285 up to, but not including, 2.2.0, without a pre-release or build suffix (`IMPLEMENTER_PREFLIGHT_FAILED`); see the limits below. |
+| Unavailable sandbox stops the run | `sandbox.failIfUnavailable: true`: the CLI exits at startup instead of running commands unsandboxed; the runner stops with `PROCESS_FAILED` (stage `implementer`). Preflight accepts only macOS and Linux and Claude Code versions from 2.1.285 up to, but not including, 2.2.0, without a pre-release or build suffix (`IMPLEMENTER_PREFLIGHT_FAILED`); see the limits below. |
 | No user configuration (`--ignore-user-config --strict-config`) | `--safe-mode` (CLAUDE.md, skills, plugins, hooks, MCP servers, custom commands and agents disabled), `--restricted` (user, project and local settings files ignored), `--strict-mcp-config` (no MCP server without `--mcp-config`, which is not passed), `--disable-slash-commands`. |
 | Guards first on `PATH` | The same `processEnvironment` as `codex`: guard directory first on `PATH`. |
 | Isolated environment without credentials | The same isolated offline environment as `codex`: no key or token in the environment, and `CLAUDE_CONFIG_DIR` is removed as for `codex` (the CLI uses its default configuration directory and stored login). This covers environment variables only: commands can read files under the user's home, as with `codex`. |
-| Git state | `codex`: the `workspace-write` sandbox keeps `.git` read-only as documented by Codex; not checked by this runner (no change from earlier versions). `claude`: preflight refuses repository layouts outside the fingerprint; the CLI's process group and the groups the process watch saw are killed when it exits (best effort; a survivor or an unreadable process table is `IMPLEMENTER_PROCESS_SURVIVED`, and a background Bash command that escaped between two readings outlives it, see the known limits); the Git directory fingerprint is compared around every round, and a change is `UNEXPECTED_GIT_MUTATION` (stage `post-codex`) before any gate, and again after the gates and after the review; the core's own Git commands use a private index built from `HEAD` (below). |
+| Git state | `codex`: the `workspace-write` sandbox keeps `.git` read-only as documented by Codex; not checked by this runner (no change from earlier versions). `claude`: preflight refuses repository layouts outside the fingerprint; the CLI's process group and the groups the process watch saw are killed when it exits (best effort; a survivor or an unreadable process table is `IMPLEMENTER_PROCESS_SURVIVED`, and a background Bash command that escaped between two readings outlives it, see the known limits); the Git directory fingerprint is compared around every round, and a change is `UNEXPECTED_GIT_MUTATION` (stage `post-implementer`) before any gate, and again after the gates and after the review; the core's own Git commands use a private index built from `HEAD` (below). |
 | Output matches the schema (`--output-schema`, `-o`) | `--output-format json` and `--json-schema` with the same writer schema. Only a result envelope with `type: 'result'` and `is_error: false` counts; `structured_output` or a JSON text `result` then goes through the same report validation. Anything else is `INVALID_AGENT_OUTPUT`. |
 | Correction rounds resume the session (`exec resume <id>`) | `--resume <id>` with the session ID read from the previous envelope (`session_id`, a UUID). A missing or malformed ID, or a resumed round that reports another ID, is `INVALID_AGENT_OUTPUT`. |
 | Analysis sentinel and artifact | Unchanged core checks. |
@@ -179,7 +187,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   read or processed at any point (no `ps` at those
   paths, an error or timeout of `ps`, unexpected output or a line without
   a start time, Windows), rejects the round with
-  `IMPLEMENTER_PROCESS_SURVIVED` (stage `codex`); the post-round checks
+  `IMPLEMENTER_PROCESS_SURVIVED` (stage `implementer`); the post-round checks
   still run and are added as integrity violations. A process is found
   only if a reading detects it, or its parent or group, while that is still
   in the CLI's tree or a recorded group: the window is the interval plus
@@ -217,7 +225,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   of `objects`; so is any Git command of the round that writes an object
   already present.
   Any changed part stops the run with `UNEXPECTED_GIT_MUTATION` (stage
-  `post-codex`; the message names the parts) before the gates, the
+  `post-implementer`; the message names the parts) before the gates, the
   snapshot and the review. After the round the file parts and `objects`
   are read first, without Git, from the directories resolved before the
   round; when one of them changed, the run stops at once, so a
@@ -258,7 +266,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   it and it is empty; an empty one that existed before the round is kept.
   A file inside, a symbolic link or a
   file in its place stops the run with `IMPLEMENTER_SCRATCH_NOT_EMPTY`
-  (stage `codex` before the round, `post-codex` after it): when Git ignores
+  (stage `implementer` before the round, `post-implementer` after it): when Git ignores
   `.claude/`, such files would not be seen by the working-tree checks.
 - **Permission denials.** The `permission_denials` of the result envelope
   (tool calls the CLI denied) are stored in the round's `solExecution` as
@@ -282,7 +290,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   profile files). When a gate or the reviewer fails, the same Git
   directory and private index comparison (stage `post-checks` or
   `post-review`) is added to the stop report as an integrity violation,
-  as after a failed round (`post-codex`).
+  as after a failed round (`post-implementer`).
 
 Limits that the CLI does not let the runner close (known limits):
 
@@ -350,7 +358,7 @@ Limits that the CLI does not let the runner close (known limits):
   directory so that it can be resumed, and it reaches the model API; the
   same holds for `codex`.
 - `--safe-mode` also skips the repository's `CLAUDE.md`; the writer prompt
-  is the same as for `codex` and names the writer by its historical names.
+  is the same as for `codex` and names the writer by its role.
 - In analysis mode the Claude Code writer has no command tool at all, which
   is stricter than the read-only command sandbox of `codex`.
 

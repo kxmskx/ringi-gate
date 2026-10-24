@@ -267,7 +267,7 @@ export function gateProgress(state) {
 }
 
 function phaseColor(name) {
-  if (name === 'CLAUDE') return ANSI.violet;
+  if (name === 'REVIEWER' || name === 'CLAUDE') return ANSI.violet;
   if (['GATES', 'QUALITY GATES', 'INTEGRITY'].includes(name)) return ANSI.amber;
   return ANSI.cyan;
 }
@@ -314,27 +314,35 @@ function stageLine(stage, nowMs, frame, color, width) {
   );
 }
 
+// The event badges SOL and CLAUDE stand for the implementer and reviewer
+// roles, whichever modules serve them.
 const phaseName = (badge) =>
-  badge === 'SOL' ? 'CODEX' : badge === 'QUALITY GATES' ? 'GATES' : badge;
+  badge === 'SOL'
+    ? 'IMPLEMENTER'
+    : badge === 'CLAUDE'
+      ? 'REVIEWER'
+      : badge === 'QUALITY GATES'
+        ? 'GATES'
+        : badge;
 
 const phaseLabel = (name, state) =>
-  name === 'CODEX'
+  name === 'IMPLEMENTER'
     ? cleanText(
         state.solModel ??
           state.result?.sol?.plannedModel ??
           state.stages.findLast((stage) => stage.badge === 'SOL' && stage.model)
             ?.model ??
-          'CODEX',
+          'IMPLEMENTER',
       )
     : name;
 
 export function dashboardPhases(state) {
   return [
     'PREFLIGHT',
-    'CODEX',
+    'IMPLEMENTER',
     state.taskMode === 'analysis' ? 'INTEGRITY' : 'GATES',
     'SNAPSHOT',
-    'CLAUDE',
+    'REVIEWER',
   ].map((name) => {
     const stages = state.stages.filter(
       (stage) =>
@@ -344,7 +352,7 @@ export function dashboardPhases(state) {
     const last = stages.at(-1);
     let status = last?.status ?? 'WAITING';
     if (
-      ['SNAPSHOT', 'CLAUDE'].includes(name) &&
+      ['SNAPSHOT', 'REVIEWER'].includes(name) &&
       (state.quality ?? state.result?.quality)?.independentReviewRequired ===
         false
     )
@@ -512,11 +520,11 @@ export function reduceDashboardEvent(state, event, nowMs) {
     if (
       [
         'PREFLIGHT',
-        'CODEX',
+        'IMPLEMENTER',
         'GATES',
         'INTEGRITY',
         'SNAPSHOT',
-        'CLAUDE',
+        'REVIEWER',
       ].includes(phase)
     ) {
       const status =
@@ -607,7 +615,7 @@ export function renderDashboard(
           passed: gates.passed,
           active: cleanText(gates.active?.label),
         });
-  const plan = `Plan Codex ${cleanText(state.solModel)}/${cleanText(state.solEffort)} · review ${cleanText(state.reviewProfile)}`;
+  const plan = `Plan implementer ${cleanText(state.solModel)}/${cleanText(state.solEffort)} · review ${cleanText(state.reviewProfile)}`;
   const agent =
     latest && ['SOL', 'CLAUDE'].includes(latest.badge) ? latest : undefined;
   const agentLine = agent
@@ -724,7 +732,7 @@ export function renderDashboard(
     lines.push(...finalDiagnostics);
     if (report.sol)
       lines.push(
-        `Codex plan ${cleanText(report.sol.plannedModel)}/${cleanText(report.sol.plannedEffort)} · effective ${cleanText(report.sol.effectiveModel)}/${cleanText(report.sol.effectiveEffort)}`,
+        `Implementer plan ${cleanText(report.sol.plannedModel)}/${cleanText(report.sol.plannedEffort)} · effective ${cleanText(report.sol.effectiveModel)}/${cleanText(report.sol.effectiveEffort)}`,
       );
     if (report.quality)
       lines.push(
@@ -805,7 +813,7 @@ function appendEventLines(state, event, nowMs) {
             }),
           ]
         : []),
-      `SOL  plan ${state.solModel && state.solEffort ? `${state.solModel}/${state.solEffort}` : '—'}`,
+      `IMPLEMENTER  plan ${state.solModel && state.solEffort ? `${state.solModel}/${state.solEffort}` : '—'}`,
       t(locale, 'dashboard.appendReview', {
         profile: cleanText(state.reviewProfile),
         attempts: state.reviewAttempts.length,
@@ -913,6 +921,17 @@ export function resolveAgentRoles(profile) {
   return { implementer, reviewer };
 }
 
+// The new option first, then its deprecated alias; both share one
+// validation, and giving both is an argument error.
+const IMPLEMENTER_MODEL_OPTIONS = ['--implementer-model', '--codex-model'];
+const IMPLEMENTER_EFFORT_OPTIONS = ['--implementer-effort', '--sol-effort'];
+
+const isOption = (argument, name) =>
+  argument === name || argument.startsWith(`${name}=`);
+
+const aliasConflict = (locale, [option, alias]) =>
+  t(locale, 'cli.optionAliasConflict', { option, alias });
+
 // Defaults and allowlists come from the profile's implementer and reviewer.
 export function parseAgentArguments(argumentsList, profile) {
   const { implementer, reviewer } = resolveAgentRoles(profile);
@@ -921,10 +940,10 @@ export function parseAgentArguments(argumentsList, profile) {
   const taskPaths = [];
   let reviewProfile = reviewer.defaultProfile;
   let reviewProfileProvided = false;
-  let codexModel = implementer.model;
-  let codexModelProvided = false;
-  let solEffort = implementer.effort;
-  let solEffortProvided = false;
+  let implementerModel = implementer.model;
+  let implementerModelOption;
+  let implementerEffort = implementer.effort;
+  let implementerEffortOption;
   let taskMode = DEFAULT_TASK_MODE;
   let taskModeProvided = false;
   for (let index = 0; index < argumentsList.length; index += 1) {
@@ -975,49 +994,67 @@ export function parseAgentArguments(argumentsList, profile) {
       reviewProfileProvided = true;
       continue;
     }
-    if (argument === '--codex-model' || argument.startsWith('--codex-model=')) {
-      if (codexModelProvided) {
-        return { error: t(locale, 'cli.codexModelOnce') };
+    const modelOption = IMPLEMENTER_MODEL_OPTIONS.find((name) =>
+      isOption(argument, name),
+    );
+    if (modelOption) {
+      if (implementerModelOption) {
+        return {
+          error:
+            implementerModelOption === modelOption
+              ? t(locale, 'cli.implementerModelOnce', { option: modelOption })
+              : aliasConflict(locale, IMPLEMENTER_MODEL_OPTIONS),
+        };
       }
       const value =
-        argument === '--codex-model'
+        argument === modelOption
           ? argumentsList[(index += 1)]
-          : argument.slice('--codex-model='.length);
+          : argument.slice(modelOption.length + 1);
       if (typeof value !== 'string') {
-        return { error: t(locale, 'cli.missingValue', { option: '--codex-model' }) };
+        return { error: t(locale, 'cli.missingValue', { option: modelOption }) };
       }
       if (!isValidCodexModel(value)) {
-        return { error: t(locale, 'cli.codexModelValue') };
+        return {
+          error: t(locale, 'cli.implementerModelValue', { option: modelOption }),
+        };
       }
-      codexModel = value;
-      codexModelProvided = true;
+      implementerModel = value;
+      implementerModelOption = modelOption;
       continue;
     }
-    if (argument === '--sol-effort' || argument.startsWith('--sol-effort=')) {
+    const effortOption = IMPLEMENTER_EFFORT_OPTIONS.find((name) =>
+      isOption(argument, name),
+    );
+    if (effortOption) {
+      if (implementerEffortOption && implementerEffortOption !== effortOption) {
+        return { error: aliasConflict(locale, IMPLEMENTER_EFFORT_OPTIONS) };
+      }
       const value =
-        argument === '--sol-effort'
+        argument === effortOption
           ? argumentsList[(index += 1)]
-          : argument.slice('--sol-effort='.length);
+          : argument.slice(effortOption.length + 1);
       if (typeof value !== 'string') {
-        return { error: t(locale, 'cli.missingValue', { option: '--sol-effort' }) };
+        return { error: t(locale, 'cli.missingValue', { option: effortOption }) };
       }
       if (!implementer.allowedEfforts.includes(value)) {
         return {
-          error: t(locale, 'cli.solEffortValue', {
+          error: t(locale, 'cli.implementerEffortValue', {
+            option: effortOption,
             choices: formatChoices(implementer.allowedEfforts, locale),
           }),
         };
       }
-      if (solEffortProvided && solEffort !== value) {
+      if (implementerEffortOption && implementerEffort !== value) {
         return {
-          error: t(locale, 'cli.solEffortConflict', {
-            first: solEffort,
+          error: t(locale, 'cli.implementerEffortConflict', {
+            option: effortOption,
+            first: implementerEffort,
             second: value,
           }),
         };
       }
-      solEffort = value;
-      solEffortProvided = true;
+      implementerEffort = value;
+      implementerEffortOption = effortOption;
       continue;
     }
     if (
@@ -1037,8 +1074,8 @@ export function parseAgentArguments(argumentsList, profile) {
     taskPath: taskPaths[0],
     taskMode,
     reviewProfile,
-    codexModel,
-    solEffort,
+    implementerModel,
+    implementerEffort,
     dryRun: flags.has('--dry-run'),
     verbose: flags.has('--verbose'),
     noAnimation: flags.has('--no-animation'),

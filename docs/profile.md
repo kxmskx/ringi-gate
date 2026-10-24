@@ -137,7 +137,7 @@ and a fingerprint check on top:
   and outside any directory the writer can write to.
 - **Checked again.** The core compares every fingerprint at the end of the
   preflight (stage `preflight`), right after every writer round
-  (`post-codex`: for a failed round or an invalid report or analysis
+  (`post-implementer`: for a failed round or an invalid report or analysis
   artifact before that failure is reported; for a valid report after it was
   validated and, in analysis mode, its artifact saved, together with the
   checks of the repository state), after the gates, also failed ones
@@ -239,7 +239,8 @@ The locale also selects:
   "the writer", "the reviewer" and "the runner", name no model or product,
   and quote the English canonical section names (`"Required checks"`,
   `"Starting files"`, `"Allowed change area"`, `"Review files"`). `'pl'`
-  prompts are the original Polish texts, byte for byte. Both carry the same
+  prompts are the original Polish texts, except that they name the role
+  ("wykonawca", "reviewer") instead of a provider. Both carry the same
   contract rules, the same JSON field names and the same constants passed by
   the core (analysis sentinel, size limit). Profiles still cannot change
   prompt texts. A run's prompts follow the locale of its messages, which is
@@ -266,7 +267,8 @@ library functions called outside of a run, such as `loadTaskFile` and
 profile says; only the profile and task validation they call follows its
 locale. With `locale: 'pl'` the runner's output is identical to the runner
 before the message catalog (2026-10-19), which a test checks against the
-code of that version. One exception: truncation and omission markers in
+code of that version, apart from texts that name the role instead of a
+provider. One exception: truncation and omission markers in
 agent output (such as `[summary truncated]` and `log omitted`) are
 recognized in both languages, whatever the locale.
 
@@ -619,11 +621,15 @@ docsCandidatePolicy: {
 ### `implementer`
 
 The profile chooses the provider of each role, `implementer` and
-`reviewer`; the default profile setting is `codex` as the implementer and
-`claude` as the reviewer, not an assumption of the runner. Built-in
-providers by role: `codex` implementer (stable), `claude` implementer
-(experimental), `claude` reviewer (stable); see
-[docs/providers.md](providers.md) for modules.
+`reviewer`. A role is defined by its requirements
+([implementer requirements](providers.md#implementer-requirements),
+[role rules](providers.md#role-rules)); any provider module that meets them
+can serve it. The default profile setting is `codex` as the implementer and
+`claude` as the reviewer, a default the user changes here, not an
+assumption of the runner. Built-in modules, as examples, by role and
+declared stability: all three roles (`codex` implementer, `claude`
+implementer, `claude` reviewer) are experimental; see
+[docs/providers.md](providers.md#stability) for the stability criteria.
 
 The role that writes each round (the implementer; older text and option
 names call it the writer). Optional: a profile without
@@ -648,15 +654,18 @@ implementer: {
 },
 ```
 
-`--codex-model` overrides `model` with any identifier that follows the model
-rule; `--sol-effort` overrides `effort` with a value from `allowedEfforts`.
-The CLI rejects any other value as an argument error: it prints the error
-and the usage message and exits with code 2, before a run starts. The
-library options `codexModel` and `solEffort` of `runAgentReviewLoop` follow
-the same rules; there an invalid value stops the run with
-`INVALID_CODEX_MODEL` or `INVALID_SOL_EFFORT` (stage `preflight`). The
-option names keep their history: with `provider: 'claude'` they set the
-Claude Code model and effort of the implementer.
+`--implementer-model` overrides `model` with any identifier that follows
+the model rule; `--implementer-effort` overrides `effort` with a value from
+`allowedEfforts`. Both apply to the implementer of any provider.
+`--codex-model` and `--sol-effort` are deprecated aliases with the same
+validation; giving an alias together with its new option is an argument
+error, as for a repeated option. The CLI rejects any other value as an
+argument error: it prints the error and the usage message and exits with
+code 2, before a run starts. The library options `implementerModel` and
+`implementerEffort` of `runAgentReviewLoop` follow the same rules (the
+deprecated `codexModel` and `solEffort` are still read when the new options
+are absent); there an invalid value stops the run with
+`INVALID_CODEX_MODEL` or `INVALID_SOL_EFFORT` (stage `preflight`).
 
 With `provider: 'claude'` the implementer is Claude Code in print mode. The
 profile chooses only the model and the efforts; permissions, tools, sandbox
@@ -952,7 +961,8 @@ The aliases describe the role, not the provider. With `implementer.provider:
 `rounds[].solExecution`, `findings.rejectedByCodex`, `solModel`,
 `solEffort`, the badge `SOL` and the role `ASTRA` all refer to the Claude
 Code implementer; `claude*` aliases always refer to the reviewer. Stage
-values stay `codex` (writer round) and `claude` (review) for any provider.
+values name the role for any provider: `implementer` (writer round),
+`post-implementer` (checks after a writer round) and `reviewer` (review).
 
 The neutral round fields do not copy the agent outputs: they name the alias
 keys of the same round that hold them, so each agent output is serialized
@@ -960,4 +970,4 @@ once in `report.json`, `round-N.json` and the `--json` output.
 
 Because `findings.rejectedByImplementer` and `findings.rejectedByCodex` hold
 the same entries, the finding categories are disjoint only within one of the
-two names. Stage values (`codex`, `claude`) and `schemaVersion` are unchanged.
+two names. `schemaVersion` is unchanged.

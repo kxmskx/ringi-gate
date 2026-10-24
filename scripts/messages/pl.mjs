@@ -14,8 +14,8 @@ export default Object.freeze({
   'log.truncated': '…[log obcięty]…',
   'log.noOutput': '[brak wyjścia procesu]',
   'log.saveFailed': 'Nie można zapisać ograniczonego logu diagnostycznego: {detail}',
-  'log.solRound': 'SOL runda {round}',
-  'log.claudeRound': 'CLAUDE runda {round}',
+  'log.implementerRound': 'WYKONAWCA runda {round}',
+  'log.reviewerRound': 'REVIEWER runda {round}',
   'summary.truncated': '…[podsumowanie obcięte]…',
 
   'process.interrupted': 'Przerwano etap {stage} przez Ctrl+C.',
@@ -29,9 +29,9 @@ export default Object.freeze({
   'program.notFound': 'Nie znaleziono programu {name} w PATH.',
 
   'config.unknownReviewProfile': 'Nieznany profil review {profile}.',
-  'config.invalidCodexModel':
-    'Model Codex musi być pojedynczym identyfikatorem (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).',
-  'config.unknownSolEffort': 'Nieznany effort Sola {effort}.',
+  'config.invalidImplementerModel':
+    'Model wykonawcy musi być pojedynczym identyfikatorem (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).',
+  'config.unknownSolEffort': 'Nieznany effort wykonawcy {effort}.',
   'config.invalidTaskMode': 'Tryb zadania musi mieć wartość implementation albo analysis.',
   'config.maxRounds': 'Limit rund musi być liczbą całkowitą od 1 do {max}.',
   'config.modelUnsupported': 'Model {model} nie jest obsługiwany przez dostawcę {provider}.',
@@ -40,7 +40,7 @@ export default Object.freeze({
   'run.maxRounds':
     'Wyczerpano limit {maxRounds} rund przy niepustej liście findings. Decyzję przejmuje człowiek.',
   'run.resume':
-    'Usuń przyczynę, sprawdź working tree i uruchom zadanie ponownie. Workflow nie cofa zmian Codexa.',
+    'Usuń przyczynę, sprawdź working tree i uruchom zadanie ponownie. Workflow nie cofa zmian wykonawcy.',
   'cleanup.failed': 'Cleanup nie powiódł się: {detail}',
   'cleanup.unknownResource': 'Odmowa cleanupu nieznanego zasobu.',
 
@@ -198,7 +198,7 @@ export default Object.freeze({
   'corepack.runPinned': 'Nie można uruchomić przypiętej wersji pnpm w środowisku {label}',
   'corepack.versionMismatch':
     'Izolowany Corepack ({label}) uruchomił pnpm {actual}, oczekiwano {expected}.',
-  'corepack.labelWriter': 'Codexa',
+  'corepack.labelWriter': 'wykonawcy',
   'corepack.labelChecks': 'kontroli',
   'corepack.cacheMissing':
     'Brak lokalnego cache {specification}. Przygotuj go ręcznie przed workflow: corepack install -g --cache-only {specification}.',
@@ -207,8 +207,10 @@ export default Object.freeze({
   'output.wrongFields': '{label} ma niewłaściwe pola.',
   'output.invalidJson': '{label} zwrócił niepoprawny JSON.',
   'label.findingResponse': 'Odpowiedź {status}',
-  'label.writerResult': 'Wynik Codexa',
-  'label.reviewerResult': 'Wynik Claude',
+  'label.writerResult': 'Wynik wykonawcy',
+  'label.reviewerResult': 'Wynik reviewera',
+  'label.reviewerOutput': 'Wyjście reviewera',
+  'label.reviewerFinding': 'Finding reviewera',
   'label.confirmation': 'Potwierdzenie {label}',
   'label.analysisConfirmation': 'Potwierdzenie review analizy',
   'label.readTask': 'oryginalnego zadania',
@@ -216,30 +218,30 @@ export default Object.freeze({
   'label.readArtifact': 'artefaktu',
   'label.readReviewFile': 'pliku review {path}',
 
-  'writer.invalidResponse': 'Codex zwrócił niepoprawną odpowiedź na finding.',
+  'writer.invalidResponse': 'Wykonawca zwróciłniepoprawną odpowiedź na finding.',
   'writer.confirmedFields':
     'Odpowiedź CONFIRMED wymaga analizy, dowodu, poprawki, regression testu lub uzasadnienia, wykonanych kontroli oraz pustego question.',
   'writer.rejectedFields':
     'Odpowiedź REJECTED wymaga analizy oraz próby reprodukcji, dowodu lub konkretnego uzasadnienia; fix, regressionTest i question muszą być puste.',
   'writer.needsHumanFields':
     'Odpowiedź NEEDS_HUMAN wymaga konkretnego pytania albo opisu konfliktu oraz pustych pozostałych pól.',
-  'writer.invalidResponses': 'Codex zwrócił niepoprawną listę odpowiedzi na findings.',
-  'writer.analysisMissing': 'Codex nie zwrócił wymaganej pełnej analizy.',
-  'writer.invalidResult': 'Codex zwrócił niepoprawny wynik strukturalny.',
-  'writer.analysisFieldMissing': 'Codex nie zwrócił wymaganego pola pełnej analizy.',
+  'writer.invalidResponses': 'Wykonawca zwróciłniepoprawną listę odpowiedzi na findings.',
+  'writer.analysisMissing': 'Wykonawca niezwrócił wymaganej pełnej analizy.',
+  'writer.invalidResult': 'Wykonawca zwróciłniepoprawny wynik strukturalny.',
+  'writer.analysisFieldMissing': 'Wykonawca niezwrócił wymaganego pola pełnej analizy.',
   'writer.analysisMetadata':
     'Tryb analysis wymaga pustego changes oraz krótkich metadanych bez sentinela artefaktu.',
-  'writer.unknownFindingId': 'Codex odpowiedział na nieznany findingId {findingId}.',
-  'writer.duplicateResponse': 'Codex zwrócił więcej niż jedną odpowiedź dla {findingId}.',
-  'writer.incompleteResponses': 'Codex nie zwrócił pełnego zestawu odpowiedzi na findings: {missing}.',
+  'writer.unknownFindingId': 'Wykonawca odpowiedział na nieznany findingId {findingId}.',
+  'writer.duplicateResponse': 'Wykonawca zwróciłwięcej niż jedną odpowiedź dla {findingId}.',
+  'writer.incompleteResponses': 'Wykonawca niezwrócił pełnego zestawu odpowiedzi na findings: {missing}.',
   'writer.responseCountMismatch': 'niezgodna liczba odpowiedzi',
-  'writer.needsHumanConflict': 'Odpowiedź NEEDS_HUMAN jest sprzeczna ze statusem wyniku Codexa.',
-  'writer.stopped': 'Codex zatrzymał pracę ze statusem {status}: {summary}',
-  'writer.offlineConfig': 'Środowisko Codexa nie ma kompletnej konfiguracji offline pnpm.',
-  'writer.sessionId': 'Nie można ustalić session ID Codexa.',
-  'writer.roundFailed': 'Codex nie zakończył rundy poprawnie',
-  'writer.noResult': 'Codex nie zapisał wyniku strukturalnego.',
-  'writer.analysisWrite': 'Sol podjął próbę zapisu do working tree w trybie analysis.',
+  'writer.needsHumanConflict': 'Odpowiedź NEEDS_HUMAN jest sprzeczna ze statusem wyniku wykonawcy.',
+  'writer.stopped': 'Wykonawca zatrzymał pracę ze statusem {status}: {summary}',
+  'writer.offlineConfig': 'Środowisko wykonawcy nie ma kompletnej konfiguracji offline pnpm.',
+  'writer.sessionId': 'Nie można ustalić session ID wykonawcy.',
+  'writer.roundFailed': 'Wykonawca niezakończył rundy poprawnie',
+  'writer.noResult': 'Wykonawca niezapisał wyniku strukturalnego.',
+  'writer.analysisWrite': 'Wykonawca podjął próbę zapisu do working tree w trybie analysis.',
 
   'analysis.tooLarge': 'Pełna analiza przekracza limit 512 KiB.',
   'analysis.sentinel':
@@ -248,34 +250,34 @@ export default Object.freeze({
   'analysis.heading':
     'Pełna analiza wymaga co najmniej jednego unikalnego semantycznego nagłówka Markdown.',
 
-  'reviewer.readUnconfirmed': 'Claude nie potwierdził odczytu {label}.',
-  'reviewer.readMismatch': 'Claude zwrócił niezgodne potwierdzenie odczytu {label}.',
+  'reviewer.readUnconfirmed': 'Reviewer niepotwierdził odczytu {label}.',
+  'reviewer.readMismatch': 'Reviewer zwróciłniezgodne potwierdzenie odczytu {label}.',
   'reviewer.manifestMissing': 'Runner nie ma oczekiwanego manifestu potwierdzeń review analizy.',
-  'reviewer.confirmationMissing': 'Claude nie zwrócił potwierdzenia review analizy.',
-  'reviewer.filesUnconfirmed': 'Claude nie potwierdził dokładnego zestawu plików review.',
+  'reviewer.confirmationMissing': 'Reviewer niezwrócił potwierdzenia review analizy.',
+  'reviewer.filesUnconfirmed': 'Reviewer niepotwierdził dokładnego zestawu plików review.',
   'reviewer.filesMismatch':
-    'Claude zwrócił niepełny, obcy albo zduplikowany zestaw plików review.',
-  'reviewer.invalidResult': 'Claude zwrócił niepoprawny wynik strukturalny.',
+    'Reviewer zwróciłniepełny, obcy albo zduplikowany zestaw plików review.',
+  'reviewer.invalidResult': 'Reviewer zwróciłniepoprawny wynik strukturalny.',
   'reviewer.verdictConflict': 'Verdict review analizy jest sprzeczny z listą findings.',
-  'reviewer.invalidFinding': 'Claude zwrócił niepoprawne finding.',
-  'reviewer.findingOutside': 'Claude zwrócił finding ze ścieżką poza repo.',
+  'reviewer.invalidFinding': 'Reviewer zwróciłniepoprawne finding.',
+  'reviewer.findingOutside': 'Reviewer zwróciłfinding ze ścieżką poza repo.',
   'reviewer.analysisFindingTarget':
     'Finding analityczny musi wskazywać logiczny artefakt i dokładny nagłówek jego sekcji.',
-  'reviewer.noStructuredOutput': 'Claude nie zwrócił structured_output.',
+  'reviewer.noStructuredOutput': 'Reviewer niezwrócił structured_output.',
   'reviewer.findingAmbiguousPath':
-    'Claude zwrócił finding ze ścieżką poza repo albo niejednoznaczną ścieżką.',
-  'reviewer.findingAmbiguousFields': 'Claude zwrócił niejednoznaczne stabilne pola findingu.',
+    'Reviewer zwróciłfinding ze ścieżką poza repo albo niejednoznaczną ścieżką.',
+  'reviewer.findingAmbiguousFields': 'Reviewer zwróciłniejednoznaczne stabilne pola findingu.',
   'reviewer.findingIdMismatch':
-    'Claude podał findingId niezgodny ze stabilnymi polami dla {file}.',
+    'Reviewer podał findingId niezgodny ze stabilnymi polami dla {file}.',
   'reviewer.invalidModel': 'Model reviewera {model} jest niepoprawny.',
-  'reviewer.reviewFailed': 'Claude nie zakończył review poprawnie',
-  'reviewer.fallbackFailed': 'Fallback Claude nie zakończył review poprawnie.',
+  'reviewer.reviewFailed': 'Reviewer niezakończył review poprawnie',
+  'reviewer.fallbackFailed': 'Fallback reviewera nie zakończył review poprawnie.',
 
   'finding.identityCollision': 'Wykryto kolizję stabilnej tożsamości {findingId}.',
   'finding.identityDuplicate': 'Review zawiera niejednoznacznie zduplikowaną tożsamość {findingId}.',
   'finding.needsHuman': 'Finding {findingId} wymaga decyzji człowieka: {question}',
   'finding.dispute':
-    'Claude podtrzymał finding {findingId} odrzucony technicznie przez Codexa. Decyzję przejmuje człowiek niezależnie od severity.',
+    'Reviewer podtrzymał finding {findingId} odrzucony technicznie przez wykonawcę. Decyzję przejmuje człowiek niezależnie od severity.',
 
   'guard.gitBlocked': 'Agent review loop: mutująca lub nieznana operacja Git zablokowana.',
   'guard.pnpmBlocked': 'Agent review loop: mutująca lub nieznana operacja pnpm zablokowana.',
@@ -304,7 +306,7 @@ export default Object.freeze({
   'diff.tooLarge': 'Pełny diff przekracza limit 16 MiB.',
 
   'snapshot.unsupportedEntry': 'Snapshot zawiera nieobsługiwany typ wpisu {path}.',
-  'snapshot.treeChangedReview': 'Rzeczywisty working tree zmienił się podczas review Claude.',
+  'snapshot.treeChangedReview': 'Rzeczywisty working tree zmienił się podczas review.',
   'snapshot.changedDuringReview': 'Snapshot review zmienił się podczas review.',
   'snapshot.packagePathEscape': 'Ścieżka pakietu review wychodzi poza root.',
   'snapshot.artifactChanged': 'Artefakt analizy zmienił się podczas tworzenia pakietu review.',
@@ -313,7 +315,7 @@ export default Object.freeze({
   'snapshot.reviewFileChanged': 'Plik review {path} zmienił typ lub treść przed snapshotem.',
   'snapshot.treeChangedAnalysis': 'Working tree zmienił się podczas tworzenia pakietu analizy.',
   'snapshot.analysisPackageTooLarge': 'Minimalny pakiet review analizy przekracza limit 64 MiB.',
-  'snapshot.treeChangedCopy': 'Working tree zmienił się podczas tworzenia kopii dla Claude.',
+  'snapshot.treeChangedCopy': 'Working tree zmienił się podczas tworzenia kopii dla reviewera.',
 
   'artifact.overwrite': 'Odmowa nadpisania istniejącego artefaktu.',
   'artifact.writeFailed': 'Nie można atomowo zapisać artefaktu analizy: {detail}',
@@ -353,18 +355,18 @@ export default Object.freeze({
   'stage.isolatedCopy': 'Izolowana kopia read-only',
   'stage.reviewAttempt': 'Review {profile} · {model} · effort {effort} · próba {attempt}',
 
-  'plan.analysisWriter': 'Codex pełna analiza read-only',
+  'plan.analysisWriter': 'wykonawca: pełna analiza read-only',
   'plan.analysisIntegrity': 'wewnętrzne kontrole integralności',
   'plan.analysisArtifact': 'osobny artefakt Markdown z SHA-256',
   'plan.analysisPackage': 'minimalny pakiet review read-only',
-  'plan.analysisReview': 'Claude review merytoryczne',
+  'plan.analysisReview': 'reviewer: review merytoryczne',
   'plan.analysisCorrection': 'korekta pełnej analizy po każdym findingu BLOCKER/HIGH/MEDIUM/LOW',
-  'plan.docsWriter': 'Codex dokumentacja i weryfikacja źródeł',
+  'plan.docsWriter': 'wykonawca: dokumentacja i weryfikacja źródeł',
   'plan.checks': 'deterministyczne kontrole',
-  'plan.implementationWriter': 'Codex implementacja',
+  'plan.implementationWriter': 'wykonawca: implementacja',
   'plan.isolatedCopy': 'izolowana kopia read-only',
-  'plan.implementationReview': 'Claude review diff-first',
-  'plan.implementationCorrection': 'korekta Codex po każdym findingu BLOCKER/HIGH/MEDIUM/LOW',
+  'plan.implementationReview': 'reviewer: review diff-first',
+  'plan.implementationCorrection': 'korekta wykonawcy po każdym findingu BLOCKER/HIGH/MEDIUM/LOW',
   'plan.noMutations': 'brak',
 
   'report.docsApproval':
@@ -380,7 +382,7 @@ export default Object.freeze({
   'dashboard.defaultResume': 'Usuń przyczynę i uruchom zadanie ponownie.',
   'dashboard.feedRoundStart': 'Runda {round} · START',
   'dashboard.feedWaiting': 'oczekiwanie',
-  'dashboard.feedReviewResult': 'CLAUDE · wynik review',
+  'dashboard.feedReviewResult': 'REVIEWER · wynik review',
   'dashboard.round': 'runda {round}/{max}',
   'dashboard.beforeReview': 'przed review',
   'dashboard.lastKnownResult': 'ostatni znany wynik',
@@ -418,15 +420,17 @@ export default Object.freeze({
   'cli.missingValue': 'Opcja {option} wymaga wartości.',
   'cli.reviewProfileOnce': 'Opcję --review-profile można podać tylko raz.',
   'cli.reviewProfileValue': 'Opcja --review-profile wymaga wartości {choices}.',
-  'cli.codexModelOnce': 'Opcję --codex-model można podać tylko raz.',
-  'cli.codexModelValue':
-    'Opcja --codex-model wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).',
-  'cli.solEffortValue': 'Opcja --sol-effort wymaga wartości {choices}.',
-  'cli.solEffortConflict': 'Opcja --sol-effort ma sprzeczne wartości {first} i {second}.',
+  'cli.implementerModelOnce': 'Opcję {option} można podać tylko raz.',
+  'cli.implementerModelValue':
+    'Opcja {option} wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).',
+  'cli.implementerEffortValue': 'Opcja {option} wymaga wartości {choices}.',
+  'cli.implementerEffortConflict': 'Opcja {option} ma sprzeczne wartości {first} i {second}.',
+  'cli.optionAliasConflict':
+    'Opcji {option} i jej przestarzałego aliasu {alias} nie można podać razem.',
   'cli.unknownOption': 'Nieznana opcja: {option}',
   'cli.oneTaskPath': 'Wymagana jest dokładnie jedna ścieżka zadania.',
   'cli.usage':
-    'Użycie: pnpm agents:run -- ścieżka/do/task.md [--task-mode {taskModes}] [--codex-model <id>] [--sol-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
+    'Użycie: pnpm agents:run -- ścieżka/do/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':
     'critical-opus: model {model}; effort {effort}; próby {attempts}; fallback {fallback}.',
   'cli.fallbackAllowed': 'dozwolony',

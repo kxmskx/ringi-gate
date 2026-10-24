@@ -287,7 +287,7 @@ export default defineProvider({
   reviewer: {
     ...reviewer,
     modes: ['implementation', 'analysis'],
-    stability: 'stable',
+    stability: 'experimental',
     limitations: [
       'Settings files are not ignored (no --restricted); admin-managed (policy) settings apply.',
     ],

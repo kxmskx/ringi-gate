@@ -195,8 +195,8 @@ ringi doctor: 15 ok, 0 warn, 0 fail
 
 ```sh
 ringi run path/to/task.md [--dry-run] [--task-mode implementation|analysis]
-  [--review-profile <name>] [--codex-model <id>] [--sol-effort <effort>]
-  [--verbose] [--no-animation] [--json]
+  [--review-profile <name>] [--implementer-model <id>]
+  [--implementer-effort <effort>] [--verbose] [--no-animation] [--json]
 ```
 
 The same run as `node scripts/agent-review-loop.mjs` (see
@@ -231,7 +231,10 @@ a stop. `ringi init` commits nothing: commit the profile first.
 The options are the options of `scripts/agent-review-loop.mjs`, passed to
 the same parser; their allowed values come from the profile. The usage line
 printed with an argument error is in English; the error itself comes from
-the shared parser.
+the shared parser. `--codex-model` and `--sol-effort` are deprecated aliases
+of `--implementer-model` and `--implementer-effort` with the same
+validation; giving an alias together with its new option is an argument
+error.
 
 Exit codes are those of the earlier CLI: `0` for a completed run (`APPROVE`
 or `DRY_RUN_OK`), `1` for a stopped run, `2` for invalid arguments or an

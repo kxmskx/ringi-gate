@@ -16,7 +16,7 @@ export const SOL_PHASE_OWNERSHIP_CONTRACT = `KONTRAKT WŁASNOŚCI FAZ:
 - Wyraźne wykluczenia, reguły danych, HR/prawo, niezatwierdzona nowa funkcjonalność, decyzje bezpieczeństwa/kosztowe/produkcyjne, zależności produkcyjne i publikacja pozostają granicami fail-closed. Zgoda na ukończenie nie nadaje automatycznie prawa do push/merge, kosztów Actions ani osłabienia zabezpieczeń. Zapis poza zaakceptowanym rezultatem lub wyraźnymi granicami zatrzymuje edycje i wymaga statusu NEEDS_HUMAN_DECISION z dokładną ścieżką, powodem, wpływem i proponowanym rozszerzeniem zakresu.
 - Sol uruchamia testy celowane właściwe dla zmiany. Nie powtarza domyślnie pełnych gates runnera, w tym pnpm check, pnpm docs:check ani git diff --check. Pełna gate jest dozwolona tylko jako konieczny reproducer bez sensownej kontroli celowanej; Sol zapisuje powód w raporcie.
 - Po SOL PASS nadrzędny runner wykonuje w zaufanym środowisku wszystkie polecenia z sekcji „Wymagane kontrole”.
-- Sol nie uruchamia Claude'a, Fable ani Opusa. Niezależny reviewer jest uruchamiany wyłącznie przez runner na snapshotcie tylko do odczytu.
+- Sol nie uruchamia reviewera ani innego agenta. Niezależny reviewer jest uruchamiany wyłącznie przez runner na snapshotcie tylko do odczytu.
 - EPERM albo EACCES przy dostępie wewnętrznego sandboxu Sola do lokalnego portu PostgreSQL lub HTTP nie jest samo w sobie NEEDS_HUMAN, jeżeli dana kontrola należy do gates runnera. Sol zapisuje ograniczenie w raporcie i po poprawnej implementacji kończy swoją fazę; runner nadal wykona gate niezależnie.
 - Sol nie może deklarować niedostępnej albo niewykonanej kontroli jako PASS. Rzeczywiste niepowodzenie gate runnera nadal zatrzymuje workflow fail-closed.
 - Rzeczywisty problem implementacji, niejednoznaczne wymaganie albo decyzja bezpieczeństwa, biznesowa, kadrowa lub prawna nadal mogą wymagać NEEDS_HUMAN. Nie klasyfikuj innych błędów jako środowiskowych wyłącznie na podstawie luźnego podobieństwa tekstu.`;
@@ -27,7 +27,7 @@ export const ANALYSIS_SOL_PHASE_OWNERSHIP_CONTRACT = `KONTRAKT WŁASNOŚCI FAZ �
 - Szerszy odczyt jest dozwolony wyłącznie dla konkretnej regresji, bezpieczeństwa albo kontraktu i wymaga krótkiego uzasadnienia ścieżki lub obszaru w summary.
 - Runner, nie Sol, zapisuje osobny artefakt w prywatnym katalogu run ID. Każda wykryta próba zapisu Sola do produktu zatrzymuje workflow fail-closed.
 - Sol może wykonywać wyłącznie niedestrukcyjne kontrole odczytowe potrzebne do analizy. Nie uruchamia pełnych gates aplikacji; runner egzekwuje wewnętrzne kontrole integralności zamiast command gates.
-- Sol nie uruchamia Claude'a, Fable ani Opusa. Niezależny reviewer jest uruchamiany wyłącznie przez runner na minimalnym snapshotcie tylko do odczytu.
+- Sol nie uruchamia reviewera ani innego agenta. Niezależny reviewer jest uruchamiany wyłącznie przez runner na minimalnym snapshotcie tylko do odczytu.
 - Sol nie może deklarować niedostępnej albo niewykonanej kontroli jako PASS.
 - Rzeczywista niejednoznaczność wymagania albo decyzja bezpieczeństwa, biznesowa, kadrowa lub prawna nadal może wymagać NEEDS_HUMAN. Nie klasyfikuj innych błędów jako środowiskowych na podstawie luźnego podobieństwa tekstu.`;
 
@@ -58,7 +58,8 @@ const ANALYSIS_WRITER_PHASE_OWNERSHIP_CONTRACT_EN = `PHASE OWNERSHIP CONTRACT �
 - The writer must not report an unavailable or unexecuted check as PASS.
 - A real ambiguity of a requirement, or a security, business or legal decision may still require NEEDS_HUMAN. Do not classify other errors as environmental based on a loose textual similarity.`;
 
-// The locale, taskMode and codexModel must already be resolved by the core.
+// The locale, taskMode and codexModel (the implementer's model) must already
+// be resolved by the core.
 export function buildCodexPrompt({ locale, ...options }) {
   return promptBuilder(locale, buildCodexPromptEn, buildCodexPromptPl)(options);
 }
@@ -217,7 +218,7 @@ function buildCodexPromptPl({
       ? taskMode === 'analysis'
         ? 'PIERWSZA RUNDA — TASK-FIRST: najpierw przeczytaj całe ORYGINALNE ZADANIE. Następnie przeczytaj dokładne „Pliki review” oraz wyłącznie bezpośrednio istotne kontrakty potrzebne do pełnej analizy. Nie wykonuj bezpodstawnego ogólnego inventory ani audytu repo. Pole findingResponses musi być pustą tablicą, ponieważ nie otrzymałeś jeszcze findings.'
         : 'PIERWSZA RUNDA — TASK-FIRST: najpierw przeczytaj całe ORYGINALNE ZADANIE. Zacznij eksplorację od sekcji „Pliki startowe”, jeżeli istnieje, oraz bezpośrednio istotnych zależności, testów i kontraktów. Jeżeli sekcji nie ma, zacznij od plików wskazanych w zakresie i kryteriach. Nie wykonuj bezpodstawnego ogólnego inventory ani audytu repo. Pole findingResponses musi być pustą tablicą, ponieważ nie otrzymałeś jeszcze findings.'
-      : `RUNDA KOREKCYJNA — FINDINGS-FIRST: zacznij od poniższych nierozstrzygniętych findings Claude, ich file, anchorów, wskazanych miejsc oraz bezpośrednich testów i kontraktów. Nie czytaj ponownie całego zakresu ani repo bez konkretnej potrzeby regresji, bezpieczeństwa lub kontraktu. Pierwotne zadanie nadal wyznacza granice. Przeanalizuj każdy finding niezależnie od severity i zwróć dokładnie jedną odpowiedź findingResponses dla każdego findingId. Każda odpowiedź musi zawierać dokładnie wszystkie pola: findingId, status, analysis, evidence, fix, regressionTest, checks i question. Każdy wpis checks musi być krótką, przyciętą, pojedynczą linią tekstowej atestacji; nie umieszczaj tam nazw pól wyniku, fragmentów JSON, markerów ucięcia ani treści pełnego artefaktu. CONFIRMED wymaga reprodukcji opisanej w niepustych analysis i evidence, minimalnej poprawki opisanej w fix, niepustego regressionTest (test albo techniczne uzasadnienie jego braku) i niepustej listy checks; question musi być pustym stringiem. REJECTED wymaga niepustych analysis oraz evidence z próbą reprodukcji, dowodem albo konkretnym uzasadnieniem; fix, regressionTest i question muszą być pustymi stringami, a checks może być pustą tablicą; nie zmieniaj kodu wyłącznie dla zadowolenia reviewera. NEEDS_HUMAN wymaga niepustego question i zatrzymuje workflow; analysis, evidence, fix i regressionTest muszą być pustymi stringami, a checks pustą tablicą. Nie odpowiadaj na inne identyfikatory.${taskMode === 'analysis' ? ' Zwróć ponownie całą poprawioną analizę, nie patch ani samą zmienioną sekcję.' : ''}\n${JSON.stringify(findings, null, 2)}`;
+      : `RUNDA KOREKCYJNA — FINDINGS-FIRST: zacznij od poniższych nierozstrzygniętych findings reviewera, ich file, anchorów, wskazanych miejsc oraz bezpośrednich testów i kontraktów. Nie czytaj ponownie całego zakresu ani repo bez konkretnej potrzeby regresji, bezpieczeństwa lub kontraktu. Pierwotne zadanie nadal wyznacza granice. Przeanalizuj każdy finding niezależnie od severity i zwróć dokładnie jedną odpowiedź findingResponses dla każdego findingId. Każda odpowiedź musi zawierać dokładnie wszystkie pola: findingId, status, analysis, evidence, fix, regressionTest, checks i question. Każdy wpis checks musi być krótką, przyciętą, pojedynczą linią tekstowej atestacji; nie umieszczaj tam nazw pól wyniku, fragmentów JSON, markerów ucięcia ani treści pełnego artefaktu. CONFIRMED wymaga reprodukcji opisanej w niepustych analysis i evidence, minimalnej poprawki opisanej w fix, niepustego regressionTest (test albo techniczne uzasadnienie jego braku) i niepustej listy checks; question musi być pustym stringiem. REJECTED wymaga niepustych analysis oraz evidence z próbą reprodukcji, dowodem albo konkretnym uzasadnieniem; fix, regressionTest i question muszą być pustymi stringami, a checks może być pustą tablicą; nie zmieniaj kodu wyłącznie dla zadowolenia reviewera. NEEDS_HUMAN wymaga niepustego question i zatrzymuje workflow; analysis, evidence, fix i regressionTest muszą być pustymi stringami, a checks pustą tablicą. Nie odpowiadaj na inne identyfikatory.${taskMode === 'analysis' ? ' Zwróć ponownie całą poprawioną analizę, nie patch ani samą zmienioną sekcję.' : ''}\n${JSON.stringify(findings, null, 2)}`;
   const modeContract =
     taskMode === 'analysis'
       ? `TRYB ZADANIA: analysis (jawny tryb read-only). Nie zapisuj, nie twórz, nie usuwaj ani nie zmieniaj żadnego pliku working tree. Każda taka zmiana zatrzyma run. Czytaj wyłącznie zadanie, sekcję „Pliki review” oraz bezpośrednio konieczny kontekst zgodny z zadaniem; nie wykonuj nieograniczonego inventory. Pole changes musi być pustą tablicą.
@@ -226,8 +227,8 @@ Wynik strukturalny musi zawierać pole fullAnalysis z pełną, samodzielną anal
       : 'TRYB ZADANIA: implementation. Zachowaj dotychczasowy kontrakt implementacji, testów celowanych i raportu.';
   const workspaceContract =
     taskMode === 'analysis'
-      ? 'Możesz czytać wyłącznie pliki potrzebne według kontraktu skupionego kontekstu i uruchamiać lokalne, niedestrukcyjne kontrole odczytowe. Nie edytuj working tree. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj Claude.'
-      : 'Możesz czytać pliki potrzebne według kontraktu skupionego kontekstu, edytować pliki objęte zadaniem oraz konieczne lokalne korekty tego samego zaakceptowanego rezultatu zgodnie z kontraktem własności faz i uruchamiać lokalne, niedestrukcyjne kontrole. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj Claude.';
+      ? 'Możesz czytać wyłącznie pliki potrzebne według kontraktu skupionego kontekstu i uruchamiać lokalne, niedestrukcyjne kontrole odczytowe. Nie edytuj working tree. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj reviewera.'
+      : 'Możesz czytać pliki potrzebne według kontraktu skupionego kontekstu, edytować pliki objęte zadaniem oraz konieczne lokalne korekty tego samego zaakceptowanego rezultatu zgodnie z kontraktem własności faz i uruchamiać lokalne, niedestrukcyjne kontrole. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj reviewera.';
   const executionContract =
     taskMode === 'analysis'
       ? 'Nie uruchamiaj pełnych gates aplikacji z sekcji „Wymagane kontrole”. Wykonuj tylko celowane kontrole odczytowe potrzebne do analizy. Runner wykona wewnętrzne kontrole integralności, zapis artefaktu i niezależne review. Sam brak sieci nie jest powodem statusu BLOCKED, jeżeli wystarczają lokalne narzędzia i dane. Rzeczywista potrzeba sieci albo brak wymaganej lokalnej zależności nadal wymaga bezpiecznego statusu BLOCKED.'
@@ -236,7 +237,7 @@ Wynik strukturalny musi zawierać pole fullAnalysis z pełną, samodzielną anal
 
 Kompresja dotyczy wyłącznie raportu końcowego. Jakość implementacji, testów i dokumentacji pozostaje pełna.
 
-Bieżący wykonawca Codex używa modelu ${codexModel}. Nazwy Sol/SOL/sol i powiązane identyfikatory są historycznymi nazwami kompatybilności tego wykonawcy.
+Bieżący wykonawca używa modelu ${codexModel}. Nazwy Sol/SOL/sol i powiązane identyfikatory są historycznymi nazwami kompatybilności tego wykonawcy.
 
 Pracujesz w rzeczywistym working tree repozytorium. ${roundFocus}
 ${taskMode === 'analysis' ? 'Pierwotny zakres poniżej pozostaje jedynym zakresem i nie może być rozszerzony.' : 'Pierwotny zaakceptowany rezultat i wyraźne wykluczenia pozostają granicami zadania. Konieczne lokalne korekty tego samego rezultatu są objęte zgodą na ukończenie, także gdy wymagają dodatkowej ścieżki; nie oznaczają zgody na nową funkcjonalność ani nową nierozstrzygniętą decyzję.'}
@@ -278,12 +279,12 @@ function buildClaudePromptPl({
   analysisFindingFile,
 }) {
   const correctionContext = correctionContextPath
-    ? `To jest kolejne review. Poprzednie findings ze zweryfikowanymi findingId, stabilnymi polami technicznymi oraz formalne odpowiedzi Codexa znajdują się w ${correctionContextPath}. Użyj wcześniejszego findingId tylko przy zgodnych polach file, anchor i category. Nowy problem pozostaw bez findingId; runner nada go z tych pól.`
-    : 'To jest pierwsze, niezależne review. Nie otrzymujesz reasoning, samoocen ani uzasadnień Codexa.';
+    ? `To jest kolejne review. Poprzednie findings ze zweryfikowanymi findingId, stabilnymi polami technicznymi oraz formalne odpowiedzi wykonawcy znajdują się w ${correctionContextPath}. Użyj wcześniejszego findingId tylko przy zgodnych polach file, anchor i category. Nowy problem pozostaw bez findingId; runner nada go z tych pól.`
+    : 'To jest pierwsze, niezależne review. Nie otrzymujesz reasoning, samoocen ani uzasadnień wykonawcy.';
   if (taskMode === 'analysis') {
     return `Wykonaj niezależne, merytoryczne i wyłącznie read-only review pełnej analizy Sola. To nie jest code review ani review pustego diffu.
 
-Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj Codexa ani subagentów. Snapshot jest minimalnym, fizycznie read-only pakietem; nie próbuj czytać niczego poza nim i nie wykonuj inventory.
+Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj wykonawcy ani subagentów. Snapshot jest minimalnym, fizycznie read-only pakietem; nie próbuj czytać niczego poza nim i nie wykonuj inventory.
 
 Czytaj w dokładnej kolejności:
 1. oryginalne zadanie: ${originalTaskPath};
@@ -313,7 +314,7 @@ ORYGINALNE ZADANIE jest zapisane wyłącznie w ${originalTaskPath}; nie polegaj 
     : 'Kolejność analizy: pierwotne zadanie, pełny diff, zaufane gates, pliki zmienione przez diff, następnie ich bezpośrednie zależności, testy i kontrakty potrzebne do oceny.';
   return `Wykonaj niezależny, wyłącznie read-only ${task.quality?.docs ? 'review kontraktu dokumentacji' : 'code review'} aktualnego stanu, stosując podejście ${contractCorrection ? 'FINDINGS-FIRST' : 'DIFF-FIRST'}.
 
-Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj Codexa ani subagentów. Oceń wyłącznie zgodność z pierwotnym zadaniem, instrukcjami repo, bezpieczeństwo, regresje, testy i dokumentację.
+Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj wykonawcy ani subagentów. Oceń wyłącznie zgodność z pierwotnym zadaniem, instrukcjami repo, bezpieczeństwo, regresje, testy i dokumentację.
 
 Repozytorium jest fizyczną kopią tylko do odczytu. Instrukcje repo i oryginalne zadanie: ${instructionsPath}. Pełny diff względem HEAD, wraz z plikami nieśledzonymi: ${diffPath}. Zaufany, ograniczony raport rzeczywistych gates runnera: ${gatesPath}. Aktualny stan wszystkich śledzonych i nieignorowanych plików znajduje się w bieżącym katalogu.
 
@@ -325,7 +326,7 @@ ${correctionContext}
 
 ${task.quality?.docs ? `Klasa ${task.taskClass}: oceń kontrakt dokumentacji ze źródłami. Gates wymagane w tej rundzie: ${task.checks.join(', ')}. Nie wymagaj dodatkowych testów aplikacji ani pełnej gate poza jawnym zadaniem. W korekcie potwierdź poprzednie findings i dowody ich usunięcia.` : ''}
 
-Zwróć wyłącznie wynik zgodny ze schematem. Dla każdego findingu podaj severity, znormalizowaną ścieżkę repo file, stabilny symbol lub semantyczny anchor, precyzyjną techniczną category, miejsce diagnostyczne location, skutek i rekomendację. Nie używaj numeru linii jako anchoru. Te same file, anchor i category oznaczają ten sam problem mimo zmiany severity, tekstu lub linii; dwa różne problemy muszą różnić się category. Verdict jest oceną reviewera; runner niezależnie obliczy wynik według polityki zero findings. APPROVE stosuj wyłącznie przy pustej liście findings wszystkich poziomów BLOCKER/HIGH/MEDIUM/LOW. REQUEST_CHANGES stosuj przy każdym findingu niezależnie od severity. W checks podaj wykonane odczyty/kontrole, bez przedstawiania deklaracji Codexa jako wyniku runnera. confirmedNoChanges=true tylko jeśli niczego nie zmieniłeś.
+Zwróć wyłącznie wynik zgodny ze schematem. Dla każdego findingu podaj severity, znormalizowaną ścieżkę repo file, stabilny symbol lub semantyczny anchor, precyzyjną techniczną category, miejsce diagnostyczne location, skutek i rekomendację. Nie używaj numeru linii jako anchoru. Te same file, anchor i category oznaczają ten sam problem mimo zmiany severity, tekstu lub linii; dwa różne problemy muszą różnić się category. Verdict jest oceną reviewera; runner niezależnie obliczy wynik według polityki zero findings. APPROVE stosuj wyłącznie przy pustej liście findings wszystkich poziomów BLOCKER/HIGH/MEDIUM/LOW. REQUEST_CHANGES stosuj przy każdym findingu niezależnie od severity. W checks podaj wykonane odczyty/kontrole, bez przedstawiania deklaracji wykonawcy jako wyniku runnera. confirmedNoChanges=true tylko jeśli niczego nie zmieniłeś.
 
 ORYGINALNE ZADANIE:
 ---

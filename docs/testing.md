@@ -149,7 +149,7 @@ so installing the tarball fetches nothing.
   other check is `ok`) and `run --dry-run` (`DRY_RUN_OK`, nothing changed in
   the repository). Finally a real run with a stand-in writer that changes
   `scripts/agent-review-loop-lib.mjs` in `node_modules` and then fails: the
-  run stops with `RUNNER_MODIFIED` at stage `post-codex`, and the round's own
+  run stops with `RUNNER_MODIFIED` at stage `post-implementer`, and the round's own
   failure is kept as an integrity violation.
 - **Workflows:** a text check of `.github/workflows/` (not a YAML parser):
   actions pinned to a commit SHA, no `pull_request_target`, a read-only
@@ -166,8 +166,9 @@ The workflows themselves are not run by the tests.
 functions and `internal` helpers, without real agents. This includes task
 parsing (including the task schema and its aliases), profile validation
 (including the pnpm and git argv allowlists, required gate rules and the task
-schema), the prompt texts (compared byte for byte with a copy of the texts
-before they moved to `scripts/agent-review-prompts.mjs`), the git and pnpm
+schema), the prompt texts (compared byte for byte with a reference copy in the test:
+the texts from before they moved to `scripts/agent-review-prompts.mjs`,
+with provider names replaced by role names), the git and pnpm
 guards, gate execution, snapshots,
 secret detection, dependency and Corepack cache fingerprints, review policy and
 fallback, finding identity across rounds, analysis mode, the report and the

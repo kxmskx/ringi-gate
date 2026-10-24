@@ -462,7 +462,7 @@ const LEGACY_SOL_PHASE_OWNERSHIP_CONTRACT = `KONTRAKT WŁASNOŚCI FAZ:
 - Wyraźne wykluczenia, reguły danych, HR/prawo, niezatwierdzona nowa funkcjonalność, decyzje bezpieczeństwa/kosztowe/produkcyjne, zależności produkcyjne i publikacja pozostają granicami fail-closed. Zgoda na ukończenie nie nadaje automatycznie prawa do push/merge, kosztów Actions ani osłabienia zabezpieczeń. Zapis poza zaakceptowanym rezultatem lub wyraźnymi granicami zatrzymuje edycje i wymaga statusu NEEDS_HUMAN_DECISION z dokładną ścieżką, powodem, wpływem i proponowanym rozszerzeniem zakresu.
 - Sol uruchamia testy celowane właściwe dla zmiany. Nie powtarza domyślnie pełnych gates runnera, w tym pnpm check, pnpm docs:check ani git diff --check. Pełna gate jest dozwolona tylko jako konieczny reproducer bez sensownej kontroli celowanej; Sol zapisuje powód w raporcie.
 - Po SOL PASS nadrzędny runner wykonuje w zaufanym środowisku wszystkie polecenia z sekcji „Wymagane kontrole”.
-- Sol nie uruchamia Claude'a, Fable ani Opusa. Niezależny reviewer jest uruchamiany wyłącznie przez runner na snapshotcie tylko do odczytu.
+- Sol nie uruchamia reviewera ani innego agenta. Niezależny reviewer jest uruchamiany wyłącznie przez runner na snapshotcie tylko do odczytu.
 - EPERM albo EACCES przy dostępie wewnętrznego sandboxu Sola do lokalnego portu PostgreSQL lub HTTP nie jest samo w sobie NEEDS_HUMAN, jeżeli dana kontrola należy do gates runnera. Sol zapisuje ograniczenie w raporcie i po poprawnej implementacji kończy swoją fazę; runner nadal wykona gate niezależnie.
 - Sol nie może deklarować niedostępnej albo niewykonanej kontroli jako PASS. Rzeczywiste niepowodzenie gate runnera nadal zatrzymuje workflow fail-closed.
 - Rzeczywisty problem implementacji, niejednoznaczne wymaganie albo decyzja bezpieczeństwa, biznesowa, kadrowa lub prawna nadal mogą wymagać NEEDS_HUMAN. Nie klasyfikuj innych błędów jako środowiskowych wyłącznie na podstawie luźnego podobieństwa tekstu.`;
@@ -473,7 +473,7 @@ const LEGACY_ANALYSIS_SOL_PHASE_OWNERSHIP_CONTRACT = `KONTRAKT WŁASNOŚCI FAZ �
 - Szerszy odczyt jest dozwolony wyłącznie dla konkretnej regresji, bezpieczeństwa albo kontraktu i wymaga krótkiego uzasadnienia ścieżki lub obszaru w summary.
 - Runner, nie Sol, zapisuje osobny artefakt w prywatnym katalogu run ID. Każda wykryta próba zapisu Sola do produktu zatrzymuje workflow fail-closed.
 - Sol może wykonywać wyłącznie niedestrukcyjne kontrole odczytowe potrzebne do analizy. Nie uruchamia pełnych gates aplikacji; runner egzekwuje wewnętrzne kontrole integralności zamiast command gates.
-- Sol nie uruchamia Claude'a, Fable ani Opusa. Niezależny reviewer jest uruchamiany wyłącznie przez runner na minimalnym snapshotcie tylko do odczytu.
+- Sol nie uruchamia reviewera ani innego agenta. Niezależny reviewer jest uruchamiany wyłącznie przez runner na minimalnym snapshotcie tylko do odczytu.
 - Sol nie może deklarować niedostępnej albo niewykonanej kontroli jako PASS.
 - Rzeczywista niejednoznaczność wymagania albo decyzja bezpieczeństwa, biznesowa, kadrowa lub prawna nadal może wymagać NEEDS_HUMAN. Nie klasyfikuj innych błędów jako środowiskowych na podstawie luźnego podobieństwa tekstu.`;
 
@@ -491,7 +491,7 @@ function legacyCodexPrompt({
       ? selectedTaskMode === 'analysis'
         ? 'PIERWSZA RUNDA — TASK-FIRST: najpierw przeczytaj całe ORYGINALNE ZADANIE. Następnie przeczytaj dokładne „Pliki review” oraz wyłącznie bezpośrednio istotne kontrakty potrzebne do pełnej analizy. Nie wykonuj bezpodstawnego ogólnego inventory ani audytu repo. Pole findingResponses musi być pustą tablicą, ponieważ nie otrzymałeś jeszcze findings.'
         : 'PIERWSZA RUNDA — TASK-FIRST: najpierw przeczytaj całe ORYGINALNE ZADANIE. Zacznij eksplorację od sekcji „Pliki startowe”, jeżeli istnieje, oraz bezpośrednio istotnych zależności, testów i kontraktów. Jeżeli sekcji nie ma, zacznij od plików wskazanych w zakresie i kryteriach. Nie wykonuj bezpodstawnego ogólnego inventory ani audytu repo. Pole findingResponses musi być pustą tablicą, ponieważ nie otrzymałeś jeszcze findings.'
-      : `RUNDA KOREKCYJNA — FINDINGS-FIRST: zacznij od poniższych nierozstrzygniętych findings Claude, ich file, anchorów, wskazanych miejsc oraz bezpośrednich testów i kontraktów. Nie czytaj ponownie całego zakresu ani repo bez konkretnej potrzeby regresji, bezpieczeństwa lub kontraktu. Pierwotne zadanie nadal wyznacza granice. Przeanalizuj każdy finding niezależnie od severity i zwróć dokładnie jedną odpowiedź findingResponses dla każdego findingId. Każda odpowiedź musi zawierać dokładnie wszystkie pola: findingId, status, analysis, evidence, fix, regressionTest, checks i question. Każdy wpis checks musi być krótką, przyciętą, pojedynczą linią tekstowej atestacji; nie umieszczaj tam nazw pól wyniku, fragmentów JSON, markerów ucięcia ani treści pełnego artefaktu. CONFIRMED wymaga reprodukcji opisanej w niepustych analysis i evidence, minimalnej poprawki opisanej w fix, niepustego regressionTest (test albo techniczne uzasadnienie jego braku) i niepustej listy checks; question musi być pustym stringiem. REJECTED wymaga niepustych analysis oraz evidence z próbą reprodukcji, dowodem albo konkretnym uzasadnieniem; fix, regressionTest i question muszą być pustymi stringami, a checks może być pustą tablicą; nie zmieniaj kodu wyłącznie dla zadowolenia reviewera. NEEDS_HUMAN wymaga niepustego question i zatrzymuje workflow; analysis, evidence, fix i regressionTest muszą być pustymi stringami, a checks pustą tablicą. Nie odpowiadaj na inne identyfikatory.${selectedTaskMode === 'analysis' ? ' Zwróć ponownie całą poprawioną analizę, nie patch ani samą zmienioną sekcję.' : ''}\n${JSON.stringify(findings, null, 2)}`;
+      : `RUNDA KOREKCYJNA — FINDINGS-FIRST: zacznij od poniższych nierozstrzygniętych findings reviewera, ich file, anchorów, wskazanych miejsc oraz bezpośrednich testów i kontraktów. Nie czytaj ponownie całego zakresu ani repo bez konkretnej potrzeby regresji, bezpieczeństwa lub kontraktu. Pierwotne zadanie nadal wyznacza granice. Przeanalizuj każdy finding niezależnie od severity i zwróć dokładnie jedną odpowiedź findingResponses dla każdego findingId. Każda odpowiedź musi zawierać dokładnie wszystkie pola: findingId, status, analysis, evidence, fix, regressionTest, checks i question. Każdy wpis checks musi być krótką, przyciętą, pojedynczą linią tekstowej atestacji; nie umieszczaj tam nazw pól wyniku, fragmentów JSON, markerów ucięcia ani treści pełnego artefaktu. CONFIRMED wymaga reprodukcji opisanej w niepustych analysis i evidence, minimalnej poprawki opisanej w fix, niepustego regressionTest (test albo techniczne uzasadnienie jego braku) i niepustej listy checks; question musi być pustym stringiem. REJECTED wymaga niepustych analysis oraz evidence z próbą reprodukcji, dowodem albo konkretnym uzasadnieniem; fix, regressionTest i question muszą być pustymi stringami, a checks może być pustą tablicą; nie zmieniaj kodu wyłącznie dla zadowolenia reviewera. NEEDS_HUMAN wymaga niepustego question i zatrzymuje workflow; analysis, evidence, fix i regressionTest muszą być pustymi stringami, a checks pustą tablicą. Nie odpowiadaj na inne identyfikatory.${selectedTaskMode === 'analysis' ? ' Zwróć ponownie całą poprawioną analizę, nie patch ani samą zmienioną sekcję.' : ''}\n${JSON.stringify(findings, null, 2)}`;
   const modeContract =
     selectedTaskMode === 'analysis'
       ? `TRYB ZADANIA: analysis (jawny tryb read-only). Nie zapisuj, nie twórz, nie usuwaj ani nie zmieniaj żadnego pliku working tree. Każda taka zmiana zatrzyma run. Czytaj wyłącznie zadanie, sekcję „Pliki review” oraz bezpośrednio konieczny kontekst zgodny z zadaniem; nie wykonuj nieograniczonego inventory. Pole changes musi być pustą tablicą.
@@ -500,8 +500,8 @@ Wynik strukturalny musi zawierać pole fullAnalysis z pełną, samodzielną anal
       : 'TRYB ZADANIA: implementation. Zachowaj dotychczasowy kontrakt implementacji, testów celowanych i raportu.';
   const workspaceContract =
     selectedTaskMode === 'analysis'
-      ? 'Możesz czytać wyłącznie pliki potrzebne według kontraktu skupionego kontekstu i uruchamiać lokalne, niedestrukcyjne kontrole odczytowe. Nie edytuj working tree. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj Claude.'
-      : 'Możesz czytać pliki potrzebne według kontraktu skupionego kontekstu, edytować pliki objęte zadaniem oraz konieczne lokalne korekty tego samego zaakceptowanego rezultatu zgodnie z kontraktem własności faz i uruchamiać lokalne, niedestrukcyjne kontrole. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj Claude.';
+      ? 'Możesz czytać wyłącznie pliki potrzebne według kontraktu skupionego kontekstu i uruchamiać lokalne, niedestrukcyjne kontrole odczytowe. Nie edytuj working tree. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj reviewera.'
+      : 'Możesz czytać pliki potrzebne według kontraktu skupionego kontekstu, edytować pliki objęte zadaniem oraz konieczne lokalne korekty tego samego zaakceptowanego rezultatu zgodnie z kontraktem własności faz i uruchamiać lokalne, niedestrukcyjne kontrole. Zachowaj istniejące zmiany użytkownika. Nie uruchamiaj reviewera.';
   const executionContract =
     selectedTaskMode === 'analysis'
       ? 'Nie uruchamiaj pełnych gates aplikacji z sekcji „Wymagane kontrole”. Wykonuj tylko celowane kontrole odczytowe potrzebne do analizy. Runner wykona wewnętrzne kontrole integralności, zapis artefaktu i niezależne review. Sam brak sieci nie jest powodem statusu BLOCKED, jeżeli wystarczają lokalne narzędzia i dane. Rzeczywista potrzeba sieci albo brak wymaganej lokalnej zależności nadal wymaga bezpiecznego statusu BLOCKED.'
@@ -510,7 +510,7 @@ Wynik strukturalny musi zawierać pole fullAnalysis z pełną, samodzielną anal
 
 Kompresja dotyczy wyłącznie raportu końcowego. Jakość implementacji, testów i dokumentacji pozostaje pełna.
 
-Bieżący wykonawca Codex używa modelu ${selectedCodexModel}. Nazwy Sol/SOL/sol i powiązane identyfikatory są historycznymi nazwami kompatybilności tego wykonawcy.
+Bieżący wykonawca używa modelu ${selectedCodexModel}. Nazwy Sol/SOL/sol i powiązane identyfikatory są historycznymi nazwami kompatybilności tego wykonawcy.
 
 Pracujesz w rzeczywistym working tree repozytorium. ${roundFocus}
 ${selectedTaskMode === 'analysis' ? 'Pierwotny zakres poniżej pozostaje jedynym zakresem i nie może być rozszerzony.' : 'Pierwotny zaakceptowany rezultat i wyraźne wykluczenia pozostają granicami zadania. Konieczne lokalne korekty tego samego rezultatu są objęte zgodą na ukończenie, także gdy wymagają dodatkowej ścieżki; nie oznaczają zgody na nową funkcjonalność ani nową nierozstrzygniętą decyzję.'}
@@ -552,12 +552,12 @@ function legacyClaudePrompt({
 }) {
   const selectedTaskMode = resolveTaskMode(taskMode);
   const correctionContext = correctionContextPath
-    ? `To jest kolejne review. Poprzednie findings ze zweryfikowanymi findingId, stabilnymi polami technicznymi oraz formalne odpowiedzi Codexa znajdują się w ${correctionContextPath}. Użyj wcześniejszego findingId tylko przy zgodnych polach file, anchor i category. Nowy problem pozostaw bez findingId; runner nada go z tych pól.`
-    : 'To jest pierwsze, niezależne review. Nie otrzymujesz reasoning, samoocen ani uzasadnień Codexa.';
+    ? `To jest kolejne review. Poprzednie findings ze zweryfikowanymi findingId, stabilnymi polami technicznymi oraz formalne odpowiedzi wykonawcy znajdują się w ${correctionContextPath}. Użyj wcześniejszego findingId tylko przy zgodnych polach file, anchor i category. Nowy problem pozostaw bez findingId; runner nada go z tych pól.`
+    : 'To jest pierwsze, niezależne review. Nie otrzymujesz reasoning, samoocen ani uzasadnień wykonawcy.';
   if (selectedTaskMode === 'analysis') {
     return `Wykonaj niezależne, merytoryczne i wyłącznie read-only review pełnej analizy Sola. To nie jest code review ani review pustego diffu.
 
-Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj Codexa ani subagentów. Snapshot jest minimalnym, fizycznie read-only pakietem; nie próbuj czytać niczego poza nim i nie wykonuj inventory.
+Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj wykonawcy ani subagentów. Snapshot jest minimalnym, fizycznie read-only pakietem; nie próbuj czytać niczego poza nim i nie wykonuj inventory.
 
 Czytaj w dokładnej kolejności:
 1. oryginalne zadanie: ${originalTaskPath};
@@ -583,7 +583,7 @@ ORYGINALNE ZADANIE jest zapisane wyłącznie w ${originalTaskPath}; nie polegaj 
     : 'Kolejność analizy: pierwotne zadanie, pełny diff, zaufane gates, pliki zmienione przez diff, następnie ich bezpośrednie zależności, testy i kontrakty potrzebne do oceny.';
   return `Wykonaj niezależny, wyłącznie read-only ${task.quality?.docs ? 'review kontraktu dokumentacji' : 'code review'} aktualnego stanu, stosując podejście ${contractCorrection ? 'FINDINGS-FIRST' : 'DIFF-FIRST'}.
 
-Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj Codexa ani subagentów. Oceń wyłącznie zgodność z pierwotnym zadaniem, instrukcjami repo, bezpieczeństwo, regresje, testy i dokumentację.
+Nie edytuj. Nie twórz planu implementacji. Nie proś o zatwierdzenie edycji. Nie uruchamiaj wykonawcy ani subagentów. Oceń wyłącznie zgodność z pierwotnym zadaniem, instrukcjami repo, bezpieczeństwo, regresje, testy i dokumentację.
 
 Repozytorium jest fizyczną kopią tylko do odczytu. Instrukcje repo i oryginalne zadanie: ${instructionsPath}. Pełny diff względem HEAD, wraz z plikami nieśledzonymi: ${diffPath}. Zaufany, ograniczony raport rzeczywistych gates runnera: ${gatesPath}. Aktualny stan wszystkich śledzonych i nieignorowanych plików znajduje się w bieżącym katalogu.
 
@@ -595,7 +595,7 @@ ${correctionContext}
 
 ${task.quality?.docs ? `Klasa ${task.taskClass}: oceń kontrakt dokumentacji ze źródłami. Gates wymagane w tej rundzie: ${task.checks.join(', ')}. Nie wymagaj dodatkowych testów aplikacji ani pełnej gate poza jawnym zadaniem. W korekcie potwierdź poprzednie findings i dowody ich usunięcia.` : ''}
 
-Zwróć wyłącznie wynik zgodny ze schematem. Dla każdego findingu podaj severity, znormalizowaną ścieżkę repo file, stabilny symbol lub semantyczny anchor, precyzyjną techniczną category, miejsce diagnostyczne location, skutek i rekomendację. Nie używaj numeru linii jako anchoru. Te same file, anchor i category oznaczają ten sam problem mimo zmiany severity, tekstu lub linii; dwa różne problemy muszą różnić się category. Verdict jest oceną reviewera; runner niezależnie obliczy wynik według polityki zero findings. APPROVE stosuj wyłącznie przy pustej liście findings wszystkich poziomów BLOCKER/HIGH/MEDIUM/LOW. REQUEST_CHANGES stosuj przy każdym findingu niezależnie od severity. W checks podaj wykonane odczyty/kontrole, bez przedstawiania deklaracji Codexa jako wyniku runnera. confirmedNoChanges=true tylko jeśli niczego nie zmieniłeś.
+Zwróć wyłącznie wynik zgodny ze schematem. Dla każdego findingu podaj severity, znormalizowaną ścieżkę repo file, stabilny symbol lub semantyczny anchor, precyzyjną techniczną category, miejsce diagnostyczne location, skutek i rekomendację. Nie używaj numeru linii jako anchoru. Te same file, anchor i category oznaczają ten sam problem mimo zmiany severity, tekstu lub linii; dwa różne problemy muszą różnić się category. Verdict jest oceną reviewera; runner niezależnie obliczy wynik według polityki zero findings. APPROVE stosuj wyłącznie przy pustej liście findings wszystkich poziomów BLOCKER/HIGH/MEDIUM/LOW. REQUEST_CHANGES stosuj przy każdym findingu niezależnie od severity. W checks podaj wykonane odczyty/kontrole, bez przedstawiania deklaracji wykonawcy jako wyniku runnera. confirmedNoChanges=true tylko jeśli niczego nie zmieniłeś.
 
 ORYGINALNE ZADANIE:
 ---
@@ -1185,7 +1185,7 @@ test('runner surface contract: prompts named exports and no imports', async () =
     ],
     'prompts named exports',
   );
-  // The prompt module has no dependencies(no imports, re-exports or dynamic imports):
+  // The prompt module has no dependencies (no imports, re-exports or dynamic imports):
   // the core passes it validated values.
   const source = await readFile(
     new URL('./agent-review-prompts.mjs', import.meta.url),
@@ -1527,14 +1527,14 @@ test('runner surface contract: stage values', async () => {
       'analysis',
       'approve',
       'checks',
-      'claude',
       'cleanup',
-      'codex',
       'diagnostics',
+      'implementer',
       'post-checks',
-      'post-codex',
+      'post-implementer',
       'post-review',
       'preflight',
+      'reviewer',
       'snapshot',
       // PROFILE_MODIFIED of an error without a stage (profileViolationFirst).
       'workflow',
@@ -2588,7 +2588,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
               )
                 throw new AgentWorkflowError('Synthetic primary failure.', {
                   code: 'CODEX_PROCESS_FAILED',
-                  stage: 'codex',
+                  stage: 'implementer',
                 });
               return mode === 'analysis'
                 ? completedAnalysisCodex(round)
@@ -2736,19 +2736,19 @@ test('schemaVersion: CLI fallback preserves JSON and exit codes', async () => {
 
 test('STOP metadata: input matrix and no regression', async (t) => {
   const commonCases = [
-    ['codex-process', 'CODEX_PROCESS_FAILED', 'codex'],
-    ['needs-human', 'HUMAN_DECISION_REQUIRED', 'codex'],
-    ['head-drift', 'UNEXPECTED_GIT_MUTATION', 'post-codex'],
-    ['branch-drift', 'UNEXPECTED_GIT_MUTATION', 'post-codex'],
-    ['task-drift-review', 'WORKING_TREE_CHANGED', 'claude'],
-    ['secret', 'SECRET_DETECTED', 'post-codex'],
+    ['codex-process', 'CODEX_PROCESS_FAILED', 'implementer'],
+    ['needs-human', 'HUMAN_DECISION_REQUIRED', 'implementer'],
+    ['head-drift', 'UNEXPECTED_GIT_MUTATION', 'post-implementer'],
+    ['branch-drift', 'UNEXPECTED_GIT_MUTATION', 'post-implementer'],
+    ['task-drift-review', 'WORKING_TREE_CHANGED', 'reviewer'],
+    ['secret', 'SECRET_DETECTED', 'post-implementer'],
     ['snapshot-error', 'INTERRUPTED', 'snapshot'],
-    ['review-error', 'CLAUDE_PROCESS_FAILED', 'claude'],
-    ['max-rounds', 'MAX_ROUNDS', 'claude'],
+    ['review-error', 'CLAUDE_PROCESS_FAILED', 'reviewer'],
+    ['max-rounds', 'MAX_ROUNDS', 'reviewer'],
     ['cleanup-success', 'CLEANUP_FAILED', 'cleanup'],
-    ['cleanup-stop', 'CODEX_PROCESS_FAILED', 'codex'],
+    ['cleanup-stop', 'CODEX_PROCESS_FAILED', 'implementer'],
     ['cleanup-dry-run', 'CLEANUP_FAILED', 'cleanup'],
-    ['mutated-task', 'CODEX_PROCESS_FAILED', 'codex'],
+    ['mutated-task', 'CODEX_PROCESS_FAILED', 'implementer'],
     ['approve', null, null],
     ['dry-run', null, null],
     ['preflight-invalid', 'INVALID_TASK', 'preflight'],
@@ -2771,12 +2771,12 @@ test('STOP metadata: input matrix and no regression', async (t) => {
             ['gate-integrity', 'CHECK_FAILED', 'checks'],
           ]
         : [
-            ['artifact-before', 'ANALYSIS_ARTIFACT_INTEGRITY_FAILED', 'claude'],
-            ['artifact-after', 'ANALYSIS_ARTIFACT_INTEGRITY_FAILED', 'claude'],
-            ['package-after', 'SNAPSHOT_CHANGED', 'claude'],
+            ['artifact-before', 'ANALYSIS_ARTIFACT_INTEGRITY_FAILED', 'reviewer'],
+            ['artifact-after', 'ANALYSIS_ARTIFACT_INTEGRITY_FAILED', 'reviewer'],
+            ['package-after', 'SNAPSHOT_CHANGED', 'reviewer'],
             ['write-codex', 'ANALYSIS_WORKING_TREE_WRITE', 'analysis'],
-            ['review-unconfirmed', 'ANALYSIS_REVIEW_UNCONFIRMED', 'claude'],
-            ['review-not-read-only', 'INVALID_AGENT_OUTPUT', 'claude'],
+            ['review-unconfirmed', 'ANALYSIS_REVIEW_UNCONFIRMED', 'reviewer'],
+            ['review-not-read-only', 'INVALID_AGENT_OUTPUT', 'reviewer'],
           ]),
     ];
     for (const [name, expectedCode, expectedStage] of cases) {
@@ -2804,7 +2804,7 @@ test('STOP metadata: input matrix and no regression', async (t) => {
           'Syntetyczny błąd Codexa.',
           {
             code: 'CODEX_PROCESS_FAILED',
-            stage: 'codex',
+            stage: 'implementer',
             resume: 'Sprawdź syntetyczny stan przed ponowną decyzją.',
             report: partial,
             diagnostic: result('', 1, 'syntetyczna diagnostyka procesu\n'),
@@ -4144,7 +4144,7 @@ test('a dependency input change after Codex stops the workflow before QA and Cla
           }),
           (error) =>
             error.code === 'DEPENDENCY_INPUT_CHANGED' &&
-            error.stage === 'post-codex' &&
+            error.stage === 'post-implementer' &&
             /pnpm install --frozen-lockfile/.test(error.message),
         );
         assert.equal(
@@ -4315,7 +4315,7 @@ test('a change to any protected file by Codex is detected', async (t) => {
           }),
           (error) =>
             error.code === 'DEPENDENCY_METADATA_CHANGED' &&
-            error.stage === 'post-codex',
+            error.stage === 'post-implementer',
         );
       } finally {
         await rm(directory, { recursive: true, force: true });
@@ -4722,7 +4722,7 @@ test('invalid JSON and a finding without stable fields are rejected', () => {
           },
         }),
       ),
-    /Finding Claude ma niewłaściwe pola/,
+    /Finding reviewera ma niewłaściwe pola/,
   );
   assert.throws(
     () =>
@@ -5218,7 +5218,7 @@ test('NEEDS_HUMAN stops the round before gates and the next review', async () =>
       }),
       (error) =>
         error.code === 'HUMAN_DECISION_REQUIRED' &&
-        error.stage === 'codex' &&
+        error.stage === 'implementer' &&
         error.report.findings.unresolved.length === 1,
     );
     assert.equal(reviewCalls, 1);
@@ -5526,7 +5526,7 @@ test('a missing response in a correction stops the workflow before further gates
       }),
       (error) => {
         assert.equal(error.code, 'INVALID_AGENT_OUTPUT');
-        assert.equal(error.stage, 'codex');
+        assert.equal(error.stage, 'implementer');
         assert.equal(error.report.findings.unresolved.length, 4);
         assert.deepEqual(error.report.findingPolicy.unresolved, {
           BLOCKER: 1,
@@ -5977,7 +5977,7 @@ test('test count comes from the full output before report truncation', async () 
   assert.equal('testCount' in markerReport.gates[0], false);
 });
 
-for (const stage of ['codex', 'snapshot', 'claude']) {
+for (const stage of ['implementer', 'snapshot', 'reviewer']) {
   test(`SIGINT during stage ${stage} stops the workflow`, async () => {
     const directory = await createRepository();
     try {
@@ -5988,7 +5988,7 @@ for (const stage of ['codex', 'snapshot', 'claude']) {
       await assert.rejects(
         runFixture(directory, {
           codexRound:
-            stage === 'codex'
+            stage === 'implementer'
               ? async () => {
                   throw interruption;
                 }
@@ -6000,7 +6000,7 @@ for (const stage of ['codex', 'snapshot', 'claude']) {
                 }
               : undefined,
           claudeReview:
-            stage === 'claude'
+            stage === 'reviewer'
               ? async () => {
                   throw interruption;
                 }
@@ -6025,7 +6025,7 @@ test('timeout and SIGINT clean up both isolated pnpm copies', async () => {
       await assert.rejects(
         runFixture(directory, {
           codexRound: async () => {
-            throw new AgentWorkflowError(message, { code, stage: 'codex' });
+            throw new AgentWorkflowError(message, { code, stage: 'implementer' });
           },
           workflow: {
             prepareCheckEnvironment: async (options) => {
@@ -6067,7 +6067,7 @@ test('process timeout terminates the child process group', async () => {
   const processResult = await runner.run(
     process.execPath,
     ['-e', 'setInterval(() => {}, 1000)'],
-    { timeoutMs: 50, stage: 'codex' },
+    { timeoutMs: 50, stage: 'implementer' },
   );
   assert.equal(processResult.timedOut, true);
   assert.notEqual(processResult.code, 0);
@@ -6091,7 +6091,7 @@ setInterval(() => {}, 1000);
       markReady = resolvePromise;
     });
     const running = runner.run(process.execPath, ['-e', parentSource], {
-      stage: 'codex',
+      stage: 'implementer',
       timeoutMs: 1_000,
       onStdoutChunk(chunk) {
         buffered += chunk;
@@ -6110,8 +6110,8 @@ setInterval(() => {}, 1000);
   },
 );
 
-test('a Codex and Claude timeout is reported as a separate stop condition', async () => {
-  for (const stage of ['codex', 'claude']) {
+test('an implementer and reviewer timeout is reported as a separate stop condition', async () => {
+  for (const stage of ['implementer', 'reviewer']) {
     const directory = await createRepository();
     let stoppedReport;
     try {
@@ -6122,13 +6122,13 @@ test('a Codex and Claude timeout is reported as a separate stop condition', asyn
       await assert.rejects(
         runFixture(directory, {
           codexRound:
-            stage === 'codex'
+            stage === 'implementer'
               ? async () => {
                   throw timeout;
                 }
               : undefined,
           claudeReview:
-            stage === 'claude'
+            stage === 'reviewer'
               ? async () => {
                   throw timeout;
                 }
@@ -6140,11 +6140,11 @@ test('a Codex and Claude timeout is reported as a separate stop condition', asyn
           assert.equal(error.report.sol.plannedEffort, 'high');
           assert.equal(
             error.report.sol.effectiveEffort,
-            stage === 'codex' ? null : 'high',
+            stage === 'implementer' ? null : 'high',
           );
           assert.equal(
             error.report.sol.runs[0].status,
-            stage === 'codex' ? 'FAILED' : 'COMPLETED',
+            stage === 'implementer' ? 'FAILED' : 'COMPLETED',
           );
           stoppedReport = error.report;
           return true;
@@ -6323,7 +6323,7 @@ test('a baseline synthetic URL does not block, but a new secret in the same file
       }),
       (error) =>
         error.code === 'SECRET_DETECTED' &&
-        error.stage === 'post-codex' &&
+        error.stage === 'post-implementer' &&
         !error.message.includes('production-looking-password'),
     );
   } finally {
@@ -6543,7 +6543,7 @@ test('staging during a Codex round stops the workflow', async () => {
         },
       }),
       (error) =>
-        error.code === 'STAGED_CHANGES' && error.stage === 'post-codex',
+        error.code === 'STAGED_CHANGES' && error.stage === 'post-implementer',
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -6861,7 +6861,7 @@ test('a program that fails without reading its input settles on its own exit', a
   const runner = createProcessRunner({ output: { write() {} } });
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const child = await runner.run('/bin/sh', ['-c', 'echo failed >&2; exit 1'], {
-      stage: 'codex',
+      stage: 'implementer',
       input: PROMPT_OVER_PIPE_BUFFER,
     });
     assert.equal(child.code, 1);
@@ -6877,12 +6877,12 @@ test('a program that exits with 0 without reading its input is a process error',
       runner,
       '/bin/sh',
       ['-c', 'exec 0<&-; sleep 0.2; exit 0'],
-      { stage: 'codex', input: PROMPT_OVER_PIPE_BUFFER },
+      { stage: 'implementer', input: PROMPT_OVER_PIPE_BUFFER },
       'Syntetyczny agent',
     ),
     (error) =>
       error.code === 'PROCESS_ERROR' &&
-      error.stage === 'codex' &&
+      error.stage === 'implementer' &&
       /^Syntetyczny agent: .*\((EPIPE|ERR_STREAM_DESTROYED)\)\.$/.test(error.message),
   );
   assert.equal(runner.hasActiveProcess(), false);
@@ -6919,7 +6919,7 @@ test('exact structured stdout is not streamed as diagnostics', async () => {
     process.execPath,
     ['-e', `process.stdout.write(${JSON.stringify(structured)})`],
     {
-      stage: 'codex',
+      stage: 'implementer',
       exactStdoutLimitBytes: 64 * 1024,
       streamOutput: true,
       liveOutput: true,
@@ -7133,7 +7133,7 @@ test('a cleanup failure does not mask the original workflow error', async () => 
         codexRound: async () => {
           throw new AgentWorkflowError('Pierwotny błąd syntetyczny.', {
             code: 'SYNTHETIC_PRIMARY',
-            stage: 'codex',
+            stage: 'implementer',
           });
         },
         workflow: {
@@ -7148,7 +7148,7 @@ test('a cleanup failure does not mask the original workflow error', async () => 
       captured = error;
     }
     assert.equal(captured.code, 'SYNTHETIC_PRIMARY');
-    assert.equal(captured.stage, 'codex');
+    assert.equal(captured.stage, 'implementer');
     assert.equal(captured.report.code, 'SYNTHETIC_PRIMARY');
     assertInputMetadata(captured.report, expected);
     assert.equal(captured.report.warnings.length, 1);
@@ -8587,7 +8587,7 @@ test('fixed phase ownership contract separates SOL, gates and read-only review',
     contract,
     /Po SOL PASS.*runner.*wszystkie polecenia.*Wymagane kontrole/s,
   );
-  assert.match(contract, /nie uruchamia Claude'a, Fable ani Opusa/);
+  assert.match(contract, /Sol nie uruchamia reviewera ani innego agenta\./);
   assert.match(
     contract,
     /reviewer.*wyłącznie przez runner.*snapshotcie tylko do odczytu/s,
@@ -8843,7 +8843,7 @@ test('Codex args enforce model, reasoning, sandbox, no approval and the Git guar
     assert.ok(call.args.includes('model_reasoning_effort="high"'));
     assert.match(
       call.options.input,
-      /Bieżący wykonawca Codex używa modelu gpt-6\.1-sol/,
+      /Bieżący wykonawca używa modelu gpt-6\.1-sol/,
     );
     assert.match(
       call.options.input,
@@ -8995,7 +8995,7 @@ test('Codex analysis uses a read-only sandbox and requires the full artifact fie
     assert.ok(call.args.includes('model_reasoning_effort="high"'));
     assert.match(
       call.options.input,
-      /Bieżący wykonawca Codex używa modelu gpt-6\.1-sol/,
+      /Bieżący wykonawca używa modelu gpt-6\.1-sol/,
     );
     assert.deepEqual(
       call.args.slice(call.args.indexOf('-s'), call.args.indexOf('-s') + 2),
@@ -9153,7 +9153,7 @@ test('codex exec and both resumes use CODEX_MODEL and the same selected effort',
       ]);
       assert.ok(
         call.options.input.includes(
-          `Bieżący wykonawca Codex używa modelu ${selectedModel}.`,
+          `Bieżący wykonawca używa modelu ${selectedModel}.`,
         ),
       );
       assertCompletionAuthorization(call.options.input);
@@ -9180,7 +9180,7 @@ test('codex exec and both resumes use CODEX_MODEL and the same selected effort',
       assert.match(call.options.input, /RUNDA KOREKCYJNA — FINDINGS-FIRST/i);
       assert.match(
         call.options.input,
-        /findings Claude.*file, anchorów.*bezpośrednich testów i kontraktów/is,
+        /findings reviewera.*file, anchorów.*bezpośrednich testów i kontraktów/is,
       );
       assert.match(
         call.options.input,
@@ -9630,7 +9630,7 @@ function syntheticClaudeFailure(
 ) {
   return new WorkflowError('Syntetyczne niepowodzenie Claude.', {
     code,
-    stage: 'claude',
+    stage: 'reviewer',
     diagnostic: result('', 1, stderr),
   });
 }
@@ -9778,18 +9778,18 @@ test('disallowed errors stop the review without Opus', async (t) => {
       'schema',
       new AgentWorkflowError('Niepoprawny wynik.', {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'claude',
+        stage: 'reviewer',
       }),
     ],
     [
       'timeout',
-      new AgentWorkflowError('Timeout.', { code: 'TIMEOUT', stage: 'claude' }),
+      new AgentWorkflowError('Timeout.', { code: 'TIMEOUT', stage: 'reviewer' }),
     ],
     [
       'anulowanie',
       new AgentWorkflowError('Przerwano.', {
         code: 'INTERRUPTED',
-        stage: 'claude',
+        stage: 'reviewer',
       }),
     ],
     ['auth', syntheticClaudeFailure('authentication failed: invalid API key')],
@@ -9968,14 +9968,14 @@ test('the critical-opus report and dashboard show Opus xhigh, one attempt and no
       panel,
       /Review critical-opus · próby 1 · fallback dozwolony nie/,
     );
-    assert.match(panel, /Plan Codex gpt-6\.1-sol\/high/);
+    assert.match(panel, /Plan implementer gpt-6\.1-sol\/high/);
     assert.match(panel, /Review plan claude-opus-5\/xhigh/);
     reduceDashboardEvent(state, { type: 'result', report }, 1);
     panel = renderDashboard(state, { width: 80, nowMs: 1 });
     assert.match(panel, /Review critical-opus · próby 1/);
     assert.match(
       panel,
-      /Codex plan gpt-6\.1-sol\/high · effective gpt-6\.1-sol\/high/,
+      /Implementer plan gpt-6\.1-sol\/high · effective gpt-6\.1-sol\/high/,
     );
     assert.match(panel, /fallback dozwolony nie · użyty nie/);
   } finally {
@@ -11187,8 +11187,8 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
       taskPath: 'task.md',
       taskMode: 'implementation',
       reviewProfile: 'critical',
-      codexModel: 'gpt-6.1-sol',
-      solEffort: 'high',
+      implementerModel: 'gpt-6.1-sol',
+      implementerEffort: 'high',
       dryRun: false,
       verbose: true,
       noAnimation: true,
@@ -11234,7 +11234,8 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
   );
   for (const solEffort of SOL_EFFORTS) {
     assert.equal(
-      parseAgentArguments(['task.md', `--sol-effort=${solEffort}`]).solEffort,
+      parseAgentArguments(['task.md', `--sol-effort=${solEffort}`])
+        .implementerEffort,
       solEffort,
     );
     assert.equal(
@@ -11244,7 +11245,7 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
         'task.md',
         '--sol-effort',
         solEffort,
-      ]).solEffort,
+      ]).implementerEffort,
       solEffort,
     );
   }
@@ -11294,6 +11295,8 @@ test('a CLI option without a value is an argument error', () => {
   });
   for (const option of [
     '--task-mode',
+    '--implementer-model',
+    '--implementer-effort',
     '--codex-model',
     '--sol-effort',
     '--review-profile',
@@ -11314,7 +11317,7 @@ test('a CLI option without a value is an argument error', () => {
   );
 });
 
-test('CLI usage explicitly lists the Sol effort and critical-opus', async () => {
+test('CLI usage explicitly lists the implementer effort and critical-opus', async () => {
   // CLI copy with the default profile in locale 'pl'.
   const { directory } = await createCliPreflightRepository({ locale: 'pl' });
   let child;
@@ -11333,7 +11336,9 @@ test('CLI usage explicitly lists the Sol effort and critical-opus', async () => 
     await rm(directory, { recursive: true, force: true });
   }
   assert.equal(child.status, 2);
-  assert.match(child.stderr, /--sol-effort medium\|high\|xhigh\|max/);
+  assert.match(child.stderr, /--implementer-effort medium\|high\|xhigh\|max/);
+  assert.match(child.stderr, /--implementer-model <id>/);
+  assert.doesNotMatch(child.stderr, /--sol-effort|--codex-model/);
   assert.match(child.stderr, /--task-mode implementation\|analysis/);
   assert.match(
     child.stderr,
@@ -11510,7 +11515,7 @@ test('the renderer shows real stages, times, testCount and both results', () => 
     2_000,
   );
   let view = renderDashboard(state, { width: 80, nowMs: 4_500 });
-  assert.match(view, /CODEX\s+Implementacja · 2\.5s/);
+  assert.match(view, /IMPLEMENTER\s+Implementacja · 2\.5s/);
   assert.doesNotMatch(view, /%|ETA|reasoning/i);
   reduceDashboardEvent(
     state,
@@ -11850,9 +11855,9 @@ test('append-only has a heartbeat without ANSI, and JSON writes no content', () 
     output.value(),
     /REVIEW critical-opus · próby 1 · fallback dozwolony nie/,
   );
-  assert.match(output.value(), /SOL plan gpt-6-sol\/xhigh/);
+  assert.match(output.value(), /IMPLEMENTER plan gpt-6-sol\/xhigh/);
   assert.match(output.value(), /REVIEW plan claude-opus-5\/xhigh/);
-  assert.match(output.value(), /CLAUDE\s+ACTIVE.*11s/);
+  assert.match(output.value(), /REVIEWER\s+ACTIVE.*11s/);
   assert.equal(output.value().includes('\u001b'), false);
 
   const jsonOutput = createMemoryOutput({ isTTY: true });
@@ -12077,9 +12082,9 @@ test('the stable append-only and JSON modes contain no ANSI', () => {
 
 test('HUD RGB: five semantic colors in wide and compact TTY', () => {
   const palette = [
-    ['CODEX', 'SOL', '\u001b[38;2;34;211;238m'],
+    ['IMPLEMENTER', 'SOL', '\u001b[38;2;34;211;238m'],
     ['GATES', 'QUALITY GATES', '\u001b[38;2;251;191;36m'],
-    ['CLAUDE', 'CLAUDE', '\u001b[38;2;167;139;250m'],
+    ['REVIEWER', 'CLAUDE', '\u001b[38;2;167;139;250m'],
     ['APPROVE', undefined, '\u001b[38;2;74;222;128m'],
     ['FAILED', undefined, '\u001b[38;2;248;113;113m'],
   ];
@@ -12105,7 +12110,7 @@ test('HUD RGB: five semantic colors in wide and compact TTY', () => {
       if (!badge)
         assert.ok(colored.includes(`\u001b[1m${rgb}${label}\u001b[0m`));
       if (width === 120 && badge) {
-        const waiting = badge === 'CLAUDE' ? 'GATES' : 'CLAUDE';
+        const waiting = badge === 'CLAUDE' ? 'GATES' : 'REVIEWER';
         assert.ok(colored.includes(`\u001b[2m${waiting}\u001b[0m`));
       }
       assert.doesNotMatch(colored, /\u001b\[(?:3[0-7]|9[0-7])m/);
@@ -12541,9 +12546,9 @@ test('HUD: dimensions, graphemes, control characters and a bounded feed', () => 
   }
   assert.equal(state.feed.length, 3);
   assert.deepEqual(state.feed, [
-    'CODEX · PASS',
-    'CODEX · START',
-    'CODEX · PASS',
+    'IMPLEMENTER · PASS',
+    'IMPLEMENTER · START',
+    'IMPLEMENTER · PASS',
   ]);
   assert.ok(state.feed.every((line) => stringWidth(line) <= 64));
   for (const width of [1, 8, 24, 63, 64, 80, 120, 160]) {
@@ -12592,7 +12597,7 @@ test('HUD: compact snapshot and aligned tiles of the wide dashboard', () => {
   }).split('\n');
   assert.equal(
     wide[5],
-    '│ PREFLIGHT          gpt-6-astra        GATES              SNAPSHOT           CLAUDE               │',
+    '│ PREFLIGHT          gpt-6-astra        GATES              SNAPSHOT           REVIEWER             │',
   );
   assert.equal(
     wide[6],
@@ -13097,7 +13102,7 @@ const invalidCodexModels = [
 ];
 
 test('CLI model: default, open identifier, fail-closed and duplicates', () => {
-  assert.equal(parseAgentArguments(['task.md']).codexModel, 'gpt-6.1-sol');
+  assert.equal(parseAgentArguments(['task.md']).implementerModel, 'gpt-6.1-sol');
   for (const codexModel of [
     'gpt-6.1-sol',
     'gpt-6-sol',
@@ -13110,7 +13115,7 @@ test('CLI model: default, open identifier, fail-closed and duplicates', () => {
       [`--codex-model=${codexModel}`],
     ]) {
       assert.equal(
-        parseAgentArguments(['task.md', ...args]).codexModel,
+        parseAgentArguments(['task.md', ...args]).implementerModel,
         codexModel,
       );
     }
@@ -13137,6 +13142,126 @@ test('CLI model: default, open identifier, fail-closed and duplicates', () => {
       parseAgentArguments(['task.md', ...args]).error,
       /--codex-model/,
     );
+});
+
+test('CLI implementer options: new names, deprecated aliases and their conflict', () => {
+  for (const args of [
+    ['--implementer-model', 'gpt-6-astra'],
+    ['--implementer-model=gpt-6-astra'],
+    ['--codex-model', 'gpt-6-astra'],
+  ]) {
+    assert.equal(
+      parseAgentArguments(['task.md', ...args]).implementerModel,
+      'gpt-6-astra',
+      args.join(' '),
+    );
+  }
+  for (const args of [
+    ['--implementer-effort', 'xhigh'],
+    ['--implementer-effort=xhigh'],
+    ['--implementer-effort=xhigh', '--implementer-effort=xhigh'],
+    ['--sol-effort', 'xhigh'],
+  ]) {
+    assert.equal(
+      parseAgentArguments(['task.md', ...args]).implementerEffort,
+      'xhigh',
+      args.join(' '),
+    );
+  }
+  // The same validation as the aliases, with the given option's name.
+  assert.match(
+    parseAgentArguments(['task.md', '--implementer-model', 'bad model']).error,
+    /^Opcja --implementer-model wymaga pojedynczego identyfikatora/,
+  );
+  assert.match(
+    parseAgentArguments(['task.md', '--implementer-model']).error,
+    /Opcja --implementer-model wymaga wartości\./,
+  );
+  assert.equal(
+    parseAgentArguments([
+      'task.md',
+      '--implementer-model=a',
+      '--implementer-model=a',
+    ]).error,
+    'Opcję --implementer-model można podać tylko raz.',
+  );
+  assert.match(
+    parseAgentArguments(['task.md', '--implementer-effort=ultra']).error,
+    /^Opcja --implementer-effort wymaga wartości medium, high, xhigh albo max\.$/,
+  );
+  assert.equal(
+    parseAgentArguments([
+      'task.md',
+      '--implementer-effort=high',
+      '--implementer-effort=max',
+    ]).error,
+    'Opcja --implementer-effort ma sprzeczne wartości high i max.',
+  );
+  // An alias together with its new option is an argument error, in either
+  // order and also with equal values.
+  for (const args of [
+    ['--implementer-model=a', '--codex-model=a'],
+    ['--codex-model', 'a', '--implementer-model', 'b'],
+  ]) {
+    assert.equal(
+      parseAgentArguments(['task.md', ...args]).error,
+      'Opcji --implementer-model i jej przestarzałego aliasu --codex-model nie można podać razem.',
+      args.join(' '),
+    );
+  }
+  for (const args of [
+    ['--implementer-effort=high', '--sol-effort=high'],
+    ['--sol-effort', 'high', '--implementer-effort', 'max'],
+  ]) {
+    assert.equal(
+      parseAgentArguments(['task.md', ...args]).error,
+      'Opcji --implementer-effort i jej przestarzałego aliasu --sol-effort nie można podać razem.',
+      args.join(' '),
+    );
+  }
+  assert.equal(
+    parseAgentArguments(
+      ['task.md', '--implementer-model=a', '--codex-model=a'],
+      { ...TEST_PROFILE, locale: 'en' },
+    ).error,
+    'The --implementer-model option and its deprecated alias --codex-model cannot be given together.',
+  );
+});
+
+test('programmatic implementer options: new names win over the deprecated aliases', async () => {
+  const directory = await createRepository();
+  try {
+    const report = await runAgentReviewLoop({
+      profile: TEST_PROFILE,
+      runner: createMockRunner(),
+      output: { write() {} },
+      repositoryRoot: directory,
+      taskPath: 'task.md',
+      implementerModel: 'gpt-6-astra',
+      implementerEffort: 'max',
+      codexModel: 'gpt-6-sol',
+      solEffort: 'medium',
+      dryRun: true,
+      prepareCheckEnvironment: fakePrepareCheckEnvironment,
+    });
+    assert.equal(report.implementer.model, 'gpt-6-astra');
+    assert.equal(report.implementer.effort, 'max');
+    const aliasReport = await runAgentReviewLoop({
+      profile: TEST_PROFILE,
+      runner: createMockRunner(),
+      output: { write() {} },
+      repositoryRoot: directory,
+      taskPath: 'task.md',
+      codexModel: 'gpt-6-sol',
+      solEffort: 'medium',
+      dryRun: true,
+      prepareCheckEnvironment: fakePrepareCheckEnvironment,
+    });
+    assert.equal(aliasReport.implementer.model, 'gpt-6-sol');
+    assert.equal(aliasReport.implementer.effort, 'medium');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('programmatic model: validation before tools and before the round is written', async () => {
@@ -13191,7 +13316,7 @@ test('STOPPED keeps the override and the last finished pair after a resume error
           if (round === 2)
             throw new AgentWorkflowError('Syntetyczna odmowa CLI.', {
               code: 'COMMAND_FAILED',
-              stage: 'codex',
+              stage: 'implementer',
             });
           await writeFile(join(directory, 'implementation.txt'), 'synthetic\n');
           return completedCodex(round, {}, findings);
@@ -13257,7 +13382,7 @@ test('HUD shows the selected model and reads a historical Astra report', () => {
     assert.ok(state.feed.at(-1).startsWith(`${codexModel} · START`));
     assert.ok(
       renderDashboard(state, { width: 160 }).includes(
-        `Plan Codex ${codexModel}/medium`,
+        `Plan implementer ${codexModel}/medium`,
       ),
     );
     assert.ok(
@@ -13281,7 +13406,7 @@ test('HUD shows the selected model and reads a historical Astra report', () => {
   });
   assert.match(
     renderDashboard(state, { width: 120 }),
-    /Codex plan gpt-6-astra\/high · effective gpt-6-astra\/high/,
+    /Implementer plan gpt-6-astra\/high · effective gpt-6-astra\/high/,
   );
 });
 
@@ -13435,7 +13560,7 @@ for (const taskClass of ['docs-minor', 'docs-descriptive', 'docs-contract']) {
         assert.match(view, new RegExp(taskClass));
         assert.doesNotMatch(view, /ZERO_FINDINGS|Review effective/);
         assert.equal(
-          dashboardPhases(state).find((phase) => phase.name === 'CLAUDE')
+          dashboardPhases(state).find((phase) => phase.name === 'REVIEWER')
             .status,
           'NOT_REQUIRED',
         );
@@ -13599,7 +13724,7 @@ test('quality: code introduced by executor stops before gates and review', async
       }),
       (error) =>
         error.code === 'DOCS_CANDIDATE_REJECTED' &&
-        error.stage === 'post-codex',
+        error.stage === 'post-implementer',
     );
     assert.equal(
       runner.calls.some((call) => call.options.stage === 'checks'),
@@ -14168,7 +14293,7 @@ test('gates profile: a path rule stops the run with the rule code only for the c
     internal.assertRequiredGates({
       runner: candidatePathsRunner(paths),
       cwd: '/synthetic/repository',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       task: implementation,
       profile: TEST_PROFILE,
       ...overrides,
@@ -14182,7 +14307,7 @@ test('gates profile: a path rule stops the run with the rule code only for the c
       gate(['docs/notes.md', path]),
       (error) =>
         error.code === LEGACY_GATES.databaseCode &&
-        error.stage === 'post-codex' &&
+        error.stage === 'post-implementer' &&
         error.message === LEGACY_GATES.databaseMessage,
       path,
     );
@@ -14803,7 +14928,7 @@ function docsCandidateOutcome(path, profile) {
     .assertDocsCandidate({
       runner: candidatePathsRunner([path]),
       cwd: '/synthetic/repository',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       profile,
     })
     .then(
@@ -15002,7 +15127,7 @@ test('task classes: the docs candidate rule from the profile rejects the same pa
         legacyDocsPathRejected(path) || UNICODE_FOLD_REJECTIONS.has(path);
       assert.equal(
         await docsCandidateOutcome(path, profile),
-        legacy ? 'DOCS_CANDIDATE_REJECTED:post-codex' : 'accepted',
+        legacy ? 'DOCS_CANDIDATE_REJECTED:post-implementer' : 'accepted',
         `${label}: ${JSON.stringify(path)}`,
       );
       compared += 1;
@@ -15274,7 +15399,7 @@ test('task classes: docsCandidatePolicy validation is fail-closed and does not a
   for (const path of ['docs/requirements.txt', 'docs/CMakeLists.txt']) {
     assert.equal(
       await docsCandidateOutcome(path, TASK_CLASS_PROFILE),
-      'DOCS_CANDIDATE_REJECTED:post-codex',
+      'DOCS_CANDIDATE_REJECTED:post-implementer',
       path,
     );
     await assertProfileRejected(
@@ -15389,7 +15514,7 @@ test('task classes: the profile extends and narrows exclusions beyond the base, 
     for (const path of paths) {
       assert.equal(
         await docsCandidateOutcome(path, profile),
-        'DOCS_CANDIDATE_REJECTED:post-codex',
+        'DOCS_CANDIDATE_REJECTED:post-implementer',
         path,
       );
     }
@@ -15671,7 +15796,7 @@ for (const [file, expected] of [
           run,
           (error) =>
             error.code === 'DOCS_CANDIDATE_REJECTED' &&
-            error.stage === 'post-codex',
+            error.stage === 'post-implementer',
         );
       }
     } finally {
@@ -15909,7 +16034,7 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
             call.options.input,
             legacyCodexPrompt({ task, round, findings: [], codexModel }),
           );
-          assert.equal(call.options.stage, 'codex');
+          assert.equal(call.options.stage, 'implementer');
           comparisons += 1;
         }
       }
@@ -16001,7 +16126,7 @@ test('adapter compatibility: Claude argv, environment and prompt from the adapte
       assert.deepEqual(call.options.env, legacySafeAgentEnvironment());
       assert.equal(call.options.input, legacyClaudePrompt({ task, ...snapshot }));
       assert.equal(call.options.cwd, directory);
-      assert.equal(call.options.stage, 'claude');
+      assert.equal(call.options.stage, 'reviewer');
       comparisons += 1;
     };
     for (const attempt of [{}, ...attempts]) {
@@ -16135,11 +16260,11 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
     syntheticClaudeFailure('overloaded_error', 'INVALID_AGENT_OUTPUT'),
     new AgentWorkflowError('Bez diagnostyki.', {
       code: 'CLAUDE_PROCESS_FAILED',
-      stage: 'claude',
+      stage: 'reviewer',
     }),
     new AgentWorkflowError('Timeout.', {
       code: 'CLAUDE_PROCESS_FAILED',
-      stage: 'claude',
+      stage: 'reviewer',
       diagnostic: result('', 1, 'overloaded_error', { timedOut: true }),
     }),
     new Error('overloaded_error'),
@@ -16174,7 +16299,7 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
     assert.throws(
       () => parseClaudeOutput(JSON.stringify(envelope), options),
       (error) =>
-        error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'claude',
+        error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'reviewer',
     );
     comparisons += 1;
   }
@@ -17306,20 +17431,21 @@ test('custom agent roles profile: CLI and programmatic options override roles wi
     taskPath: 'task.md',
     taskMode: 'implementation',
     reviewProfile: 'standard',
-    codexModel: 'gpt-6-sol',
-    solEffort: 'medium',
+    implementerModel: 'gpt-6-sol',
+    implementerEffort: 'medium',
     dryRun: false,
     verbose: false,
     noAnimation: false,
     json: false,
   });
   assert.equal(
-    parseAgentArguments(['task.md', '--sol-effort=high'], profile).solEffort,
+    parseAgentArguments(['task.md', '--sol-effort=high'], profile)
+      .implementerEffort,
     'high',
   );
   assert.equal(
     parseAgentArguments(['task.md', '--codex-model', 'gpt-6-astra'], profile)
-      .codexModel,
+      .implementerModel,
     'gpt-6-astra',
   );
   assert.equal(
@@ -17863,7 +17989,7 @@ test('runCodexRound with claude: argv, environment, prompt, result, resume and f
               }),
             );
             assert.equal(call.options.cwd, directory);
-            assert.equal(call.options.stage, 'codex');
+            assert.equal(call.options.stage, 'implementer');
             assert.equal(outcome.sessionId, TEST_SESSION_ID);
             assert.deepEqual(
               outcome.report,
@@ -17929,7 +18055,7 @@ test('runCodexRound with claude: argv, environment, prompt, result, resume and f
       respond = () => response;
       await assert.rejects(
         round(options),
-        (error) => error.code === code && error.stage === 'codex',
+        (error) => error.code === code && error.stage === 'implementer',
         `${code} ${JSON.stringify(options)} ${response.stdout}`,
       );
       comparisons += 1;
@@ -18013,7 +18139,7 @@ test('claude implementer profile: passes validation, model and effort follow the
   );
   assert.equal(
     parseAgentArguments(['task.md', '--codex-model', 'claude-fable-5'], CLAUDE_IMPLEMENTER_PROFILE)
-      .codexModel,
+      .implementerModel,
     'claude-fable-5',
   );
 });
@@ -18444,7 +18570,7 @@ test('.git fingerprint: a Git state change by the claude implementer is UNEXPECT
         }),
         (error) =>
           error.code === 'UNEXPECTED_GIT_MUTATION' &&
-          error.stage === 'post-codex' &&
+          error.stage === 'post-implementer' &&
           error.message.includes(part) &&
           error.report?.status === 'STOPPED',
         name,
@@ -18460,7 +18586,7 @@ test('.git fingerprint: a Git state change by the claude implementer is UNEXPECT
       // (ls-files -s), with the repository index.
       const postCodexGit = runner.calls.filter(
         ({ program, options }) =>
-          program === 'git' && options.stage === 'post-codex',
+          program === 'git' && options.stage === 'post-implementer',
       );
       assert.deepEqual(
         postCodexGit.map(({ args }) => args[0]),
@@ -18510,11 +18636,11 @@ test('.git fingerprint: a Git state change by the claude implementer is UNEXPECT
       fingerprintCalls.map(({ args, options }) => [args[0], options.stage]),
       [
         ['rev-parse', 'preflight'],
-        ['rev-parse', 'codex'],
-        ['for-each-ref', 'codex'],
-        ['ls-files', 'codex'],
-        ['for-each-ref', 'post-codex'],
-        ['ls-files', 'post-codex'],
+        ['rev-parse', 'implementer'],
+        ['for-each-ref', 'implementer'],
+        ['ls-files', 'implementer'],
+        ['for-each-ref', 'post-implementer'],
+        ['ls-files', 'post-implementer'],
         ['for-each-ref', 'post-checks'],
         ['ls-files', 'post-checks'],
         ['ls-files', 'post-checks'],
@@ -18540,7 +18666,7 @@ test('.git fingerprint: a Git state change by the claude implementer is UNEXPECT
           });
           throw new AgentWorkflowError('Syntetyczny błąd wyniku.', {
             code: 'INVALID_AGENT_OUTPUT',
-            stage: 'codex',
+            stage: 'implementer',
           });
         },
         workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
@@ -18549,7 +18675,7 @@ test('.git fingerprint: a Git state change by the claude implementer is UNEXPECT
         error.code === 'INVALID_AGENT_OUTPUT' &&
         error.report.integrityViolations.some(
           ({ code, stage }) =>
-            code === 'UNEXPECTED_GIT_MUTATION' && stage === 'post-codex',
+            code === 'UNEXPECTED_GIT_MUTATION' && stage === 'post-implementer',
         ),
     );
 
@@ -18657,7 +18783,7 @@ test('CLI working directory: empty .claude/.cc-writes removed after the round, c
           }),
           (error) =>
             error.code === 'IMPLEMENTER_SCRATCH_NOT_EMPTY' &&
-            error.stage === 'post-codex' &&
+            error.stage === 'post-implementer' &&
             error.report?.status === 'STOPPED',
           name,
         );
@@ -18693,7 +18819,7 @@ test('CLI working directory: empty .claude/.cc-writes removed after the round, c
         workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
       }),
       (error) =>
-        error.code === 'IMPLEMENTER_SCRATCH_NOT_EMPTY' && error.stage === 'codex',
+        error.code === 'IMPLEMENTER_SCRATCH_NOT_EMPTY' && error.stage === 'implementer',
     );
     assert.equal(calls, 0);
   } finally {
@@ -18837,7 +18963,7 @@ test('.git fingerprint: index entries, refs/replace and the object database chan
         }),
         (error) =>
           error.code === 'UNEXPECTED_GIT_MUTATION' &&
-          error.stage === 'post-codex' &&
+          error.stage === 'post-implementer' &&
           error.message.includes(part) &&
           error.report?.status === 'STOPPED',
         name,
@@ -18975,7 +19101,7 @@ test('process group: an implementer background process does not outlive the roun
     // The background process inherits the pipes: without killing the group the run would not return.
     const killed = leaveBackground('killed', 'inherit');
     const outcome = await runner.run(process.execPath, ['-e', killed.script], {
-      stage: 'codex',
+      stage: 'implementer',
       timeoutMs: 10_000,
       killProcessGroupOnExit: true,
     });
@@ -18992,7 +19118,7 @@ test('process group: an implementer background process does not outlive the roun
     // Control: without the option (codex) the background process survives, as before.
     const survived = leaveBackground('survived', 'ignore');
     await runner.run(process.execPath, ['-e', survived.script], {
-      stage: 'codex',
+      stage: 'implementer',
       timeoutMs: 10_000,
     });
     const survivor = Number(await readFile(survived.pidFile, 'utf8'));
@@ -19085,7 +19211,7 @@ test('process watch: a background process in another session and group (probe of
     const runner = createProcessRunner({ output: { write() {} } });
     const killedFile = join(directory, 'killed.pid');
     const outcome = await runner.run(process.execPath, ['-e', stub(killedFile)], {
-      stage: 'codex',
+      stage: 'implementer',
       timeoutMs: 10_000,
       killProcessGroupOnExit: true,
     });
@@ -19099,7 +19225,7 @@ test('process watch: a background process in another session and group (probe of
     // Control: without the option (codex) the same process survives.
     const survivedFile = join(directory, 'survived.pid');
     await runner.run(process.execPath, ['-e', stub(survivedFile)], {
-      stage: 'codex',
+      stage: 'implementer',
       timeoutMs: 10_000,
     });
     const survivor = Number((await readFile(survivedFile, 'utf8')).trim());
@@ -19156,12 +19282,12 @@ test('process watch: a survivor or an unreadable process table is IMPLEMENTER_PR
   const script = 'setTimeout(() => process.exit(0), 200);';
   await assert.rejects(
     runner(survivorTable).run(process.execPath, ['-e', script], {
-      stage: 'codex',
+      stage: 'implementer',
       killProcessGroupOnExit: true,
     }),
     (error) =>
       error.code === 'IMPLEMENTER_PROCESS_SURVIVED' &&
-      error.stage === 'codex' &&
+      error.stage === 'implementer' &&
       error.message.includes(String(FAKE)) &&
       error.diagnostic?.code === 0,
   );
@@ -19174,7 +19300,7 @@ test('process watch: a survivor or an unreadable process table is IMPLEMENTER_PR
     runner(async () => {
       throw new Error('ps: not found');
     }).run(process.execPath, ['-e', script], {
-      stage: 'codex',
+      stage: 'implementer',
       killProcessGroupOnExit: true,
     }),
     (error) =>
@@ -19185,7 +19311,7 @@ test('process watch: a survivor or an unreadable process table is IMPLEMENTER_PR
   // Without the option (codex) the table is never read.
   reads = 0;
   const outcome = await runner(survivorTable).run(process.execPath, ['-e', script], {
-    stage: 'codex',
+    stage: 'implementer',
   });
   assert.equal(outcome.code, 0);
   assert.equal(reads, 0);
@@ -19245,7 +19371,7 @@ test('process watch: identity is PID + start time; a recorded process that chang
     const run = runner.run(
       process.execPath,
       ['-e', 'setTimeout(() => process.exit(0), 200);'],
-      { stage: 'codex', killProcessGroupOnExit: true },
+      { stage: 'implementer', killProcessGroupOnExit: true },
     );
     return { run, kills };
   };
@@ -19725,12 +19851,12 @@ test('codex session ID: a codex session ID outside isValidSessionId is INVALID_A
     for (const threadId of ['--last', 'thread id', '-', 'x'.repeat(129)])
       await assert.rejects(
         round(threadId),
-        (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'codex',
+        (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'implementer',
         threadId,
       );
     await assert.rejects(
       round(TEST_SESSION_ID, '--last'),
-      (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'codex',
+      (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'implementer',
     );
   } finally {
     await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
@@ -20417,7 +20543,7 @@ async function codexClaudeAdapterEntries({ lib, providers, base = false }) {
         { profile: profileFor(CLAUDE_IMPLEMENTER_PROFILE), ...options },
         async () => result(stdout),
       );
-      assert.deepEqual(outcome.error, ['INVALID_AGENT_OUTPUT', 'codex']);
+      assert.deepEqual(outcome.error, ['INVALID_AGENT_OUTPUT', 'implementer']);
       entries.push([
         `runCodexRound claude-implementer błąd ${index + 1}`,
         goldenEntry(
@@ -20593,9 +20719,9 @@ test('provider conformance suite: codex, claude and the example provider pass wi
     assert.deepEqual(outcome.warnings, [], module.id);
   }
   // Built-in provider declarations: roles and stability.
-  assert.equal(codexModuleExports.default.implementer.stability, 'stable');
+  assert.equal(codexModuleExports.default.implementer.stability, 'experimental');
   assert.equal(claudeModuleExports.default.implementer.stability, 'experimental');
-  assert.equal(claudeModuleExports.default.reviewer.stability, 'stable');
+  assert.equal(claudeModuleExports.default.reviewer.stability, 'experimental');
   assert.equal(exampleProvider.implementer.stability, 'experimental');
 });
 
@@ -21312,7 +21438,7 @@ test('example provider through the core: argv, environment, result and fail-clos
         assert.deepEqual(call.options.env, legacyCodexEnvironment(environment, guardBin));
         // Non-core module: the process group is killed as for claude.
         assert.equal(call.options.killProcessGroupOnExit, true);
-        assert.equal(call.options.stage, 'codex');
+        assert.equal(call.options.stage, 'implementer');
         assert.equal(outcome.sessionId, TEST_SESSION_ID);
         assert.deepEqual(
           outcome.report,
@@ -21338,7 +21464,7 @@ test('example provider through the core: argv, environment, result and fail-clos
       respond = () => result(stdout);
       await assert.rejects(
         round(options),
-        (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'codex',
+        (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'implementer',
         stdout,
       );
       comparisons += 1;
@@ -21381,12 +21507,12 @@ test('example provider through the core: argv, environment, result and fail-clos
     for (const [options, profile, code, stage] of [
       [{ round: 1, codexModel: 'claude-opus-5' }, EXAMPLE_PROVIDER_PROFILE, 'INVALID_CODEX_MODEL', 'preflight'],
       [{ round: 1, taskMode: 'analysis' }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [onlyImplementation] }, 'INVALID_TASK_MODE', 'preflight'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badArgv] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badEnvironment] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [noGuards] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(argvWithGetter)] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(argvWithOwnMethods)] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
-      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(proxyArgv)] }, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badArgv] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badEnvironment] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [noGuards] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(argvWithGetter)] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(argvWithOwnMethods)] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
+      [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [argvModule(proxyArgv)] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
       // A claude implementer without --settings, or with a
       // sandbox without failIfUnavailable.
       ...[
@@ -21409,12 +21535,12 @@ test('example provider through the core: argv, environment, result and fail-clos
           ],
         },
         'PROVIDER_CONTRACT_VIOLATION',
-        'codex',
+        'implementer',
       ]),
       // A non-core module session meets the core rule and is checked in
       // argv like any other argument.
-      [{ round: 2, sessionId: '--yolo' }, EXAMPLE_PROVIDER_PROFILE, 'INVALID_AGENT_OUTPUT', 'codex'],
-      [{ round: 2, sessionId: 'yolo' }, EXAMPLE_PROVIDER_PROFILE, 'PROVIDER_CONTRACT_VIOLATION', 'codex'],
+      [{ round: 2, sessionId: '--yolo' }, EXAMPLE_PROVIDER_PROFILE, 'INVALID_AGENT_OUTPUT', 'implementer'],
+      [{ round: 2, sessionId: 'yolo' }, EXAMPLE_PROVIDER_PROFILE, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
     ]) {
       await assert.rejects(
         round(options, profile),
@@ -21438,7 +21564,7 @@ test('example provider through the core: argv, environment, result and fail-clos
         ...EXAMPLE_PROVIDER_PROFILE,
         providerModules: [withProviderImplementer({ sessionId: () => '--yolo' })],
       }),
-      (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'codex',
+      (error) => error.code === 'INVALID_AGENT_OUTPUT' && error.stage === 'implementer',
     );
     comparisons += 1;
 
@@ -21469,7 +21595,7 @@ test('example provider through the core: argv, environment, result and fail-clos
     const outcome = await review(reviewer);
     const call = calls.at(-1);
     assert.equal(call.program, 'example-agent');
-    assert.equal(call.options.stage, 'claude');
+    assert.equal(call.options.stage, 'reviewer');
     assert.deepEqual(
       call.args,
       exampleProvider.reviewer.processArgs({
@@ -21559,7 +21685,7 @@ test('example provider through the core: argv, environment, result and fail-clos
             providerModules: [badReviewer],
           }).reviewer,
         ),
-        { code: 'PROVIDER_CONTRACT_VIOLATION', stage: 'claude' },
+        { code: 'PROVIDER_CONTRACT_VIOLATION', stage: 'reviewer' },
       );
       comparisons += 1;
     }
@@ -21672,7 +21798,7 @@ test('run with a provider outside the core: preflight, .git fingerprint and priv
       }),
       (error) =>
         error.code === 'UNEXPECTED_GIT_MUTATION' &&
-        error.stage === 'post-codex' &&
+        error.stage === 'post-implementer' &&
         error.report?.status === 'STOPPED',
     );
     assert.equal(reviews, 0);
@@ -21785,7 +21911,7 @@ test('runner fingerprint: the import graph of both entry points; a change, a sym
   const { root, fingerprint } = await createRunnerCopy();
   try {
     assert.deepEqual(fingerprint, own);
-    internal.assertRunnerUnchanged(fingerprint, 'post-codex');
+    internal.assertRunnerUnchanged(fingerprint, 'post-implementer');
     const stops = (stage, pattern) =>
       assert.throws(
         () => internal.assertRunnerUnchanged(fingerprint, stage),
@@ -21847,7 +21973,7 @@ test('runner fingerprint in a run: report field runner; a change by the writer, 
         await change(root);
         return completedCodex(round);
       },
-    }), 'post-codex', null],
+    }), 'post-implementer', null],
     ['review', (root) => ({
       claudeReview: async () => {
         await change(root);
@@ -21857,9 +21983,9 @@ test('runner fingerprint in a run: report field runner; a change by the writer, 
     ['failed writer round', (root) => ({
       codexRound: async () => {
         await change(root);
-        throw new AgentWorkflowError('writer failed', { code: 'PROCESS_FAILED', stage: 'codex' });
+        throw new AgentWorkflowError('writer failed', { code: 'PROCESS_FAILED', stage: 'implementer' });
       },
-    }), 'post-codex', 'PROCESS_FAILED'],
+    }), 'post-implementer', 'PROCESS_FAILED'],
   ]) {
     await t.test(label, async () => {
       const directory = await createRepository();
@@ -22059,7 +22185,7 @@ test('RINGI PROFILE_MODIFIED: the writer changes ringi.config.mjs or its local i
             }),
             (error) => {
               assert.equal(error.code, 'PROFILE_MODIFIED', error.message);
-              assert.equal(error.stage, 'post-codex');
+              assert.equal(error.stage, 'post-implementer');
               assert.match(error.message, new RegExp(escapeRegExp(JSON.stringify(path))));
               assert.equal(error.report.status, 'STOPPED');
               assert.equal(error.report.code, 'PROFILE_MODIFIED');
@@ -22143,7 +22269,7 @@ test('RINGI PROFILE_MODIFIED is the primary code for every round ending: invalid
   const scenarios = [
     {
       name: 'invalid writer report',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       violations: ['INVALID_AGENT_OUTPUT'],
       overrides: (directory) => ({
         codexRound: async ({ round }) => {
@@ -22154,7 +22280,7 @@ test('RINGI PROFILE_MODIFIED is the primary code for every round ending: invalid
     },
     {
       name: 'NEEDS_HUMAN',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       violations: ['HUMAN_DECISION_REQUIRED'],
       overrides: (directory) => ({
         codexRound: async ({ round, findings }) => {
@@ -22176,7 +22302,7 @@ test('RINGI PROFILE_MODIFIED is the primary code for every round ending: invalid
     {
       name: 'analysis mode without a full analysis',
       analysis: true,
-      stage: 'post-codex',
+      stage: 'post-implementer',
       violations: ['ANALYSIS_ARTIFACT_MISSING'],
       overrides: (directory) => ({
         codexRound: async ({ round }) => {
@@ -22203,13 +22329,13 @@ test('RINGI PROFILE_MODIFIED is the primary code for every round ending: invalid
     },
     {
       name: 'review failure (main catch)',
-      stage: 'claude',
+      stage: 'reviewer',
       overrides: (directory) => ({
         claudeReview: async () => {
           await changeProfile(directory);
           throw new AgentWorkflowError('Syntetyczny błąd review.', {
             code: 'CLAUDE_REVIEW_FAILED',
-            stage: 'claude',
+            stage: 'reviewer',
           });
         },
       }),
@@ -22612,7 +22738,7 @@ test('RINGI docs candidate: project profile files are excluded (ASCII case-insen
       internal.assertDocsCandidate({
         runner: createMockRunner(),
         cwd: directory,
-        stage: 'post-codex',
+        stage: 'post-implementer',
         profile: TEST_PROFILE,
         protectedPaths,
       });
@@ -22621,7 +22747,7 @@ test('RINGI docs candidate: project profile files are excluded (ASCII case-insen
     for (const protectedPath of ['docs/guide.md', 'Docs/Guide.MD']) {
       await assert.rejects(check([protectedPath]), {
         code: 'DOCS_CANDIDATE_REJECTED',
-        stage: 'post-codex',
+        stage: 'post-implementer',
       });
     }
   } finally {
@@ -22860,8 +22986,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   assert.deepEqual([...used].filter((key) => !Object.hasOwn(enMessages, key)), []);
   assert.deepEqual(keys.filter((key) => !used.has(key)), []);
   // 341 + runner.modified, runner.unverifiable, runner.modifiedResume,
-  // cli.missingValue, process.inputNotRead.
-  assert.equal(keys.length, 345);
+  // cli.missingValue, process.inputNotRead, label.reviewerOutput,
+  // label.reviewerFinding, cli.optionAliasConflict.
+  assert.equal(keys.length, 348);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -23064,18 +23191,18 @@ const promptSha256 = (text) => createHash('sha256').update(text).digest('hex');
 // SHA-256 of the full pl prompt text (localePromptInputs with the fixture
 // text), equal to the copy of the legacy core prompts (legacy*Prompt).
 const PL_PROMPT_SHA256 = deepFreeze({
-  'writer: implementation, runda 1': 'ba0f81575a35e7457437abf6203c5a935872dd26050fd5b59be924c95d4b6a16',
-  'writer: implementation, runda 2': '86e6a84b8e78e69210518ab73c660d376bd45544194781300fc53e59cd56863c',
-  'writer: analysis, runda 1': 'd40a78edadd443e98a12dff13e87d6533a5b1366d9c54bd8d85cdcc62946b846',
-  'writer: analysis, runda 2': '1ce6905ee81ab2c21c0533c4fc1f4de1ffe699e112c79bd2bbad7946cbc8d51c',
-  'writer: docs-contract, runda 1': 'fb52a4b552e3d63bbb28b298168ba1ace88da854dcefdf98205a58265c222ce1',
-  'writer: docs-minor, runda 1': 'd03854913b648ba442e261f3f954e961df5407b12f4d37bf95be385d02558868',
-  'reviewer: implementation, pierwsze review': '8832baee7e0f0607d55ebf49b1670467ddca681d8fc5fca0c00a6843e52f8507',
-  'reviewer: implementation, kolejne review': '573d144d7c6e66150ec73f52c10e2b644df7a1e59b5919e74939487419ddb770',
-  'reviewer: docs-contract, kolejne review': 'f0e155302a9ef3ff9e7199b83a9aced89a47003b47f65b73f1c5562c3cea0fb7',
-  'reviewer: docs-minor, pierwsze review': '5934bb92a8b4ff22f8fd9be0e2678a8238a0742ee9f8b0d137a0aa091a3bd758',
-  'reviewer: analysis, pierwsze review': 'e15af908a074e9685aba2f9a6dd0b26b6e5d3f622fcd425d2a9be2bec8b6be49',
-  'reviewer: analysis, kolejne review': 'beeea413c99a85b868533a25c4e2c99720dc4173907386743b59cb0d873be39c',
+  'writer: implementation, runda 1': '04ba4c900d16f8772da39b6695fc7be26b5c174d5e611c0e48153ac8ac667ebc',
+  'writer: implementation, runda 2': '9ac948351768e5b09e045c26195c1c5b25342f92bb881059536e99a931984579',
+  'writer: analysis, runda 1': '9a1134b5af49cff874573e8e41b8f3de360142b23ea292b238fadaa09d9b2bcf',
+  'writer: analysis, runda 2': '6da0b0b0d04e64f854c5e6d48930483c779bdb3c7c19f3de9f8cfad956cd7fb7',
+  'writer: docs-contract, runda 1': 'b5edc75e69a0d950eef3491a5ab172e2edd899dfa5ec405b0238373dddfb5f52',
+  'writer: docs-minor, runda 1': 'c40a9af232cb5671562f70cb31cea1f025ca085190c41b1454fb4e5b509f4790',
+  'reviewer: implementation, pierwsze review': '1123ac0239b12eb67075dc9b20c83a01e82089681fc14890fe1240fe6ea62531',
+  'reviewer: implementation, kolejne review': 'dc60e754e1596fbf71917667ef93f84d500c25c0db60c286fa6ed6b55f84eb9c',
+  'reviewer: docs-contract, kolejne review': '03180169b81214c2b26de8a3bf56bf79c496b65406d83f238cc8cdadd3b4dd23',
+  'reviewer: docs-minor, pierwsze review': '1125692eb35e124da12484866fe99dbe3d0ba8241f9f341fe594bce6332f6b24',
+  'reviewer: analysis, pierwsze review': '896a759a5ce4fbac47a4557edbe5f4c687897b9164c74bdfe3ac52e12457b41f',
+  'reviewer: analysis, kolejne review': '3deba0babe545f474f8062a6687d862e0dd4d557d35d56b964e052b39b54bc01',
 });
 
 test('pl prompts: the full writer and reviewer prompt text is byte-identical to the legacy core (SHA-256 and legacy copy)', async () => {
@@ -23578,7 +23705,7 @@ test('en locale: in a full run the writer process receives the en prompt', async
     const [input] = inputs;
     assert.match(input, new RegExp(`The writer uses model ${CODEX_MODEL.replaceAll('.', '\\.')}\\.`, 'u'));
     assert.match(input, /"Starting files" section/);
-    assert.doesNotMatch(input, /Bieżący wykonawca Codex używa modelu/);
+    assert.doesNotMatch(input, /Bieżący wykonawca używa modelu/);
     assert.ok(input.includes(taskMarkdown));
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -23624,7 +23751,7 @@ test('en and pl locales: dashboard terminal output and summary', () => {
         schemaVersion: 1,
         status: 'STOPPED',
         code: 'MAX_ROUNDS',
-        stage: 'claude',
+        stage: 'reviewer',
         error: text('run.maxRounds', { maxRounds: 3 }),
         resume: text('run.resume'),
         durationMs: 125_000,
@@ -23652,7 +23779,7 @@ test('en locale: error messages of calls outside and inside a run come from the 
       [() => resolveSolEffort('bogus'), 'INVALID_SOL_EFFORT', 'config.unknownSolEffort', { effort: '"bogus"' }],
       [() => resolveReviewProfile('bogus'), 'INVALID_REVIEW_PROFILE', 'config.unknownReviewProfile', { profile: '"bogus"' }],
       [() => internal.resolveRunnerProfile({ title: 7 }), 'INVALID_CONFIGURATION', 'profile.invalid', {}],
-      [() => parseClaudeOutput('not json', {}), 'INVALID_AGENT_OUTPUT', 'output.invalidJson', { label: 'Claude' }],
+      [() => parseClaudeOutput('not json', {}), 'INVALID_AGENT_OUTPUT', 'output.invalidJson', { label: 'Reviewer output' }],
     ];
     for (const [call, code, key, params] of cases) {
       assert.throws(call, (error) => {
@@ -23845,7 +23972,7 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     'PREFLIGHT PASS Repository and tool validation · 1.2s',
     'PREFLIGHT run run-1 · branch feature/example',
     'MODE implementation',
-    'SOL plan gpt-6-sol/high',
+    'IMPLEMENTER plan gpt-6-sol/high',
     'REVIEW critical · attempts 1 · fallback allowed no',
     'REVIEW plan claude-opus-5/xhigh',
     'ROUND 1/3',
@@ -23856,13 +23983,13 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     '│ ✗ NEEDS DECISION · 2m 5s                                                                         │',
     '│ Mode implementation · round 1/3 · branch feature/example                                         │',
     '│                                                                                                  │',
-    '│ PREFLIGHT          gpt-6-sol          GATES              SNAPSHOT           CLAUDE               │',
+    '│ PREFLIGHT          gpt-6-sol          GATES              SNAPSHOT           REVIEWER             │',
     '│ ✓ PASS             ✓ PASS             · WAITING          · WAITING          · WAITING            │',
     '│                                                                                                  │',
     '│ ZERO_FINDINGS · threshold B/H/M/L=0 · — (no review)                                              │',
     '│ B:— H:— M:— L:— · before review                                                                  │',
     '│ GATES 0/1 · PASS 0 · active —                                                                    │',
-    '│ Code MAX_ROUNDS · claude                                                                         │',
+    '│ Code MAX_ROUNDS · reviewer                                                                       │',
     '│ Error The limit of 3 rounds was reached with open findings. A human decides.                     │',
     '│ Next Fix the cause, check the working tree and run the task again. The workflow does not revert… │',
     '│ Review effective claude-opus-5/xhigh                                                             │',
@@ -23879,7 +24006,7 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     'PREFLIGHT PASS Walidacja repozytorium i narzędzi · 1.2s',
     'PREFLIGHT run run-1 · gałąź feature/example',
     'TRYB implementation',
-    'SOL plan gpt-6-sol/high',
+    'IMPLEMENTER plan gpt-6-sol/high',
     'REVIEW critical · próby 1 · fallback dozwolony nie',
     'REVIEW plan claude-opus-5/xhigh',
     'RUNDA 1/3',
@@ -23890,13 +24017,13 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     '│ ✗ NEEDS DECISION · 2m 5s                                                                         │',
     '│ Tryb implementation · runda 1/3 · gałąź feature/example                                          │',
     '│                                                                                                  │',
-    '│ PREFLIGHT          gpt-6-sol          GATES              SNAPSHOT           CLAUDE               │',
+    '│ PREFLIGHT          gpt-6-sol          GATES              SNAPSHOT           REVIEWER             │',
     '│ ✓ PASS             ✓ PASS             · WAITING          · WAITING          · WAITING            │',
     '│                                                                                                  │',
     '│ ZERO_FINDINGS · próg B/H/M/L=0 · — (brak review)                                                 │',
     '│ B:— H:— M:— L:— · przed review                                                                   │',
     '│ GATES 0/1 · PASS 0 · aktywna —                                                                   │',
-    '│ Kod MAX_ROUNDS · claude                                                                          │',
+    '│ Kod MAX_ROUNDS · reviewer                                                                        │',
     '│ Błąd Wyczerpano limit 3 rund przy niepustej liście findings. Decyzję przejmuje człowiek.         │',
     '│ Dalej Usuń przyczynę, sprawdź working tree i uruchom zadanie ponownie. Workflow nie cofa zmian … │',
     '│ Review effective claude-opus-5/xhigh                                                             │',

@@ -14,8 +14,8 @@ export default Object.freeze({
   'log.truncated': '…[log truncated]…',
   'log.noOutput': '[no process output]',
   'log.saveFailed': 'Cannot save the bounded diagnostic log: {detail}',
-  'log.solRound': 'SOL round {round}',
-  'log.claudeRound': 'CLAUDE round {round}',
+  'log.implementerRound': 'IMPLEMENTER round {round}',
+  'log.reviewerRound': 'REVIEWER round {round}',
   'summary.truncated': '…[summary truncated]…',
 
   'process.interrupted': 'Stage {stage} interrupted by Ctrl+C.',
@@ -29,8 +29,8 @@ export default Object.freeze({
   'program.notFound': 'Program {name} not found in PATH.',
 
   'config.unknownReviewProfile': 'Unknown review profile {profile}.',
-  'config.invalidCodexModel':
-    'The Codex model must be a single identifier (1 to 128 ASCII characters: letters, digits, dot, underscore, hyphen; starting with a letter or digit).',
+  'config.invalidImplementerModel':
+    'The implementer model must be a single identifier (1 to 128 ASCII characters: letters, digits, dot, underscore, hyphen; starting with a letter or digit).',
   'config.unknownSolEffort': 'Unknown writer effort {effort}.',
   'config.invalidTaskMode': 'The task mode must be implementation or analysis.',
   'config.maxRounds': 'The round limit must be an integer from 1 to {max}.',
@@ -203,6 +203,8 @@ export default Object.freeze({
   'label.findingResponse': 'Response {status}',
   'label.writerResult': 'Writer result',
   'label.reviewerResult': 'Reviewer result',
+  'label.reviewerOutput': 'Reviewer output',
+  'label.reviewerFinding': 'Reviewer finding',
   'label.confirmation': 'Confirmation of {label}',
   'label.analysisConfirmation': 'Analysis review confirmation',
   'label.readTask': 'the original task',
@@ -373,7 +375,7 @@ export default Object.freeze({
   'dashboard.defaultResume': 'Fix the cause and run the task again.',
   'dashboard.feedRoundStart': 'Round {round} · START',
   'dashboard.feedWaiting': 'waiting',
-  'dashboard.feedReviewResult': 'CLAUDE · review result',
+  'dashboard.feedReviewResult': 'REVIEWER · review result',
   'dashboard.round': 'round {round}/{max}',
   'dashboard.beforeReview': 'before review',
   'dashboard.lastKnownResult': 'last known result',
@@ -411,15 +413,17 @@ export default Object.freeze({
   'cli.missingValue': 'The {option} option requires a value.',
   'cli.reviewProfileOnce': 'The --review-profile option can be given only once.',
   'cli.reviewProfileValue': 'The --review-profile option requires the value {choices}.',
-  'cli.codexModelOnce': 'The --codex-model option can be given only once.',
-  'cli.codexModelValue':
-    'The --codex-model option requires a single identifier (1 to 128 ASCII characters: letters, digits, dot, underscore, hyphen; starting with a letter or digit).',
-  'cli.solEffortValue': 'The --sol-effort option requires the value {choices}.',
-  'cli.solEffortConflict': 'The --sol-effort option has conflicting values {first} and {second}.',
+  'cli.implementerModelOnce': 'The {option} option can be given only once.',
+  'cli.implementerModelValue':
+    'The {option} option requires a single identifier (1 to 128 ASCII characters: letters, digits, dot, underscore, hyphen; starting with a letter or digit).',
+  'cli.implementerEffortValue': 'The {option} option requires the value {choices}.',
+  'cli.implementerEffortConflict': 'The {option} option has conflicting values {first} and {second}.',
+  'cli.optionAliasConflict':
+    'The {option} option and its deprecated alias {alias} cannot be given together.',
   'cli.unknownOption': 'Unknown option: {option}',
   'cli.oneTaskPath': 'Exactly one task path is required.',
   'cli.usage':
-    'Usage: pnpm agents:run -- path/to/task.md [--task-mode {taskModes}] [--codex-model <id>] [--sol-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
+    'Usage: pnpm agents:run -- path/to/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':
     'critical-opus: model {model}; effort {effort}; attempts {attempts}; fallback {fallback}.',
   'cli.fallbackAllowed': 'allowed',

@@ -644,7 +644,7 @@ test('package installation: the packed tarball installs offline and ringi runs f
     assert.equal(realRun.status, 1, realRun.stderr);
     const stopped = JSON.parse(realRun.stdout);
     assert.equal(stopped.code, 'RUNNER_MODIFIED', stopped.error);
-    assert.equal(stopped.stage, 'post-codex');
+    assert.equal(stopped.stage, 'post-implementer');
     assert.match(stopped.error, /"scripts\/agent-review-loop-lib\.mjs"/);
     assert.ok(stopped.integrityViolations.length > 0);
     assert.deepEqual(stopped.runner, plan.runner);

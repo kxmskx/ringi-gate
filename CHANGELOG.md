@@ -5,6 +5,38 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Breaking
+
+- The `stage` field of the report and of STOP errors names the role, not a
+  provider:
+
+  | Old value    | New value          |
+  | ------------ | ------------------ |
+  | `codex`      | `implementer`      |
+  | `post-codex` | `post-implementer` |
+  | `claude`     | `reviewer`         |
+
+  Other stage values are unchanged.
+- Log, dashboard and message labels name the role (`IMPLEMENTER round`,
+  `REVIEWER round`, `REVIEWER · review result`, `implementer model`). The
+  `pl` catalog and the `pl` prompts name the role as well (`wykonawca`,
+  `reviewer`), so their text is no longer byte-identical to the runner
+  before the message catalog.
+- Every built-in role is declared `experimental`, including the `codex`
+  implementer and the `claude` reviewer, until it meets the stability
+  criteria in `docs/providers.md`. The default profile is unchanged.
+
+### Added
+
+- `--implementer-model <id>` and `--implementer-effort <effort>`. The
+  options `--codex-model` and `--sol-effort` remain as deprecated aliases
+  with the same validation; giving an alias together with its new option is
+  an argument error. The programmatic options `implementerModel` and
+  `implementerEffort` take precedence over the deprecated `codexModel` and
+  `solEffort`.
+
 ## 0.1.0 — 2026-10-23
 
 The first release. It contains every change listed below.

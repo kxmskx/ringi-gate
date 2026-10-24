@@ -350,7 +350,7 @@ test('docs candidate rule accepts handbook/ when the profile adds it', async () 
     internal.assertDocsCandidate({
       runner: candidateRunner(paths),
       cwd: '/synthetic/repository',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       profile,
     });
   // handbook/ is allowed because the profile adds it, as in docs/profile.md.
@@ -370,7 +370,7 @@ test('required gate rule without message uses the default text', async () => {
     internal.assertRequiredGates({
       runner: candidateRunner(['packages/api/schema.sql']),
       cwd: '/synthetic/repository',
-      stage: 'post-codex',
+      stage: 'post-implementer',
       task: { mode: 'implementation', checks },
       profile,
     });

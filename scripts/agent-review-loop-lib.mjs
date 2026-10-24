@@ -1708,7 +1708,7 @@ export function isValidCodexModel(value) {
 export function resolveCodexModel(model = CODEX_MODEL) {
   if (!isValidCodexModel(model)) {
     throw new AgentWorkflowError(
-      msg('config.invalidCodexModel'),
+      msg('config.invalidImplementerModel'),
       { code: 'INVALID_CODEX_MODEL', stage: 'preflight' },
     );
   }
@@ -2220,7 +2220,7 @@ async function readGitDirectoryFingerprint({ runner, cwd, stage }) {
 // a later check (assertImplementerStateStillUnchanged) names its stage.
 function gitMutationError(changed, stage) {
   return new AgentWorkflowError(
-    stage === 'post-codex'
+    stage === 'post-implementer'
       ? msg('implementer.gitStateChanged', { changed: changed.join(', ') })
       : msg('implementer.gitStateChangedLater', {
           changed: changed.join(', '),
@@ -4405,7 +4405,7 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function assertExactObjectKeys(value, expected, label, stage = 'codex') {
+function assertExactObjectKeys(value, expected, label, stage = 'implementer') {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
   if (
@@ -4482,7 +4482,7 @@ function validateFindingResponse(response, options = {}) {
       msg('writer.invalidResponse'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'codex',
+        stage: 'implementer',
       },
     );
   }
@@ -4495,7 +4495,7 @@ function validateFindingResponse(response, options = {}) {
       msg('writer.invalidResponse'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'codex',
+        stage: 'implementer',
       },
     );
   }
@@ -4523,7 +4523,7 @@ function validateFindingResponse(response, options = {}) {
   if (!fieldsValid) {
     throw new AgentWorkflowError(
       msg('writer.invalidResponse'),
-      { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+      { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
     );
   }
   if (response.status === 'CONFIRMED') {
@@ -4537,7 +4537,7 @@ function validateFindingResponse(response, options = {}) {
     ) {
       throw new AgentWorkflowError(
         msg('writer.confirmedFields'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
   } else if (response.status === 'REJECTED') {
@@ -4550,7 +4550,7 @@ function validateFindingResponse(response, options = {}) {
     ) {
       throw new AgentWorkflowError(
         msg('writer.rejectedFields'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
   } else {
@@ -4564,7 +4564,7 @@ function validateFindingResponse(response, options = {}) {
     ) {
       throw new AgentWorkflowError(
         msg('writer.needsHumanFields'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
   }
@@ -4575,7 +4575,7 @@ function validateFindingResponseList(value, options = {}) {
   if (!Array.isArray(value) || value.length > 50) {
     throw new AgentWorkflowError(
       msg('writer.invalidResponses'),
-      { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+      { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
     );
   }
   for (const response of value) validateFindingResponse(response, options);
@@ -4586,14 +4586,14 @@ function validateFullAnalysis(value) {
   if (typeof value !== 'string' || !value.trim()) {
     throw new AgentWorkflowError(
       msg('writer.analysisMissing'),
-      { code: 'ANALYSIS_ARTIFACT_MISSING', stage: 'codex' },
+      { code: 'ANALYSIS_ARTIFACT_MISSING', stage: 'implementer' },
     );
   }
   const sizeBytes = Buffer.byteLength(value);
   if (sizeBytes > MAX_ANALYSIS_ARTIFACT_BYTES) {
     throw new AgentWorkflowError(msg('analysis.tooLarge'), {
       code: 'ANALYSIS_ARTIFACT_TOO_LARGE',
-      stage: 'codex',
+      stage: 'implementer',
     });
   }
   const sentinelIndex = value.indexOf(ANALYSIS_COMPLETENESS_SENTINEL);
@@ -4605,20 +4605,20 @@ function validateFullAnalysis(value) {
   ) {
     throw new AgentWorkflowError(
       msg('analysis.sentinel'),
-      { code: 'ANALYSIS_ARTIFACT_INCOMPLETE', stage: 'codex' },
+      { code: 'ANALYSIS_ARTIFACT_INCOMPLETE', stage: 'implementer' },
     );
   }
   if (ANALYSIS_TRUNCATION_PATTERNS.some((pattern) => pattern.test(value))) {
     throw new AgentWorkflowError(msg('analysis.truncated'), {
       code: 'ANALYSIS_ARTIFACT_TRUNCATED',
-      stage: 'codex',
+      stage: 'implementer',
     });
   }
   const headings = markdownHeadings(value);
   if (headings.length === 0 || new Set(headings).size !== headings.length) {
     throw new AgentWorkflowError(
       msg('analysis.heading'),
-      { code: 'ANALYSIS_ARTIFACT_INCOMPLETE', stage: 'codex' },
+      { code: 'ANALYSIS_ARTIFACT_INCOMPLETE', stage: 'implementer' },
     );
   }
   return {
@@ -4641,7 +4641,7 @@ function validateCodexReport(
       msg('writer.invalidResult'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'codex',
+        stage: 'implementer',
       },
     );
   }
@@ -4651,7 +4651,7 @@ function validateCodexReport(
   ) {
     throw new AgentWorkflowError(
       msg('writer.analysisFieldMissing'),
-      { code: 'ANALYSIS_ARTIFACT_MISSING', stage: 'codex' },
+      { code: 'ANALYSIS_ARTIFACT_MISSING', stage: 'implementer' },
     );
   }
   assertExactObjectKeys(
@@ -4692,7 +4692,7 @@ function validateCodexReport(
       msg('writer.invalidResult'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'codex',
+        stage: 'implementer',
       },
     );
   }
@@ -4705,7 +4705,7 @@ function validateCodexReport(
     ) {
       throw new AgentWorkflowError(
         msg('writer.analysisMetadata'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
   }
@@ -4724,7 +4724,7 @@ function validateCodexReport(
         msg('writer.unknownFindingId', {
           findingId: JSON.stringify(response.findingId),
         }),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
     if (responseIds.has(response.findingId)) {
@@ -4732,7 +4732,7 @@ function validateCodexReport(
         msg('writer.duplicateResponse', {
           findingId: JSON.stringify(response.findingId),
         }),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
     responseIds.add(response.findingId);
@@ -4745,7 +4745,7 @@ function validateCodexReport(
       msg('writer.incompleteResponses', {
         missing: missing.join(', ') || msg('writer.responseCountMismatch'),
       }),
-      { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+      { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
     );
   }
   const humanResponse = value.findingResponses.find(
@@ -4755,7 +4755,7 @@ function validateCodexReport(
     if (!['COMPLETED', 'NEEDS_HUMAN_DECISION'].includes(value.status)) {
       throw new AgentWorkflowError(
         msg('writer.needsHumanConflict'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'codex' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'implementer' },
       );
     }
     return value;
@@ -4771,7 +4771,7 @@ function validateCodexReport(
           value.status === 'NEEDS_PERMISSION'
             ? 'NEW_PERMISSION_REQUIRED'
             : 'HUMAN_DECISION_REQUIRED',
-        stage: 'codex',
+        stage: 'implementer',
       },
     );
   }
@@ -4782,14 +4782,14 @@ function assertReadConfirmation(actual, expected, label) {
   if (!isPlainObject(actual)) {
     throw new AgentWorkflowError(msg('reviewer.readUnconfirmed', { label }), {
       code: 'ANALYSIS_REVIEW_UNCONFIRMED',
-      stage: 'claude',
+      stage: 'reviewer',
     });
   }
   assertExactObjectKeys(
     actual,
     ['path', 'sha256', 'fullyRead'],
     msg('label.confirmation', { label }),
-    'claude',
+    'reviewer',
   );
   if (
     actual.path !== expected?.path ||
@@ -4798,7 +4798,7 @@ function assertReadConfirmation(actual, expected, label) {
   ) {
     throw new AgentWorkflowError(
       msg('reviewer.readMismatch', { label }),
-      { code: 'ANALYSIS_REVIEW_UNCONFIRMED', stage: 'claude' },
+      { code: 'ANALYSIS_REVIEW_UNCONFIRMED', stage: 'reviewer' },
     );
   }
 }
@@ -4807,20 +4807,20 @@ function validateAnalysisReviewConfirmation(actual, expected) {
   if (!isPlainObject(expected)) {
     throw new AgentWorkflowError(
       msg('reviewer.manifestMissing'),
-      { code: 'ANALYSIS_PACKAGE_INVALID', stage: 'claude' },
+      { code: 'ANALYSIS_PACKAGE_INVALID', stage: 'reviewer' },
     );
   }
   if (!isPlainObject(actual)) {
     throw new AgentWorkflowError(
       msg('reviewer.confirmationMissing'),
-      { code: 'ANALYSIS_REVIEW_UNCONFIRMED', stage: 'claude' },
+      { code: 'ANALYSIS_REVIEW_UNCONFIRMED', stage: 'reviewer' },
     );
   }
   assertExactObjectKeys(
     actual,
     ['task', 'manifest', 'artifact', 'documents'],
     msg('label.analysisConfirmation'),
-    'claude',
+    'reviewer',
   );
   assertReadConfirmation(actual.task, expected.task, msg('label.readTask'));
   assertReadConfirmation(
@@ -4839,7 +4839,7 @@ function validateAnalysisReviewConfirmation(actual, expected) {
   ) {
     throw new AgentWorkflowError(
       msg('reviewer.filesUnconfirmed'),
-      { code: 'ANALYSIS_REVIEW_FILES_UNCONFIRMED', stage: 'claude' },
+      { code: 'ANALYSIS_REVIEW_FILES_UNCONFIRMED', stage: 'reviewer' },
     );
   }
   const expectedByPath = new Map(
@@ -4851,7 +4851,7 @@ function validateAnalysisReviewConfirmation(actual, expected) {
     if (seen.has(path) || !expectedByPath.has(path)) {
       throw new AgentWorkflowError(
         msg('reviewer.filesMismatch'),
-        { code: 'ANALYSIS_REVIEW_FILES_UNCONFIRMED', stage: 'claude' },
+        { code: 'ANALYSIS_REVIEW_FILES_UNCONFIRMED', stage: 'reviewer' },
       );
     }
     seen.add(path);
@@ -4877,7 +4877,7 @@ function validateClaudeReview(
       msg('reviewer.invalidResult'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'claude',
+        stage: 'reviewer',
       },
     );
   }
@@ -4891,7 +4891,7 @@ function validateClaudeReview(
       ...(selectedTaskMode === 'analysis' ? ['reviewConfirmation'] : []),
     ],
     msg('label.reviewerResult'),
-    'claude',
+    'reviewer',
   );
   if (
     !['APPROVE', 'REQUEST_CHANGES'].includes(value.verdict) ||
@@ -4910,7 +4910,7 @@ function validateClaudeReview(
       msg('reviewer.invalidResult'),
       {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'claude',
+        stage: 'reviewer',
       },
     );
   }
@@ -4925,7 +4925,7 @@ function validateClaudeReview(
     ) {
       throw new AgentWorkflowError(
         msg('reviewer.verdictConflict'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'claude' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'reviewer' },
       );
     }
   }
@@ -4942,7 +4942,12 @@ function validateClaudeReview(
         'recommendation',
         ...(finding.findingId === undefined ? [] : ['findingId']),
       ];
-      assertExactObjectKeys(finding, keys, 'Finding Claude', 'claude');
+      assertExactObjectKeys(
+        finding,
+        keys,
+        msg('label.reviewerFinding'),
+        'reviewer',
+      );
     }
     if (
       !finding ||
@@ -4970,7 +4975,7 @@ function validateClaudeReview(
     ) {
       throw new AgentWorkflowError(msg('reviewer.invalidFinding'), {
         code: 'INVALID_AGENT_OUTPUT',
-        stage: 'claude',
+        stage: 'reviewer',
       });
     }
     if (
@@ -4981,7 +4986,7 @@ function validateClaudeReview(
         msg('reviewer.findingOutside'),
         {
           code: 'INVALID_AGENT_OUTPUT',
-          stage: 'claude',
+          stage: 'reviewer',
         },
       );
     }
@@ -4992,7 +4997,7 @@ function validateClaudeReview(
     ) {
       throw new AgentWorkflowError(
         msg('reviewer.analysisFindingTarget'),
-        { code: 'INVALID_AGENT_OUTPUT', stage: 'claude' },
+        { code: 'INVALID_AGENT_OUTPUT', stage: 'reviewer' },
       );
     }
   }
@@ -5025,7 +5030,11 @@ export function parseClaudeOutput(
   options,
   adapter = claudeProvider,
 ) {
-  const wrapper = parseJson(stdout.trim(), 'Claude', 'claude');
+  const wrapper = parseJson(
+    stdout.trim(),
+    msg('label.reviewerOutput'),
+    'reviewer',
+  );
   const output = adapter.reviewer.reviewOutput(wrapper);
   if (output && Object.hasOwn(output, 'value')) {
     // A module from a profile: the core validates and uses a JSON copy of
@@ -5034,19 +5043,23 @@ export function parseClaudeOutput(
     return validateClaudeReview(
       isBuiltinProvider(adapter)
         ? output.value
-        : parseJson(jsonText(output.value), 'Claude result', 'claude'),
+        : parseJson(
+            jsonText(output.value),
+            msg('label.reviewerResult'),
+            'reviewer',
+          ),
       options,
     );
   }
   if (output) {
     return validateClaudeReview(
-      parseJson(output.text, 'Claude result', 'claude'),
+      parseJson(output.text, msg('label.reviewerResult'), 'reviewer'),
       options,
     );
   }
   throw new AgentWorkflowError(msg('reviewer.noStructuredOutput'), {
     code: 'INVALID_AGENT_OUTPUT',
-    stage: 'claude',
+    stage: 'reviewer',
   });
 }
 
@@ -6244,7 +6257,7 @@ async function snapshotContentHash(root) {
       } else {
         throw new AgentWorkflowError(
           msg('snapshot.unsupportedEntry', { path: JSON.stringify(path) }),
-          { code: 'SNAPSHOT_CHANGED', stage: 'claude' },
+          { code: 'SNAPSHOT_CHANGED', stage: 'reviewer' },
         );
       }
     }
@@ -6266,17 +6279,17 @@ async function assertReviewStateUnchanged({
     cwd: repositoryRoot,
     branch,
     head,
-    stage: 'claude',
+    stage: 'reviewer',
   });
   const workingTree = await readRepositoryManifest({
     runner,
     cwd: repositoryRoot,
-    stage: 'claude',
+    stage: 'reviewer',
   });
   if (workingTree.hash !== snapshot.sourceHash) {
     throw new AgentWorkflowError(
       msg('snapshot.treeChangedReview'),
-      { code: 'WORKING_TREE_CHANGED', stage: 'claude' },
+      { code: 'WORKING_TREE_CHANGED', stage: 'reviewer' },
     );
   }
   if (
@@ -6287,12 +6300,12 @@ async function assertReviewStateUnchanged({
       msg('snapshot.changedDuringReview'),
       {
         code: 'SNAPSHOT_CHANGED',
-        stage: 'claude',
+        stage: 'reviewer',
       },
     );
   }
   if (analysisArtifact) {
-    await assertAnalysisArtifactIntegrity(analysisArtifact, 'claude');
+    await assertAnalysisArtifactIntegrity(analysisArtifact, 'reviewer');
   }
 }
 
@@ -6728,7 +6741,7 @@ function normalizeFindingPath(value) {
   ) {
     throw new AgentWorkflowError(
       msg('reviewer.findingAmbiguousPath'),
-      { code: 'INVALID_AGENT_OUTPUT', stage: 'claude' },
+      { code: 'INVALID_AGENT_OUTPUT', stage: 'reviewer' },
     );
   }
   return normalized.normalize('NFC');
@@ -6747,7 +6760,7 @@ function canonicalFindingIdentity(finding) {
   ) {
     throw new AgentWorkflowError(
       msg('reviewer.findingAmbiguousFields'),
-      { code: 'INVALID_AGENT_OUTPUT', stage: 'claude' },
+      { code: 'INVALID_AGENT_OUTPUT', stage: 'reviewer' },
     );
   }
   return identity;
@@ -6774,20 +6787,20 @@ function assignFindingIds(findings, knownIdentities = new Map()) {
         msg('reviewer.findingIdMismatch', {
           file: JSON.stringify(identity.file),
         }),
-        { code: 'FINDING_ID_MISMATCH', stage: 'claude' },
+        { code: 'FINDING_ID_MISMATCH', stage: 'reviewer' },
       );
     }
     const known = knownIdentities.get(findingId);
     if (known && JSON.stringify(known) !== identityKey) {
       throw new AgentWorkflowError(
         msg('finding.identityCollision', { findingId }),
-        { code: 'FINDING_ID_COLLISION', stage: 'claude' },
+        { code: 'FINDING_ID_COLLISION', stage: 'reviewer' },
       );
     }
     if (currentIdentities.has(findingId)) {
       throw new AgentWorkflowError(
         msg('finding.identityDuplicate', { findingId }),
-        { code: 'AMBIGUOUS_FINDING_IDENTITY', stage: 'claude' },
+        { code: 'AMBIGUOUS_FINDING_IDENTITY', stage: 'reviewer' },
       );
     }
     currentIdentities.set(findingId, identity);
@@ -6939,12 +6952,12 @@ async function materializeAnalysisArtifact({
   assertNoSecretContent(
     validated.content,
     `round-${round}-analysis.md`,
-    'codex',
+    'implementer',
   );
   await atomicWritePrivateFile(
     targetPath,
     Buffer.from(validated.content),
-    'codex',
+    'implementer',
   );
   const relativePath = relative(repositoryRoot, targetPath)
     .split(sep)
@@ -6962,7 +6975,7 @@ async function materializeAnalysisArtifact({
     absolutePath: targetPath,
     headings: validated.headings,
   };
-  await assertAnalysisArtifactIntegrity(artifact, 'codex');
+  await assertAnalysisArtifactIntegrity(artifact, 'implementer');
   const withoutAnalysis = { ...report };
   delete withoutAnalysis.fullAnalysis;
   return {
@@ -7498,14 +7511,14 @@ async function assertPostCodexStateUnchanged({
       runner,
       repositoryRoot,
       baseline: implementerState,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     });
   if (coreGitIndex)
     await refreshCoreGitIndex({
       state: coreGitIndex,
       runner,
       cwd: repositoryRoot,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     });
   await capture(() =>
     assertGitIdentityStable({
@@ -7513,14 +7526,14 @@ async function assertPostCodexStateUnchanged({
       cwd: repositoryRoot,
       branch,
       head,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     }),
   );
   await capture(() =>
     assertDependencyMetadataUnchanged({
       repositoryRoot,
       baseline: dependencyMetadata,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     }),
   );
   await capture(() =>
@@ -7528,7 +7541,7 @@ async function assertPostCodexStateUnchanged({
       runner,
       repositoryRoot,
       baseline: dependencyInputs,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     }),
   );
   await capture(() =>
@@ -7536,7 +7549,7 @@ async function assertPostCodexStateUnchanged({
       runner,
       cwd: repositoryRoot,
       baseline: secretBaseline,
-      stage: 'post-codex',
+      stage: 'post-implementer',
     }),
   );
   if (failures.length > 0) {
@@ -7653,7 +7666,7 @@ async function runCodexRound({
     'implementer',
     environment,
     guardBin,
-    'codex',
+    'implementer',
   );
   const outputSchema = codexSchema(selectedTaskMode);
   // Every provider resumes only a session ID that meets the core's rule
@@ -7663,7 +7676,7 @@ async function runCodexRound({
   if (sessionId !== undefined && !isValidSessionId(sessionId)) {
     throw new AgentWorkflowError(msg('writer.sessionId'), {
       code: 'INVALID_AGENT_OUTPUT',
-      stage: 'codex',
+      stage: 'implementer',
     });
   }
   const command = providerArgs(
@@ -7687,7 +7700,7 @@ async function runCodexRound({
       JSON.stringify(outputSchema),
       ...(builtin ? [sessionId] : []),
     ],
-    'codex',
+    'implementer',
   );
   const activity = createCodexActivityParser(onActivity);
   let result;
@@ -7707,7 +7720,7 @@ async function runCodexRound({
           codexModel: selectedCodexModel,
         }),
         timeoutMs,
-        stage: 'codex',
+        stage: 'implementer',
         onActivityChunk: activity.push,
         exactStdoutLimitBytes: MAX_AGENT_STRUCTURED_BYTES,
         streamOutput: verbose,
@@ -7737,12 +7750,12 @@ async function runCodexRound({
   if (!rawReport.trim()) {
     throw new AgentWorkflowError(msg('writer.noResult'), {
       code: 'INVALID_AGENT_OUTPUT',
-      stage: 'codex',
+      stage: 'implementer',
     });
   }
   await saveJson(outputPath, { status: 'RECEIVED_PENDING_VALIDATION' });
   const report = validateCodexReport(
-    parseJson(rawReport.trim(), 'Codex', 'codex'),
+    parseJson(rawReport.trim(), msg('label.writerResult'), 'implementer'),
     findings,
     selectedTaskMode,
   );
@@ -7770,7 +7783,7 @@ async function runCodexRound({
   ) {
     throw new AgentWorkflowError(msg('writer.sessionId'), {
       code: 'INVALID_AGENT_OUTPUT',
-      stage: 'codex',
+      stage: 'implementer',
     });
   }
   return {
@@ -7821,7 +7834,7 @@ async function runClaudeReview({
       msg('reviewer.invalidModel', {
         model: JSON.stringify(String(model)).slice(0, 140),
       }),
-      { code: 'INVALID_CONFIGURATION', stage: 'claude' },
+      { code: 'INVALID_CONFIGURATION', stage: 'reviewer' },
     );
   }
   // The module builds the argv and environment; the core checks both before
@@ -7832,7 +7845,7 @@ async function runClaudeReview({
     'reviewer',
     { model, effort, outputSchema },
     [model, JSON.stringify(outputSchema)],
-    'claude',
+    'reviewer',
   );
   const result = await safeRun(
     runner,
@@ -7845,7 +7858,7 @@ async function runClaudeReview({
         'reviewer',
         safeAgentEnvironment(),
         undefined,
-        'claude',
+        'reviewer',
       ),
       input: claudePrompt({
         task,
@@ -7861,7 +7874,7 @@ async function runClaudeReview({
         expectedConfirmation: snapshot.expectedConfirmation,
       }),
       timeoutMs,
-      stage: 'claude',
+      stage: 'reviewer',
       exactStdoutLimitBytes: MAX_AGENT_STRUCTURED_BYTES,
       streamOutput: verbose,
       liveOutput: verbose,
@@ -7871,7 +7884,7 @@ async function runClaudeReview({
   if (result.code !== 0) {
     throw new AgentWorkflowError(`${msg('reviewer.reviewFailed')}.`, {
       code: 'CLAUDE_PROCESS_FAILED',
-      stage: 'claude',
+      stage: 'reviewer',
       diagnostic: result,
     });
   }
@@ -7934,7 +7947,7 @@ async function runClaudeReviewWithPolicy({
       const failure = asWorkflowError(
         error,
         'INTEGRITY_CHECK_FAILED',
-        'claude',
+        'reviewer',
       );
       failure.reviewExecution = execution;
       throw failure;
@@ -7954,14 +7967,18 @@ async function runClaudeReviewWithPolicy({
         ...attemptProvider,
       });
     } catch (error) {
-      failure = asWorkflowError(error, 'CLAUDE_REVIEW_FAILED', 'claude');
+      failure = asWorkflowError(error, 'CLAUDE_REVIEW_FAILED', 'reviewer');
     }
     try {
       await afterAttempt({ ...attempt });
     } catch (integrityError) {
       failure = failure
         ? appendIntegrityViolation(failure, integrityError)
-        : asWorkflowError(integrityError, 'INTEGRITY_CHECK_FAILED', 'claude');
+        : asWorkflowError(
+            integrityError,
+            'INTEGRITY_CHECK_FAILED',
+            'reviewer',
+          );
     }
 
     if (!failure) {
@@ -7991,7 +8008,7 @@ async function runClaudeReviewWithPolicy({
 
   const error = new AgentWorkflowError(
     msg('reviewer.fallbackFailed'),
-    { code: 'CLAUDE_FALLBACK_FAILED', stage: 'claude' },
+    { code: 'CLAUDE_FALLBACK_FAILED', stage: 'reviewer' },
   );
   error.reviewExecution = execution;
   throw error;
@@ -8003,8 +8020,8 @@ async function environmentReport({
   runner,
   cwd,
   reviewProfile,
-  codexModel,
-  solEffort,
+  implementerModel,
+  implementerEffort,
   independentReviewRequired = true,
   implementer = DEFAULT_IMPLEMENTER,
   reviewer = DEFAULT_REVIEWER,
@@ -8062,8 +8079,8 @@ async function environmentReport({
   return {
     codex,
     ...(claude !== null ? { claude } : { independentReview: 'NOT_REQUIRED' }),
-    codexModel,
-    codexReasoning: solEffort,
+    codexModel: implementerModel,
+    codexReasoning: implementerEffort,
     claudeReviewProfile: independentReviewRequired ? policy.profile : null,
     claudeAttemptCount: plannedAttempts.length,
     claudeFallbackAllowed: fallbackAllowed,
@@ -8071,8 +8088,8 @@ async function environmentReport({
     implementer: {
       provider: implementer.provider,
       version: codex,
-      model: codexModel,
-      effort: solEffort,
+      model: implementerModel,
+      effort: implementerEffort,
     },
     reviewer: {
       provider: reviewer.provider,
@@ -8898,6 +8915,9 @@ async function runWorkflow(options) {
     taskMode = DEFAULT_TASK_MODE,
     // Without these options the profile's implementer and reviewer apply.
     reviewProfile,
+    implementerModel: requestedModel,
+    implementerEffort: requestedEffort,
+    // Deprecated aliases of implementerModel and implementerEffort.
     codexModel,
     solEffort,
     dryRun = false,
@@ -9098,13 +9118,18 @@ async function runWorkflow(options) {
         { code: 'INVALID_CONFIGURATION', stage: 'preflight' },
       );
     }
-    // Options override the profile within its allowlists.
+    // Options override the profile within its allowlists. A new option
+    // given together with its deprecated alias takes precedence.
+    const optionModel =
+      requestedModel === undefined ? codexModel : requestedModel;
+    const optionEffort =
+      requestedEffort === undefined ? solEffort : requestedEffort;
     selectedCodexModel = resolveCodexModel(
-      codexModel === undefined ? implementer.model : codexModel,
+      optionModel === undefined ? implementer.model : optionModel,
     );
     selectedTaskMode = resolveTaskMode(taskMode);
     selectedSolEffort = resolveSolEffort(
-      solEffort === undefined ? implementer.effort : solEffort,
+      optionEffort === undefined ? implementer.effort : optionEffort,
       implementer.allowedEfforts,
     );
     const reviewPolicy = resolveReviewProfile(
@@ -9251,8 +9276,8 @@ async function runWorkflow(options) {
       runner,
       cwd,
       reviewProfile: reviewPolicy.profile,
-      codexModel: selectedCodexModel,
-      solEffort: selectedSolEffort,
+      implementerModel: selectedCodexModel,
+      implementerEffort: selectedSolEffort,
       independentReviewRequired: quality.independentReviewRequired,
       implementer,
       reviewer,
@@ -9400,7 +9425,7 @@ async function runWorkflow(options) {
     let sessionId;
 
     for (let round = 1; round <= maxRounds; round += 1) {
-      assertNotCancelled(runner, 'codex');
+      assertNotCancelled(runner, 'implementer');
       emit({
         type: 'round:start',
         round,
@@ -9441,11 +9466,11 @@ async function runWorkflow(options) {
         runner,
         repositoryRoot: cwd,
         adapter: roleProvider(roles().implementer, 'implementer'),
-        stage: 'codex',
+        stage: 'implementer',
       });
       // Checks after the gates on a failure path (a gate or the reviewer failed): the Git
       // directory and private index comparison is attached to the STOP
-      // report, like post-codex.
+      // report, like post-implementer.
       const withImplementerStateViolation = async (failure, stage) => {
         if (!implementerState) return failure;
         try {
@@ -9461,7 +9486,7 @@ async function runWorkflow(options) {
           return appendIntegrityViolation(failure, integrityError);
         }
       };
-      const codexStageId = `round-${round}:codex`;
+      const codexStageId = `round-${round}:implementer`;
       const codexStartedAt = monotonicNow();
       const solExecution = {
         round,
@@ -9529,20 +9554,20 @@ async function runWorkflow(options) {
               runner,
               repositoryRoot: cwd,
               baseline: implementerState,
-              stage: 'post-codex',
+              stage: 'post-implementer',
             });
           } catch (integrityError) {
             failure = appendIntegrityViolation(error, integrityError);
           }
         }
-        throw await profileViolationFirst(failure, 'post-codex');
+        throw await profileViolationFirst(failure, 'post-implementer');
       }
       const codexLog = await saveDiagnosticLog({
         runDirectory,
         relativePath: join('logs', `round-${round}-sol.log`),
-        label: msg('log.solRound', { round }),
+        label: msg('log.implementerRound', { round }),
         stderr: codexResult.stderr,
-        stage: 'codex',
+        stage: 'implementer',
       });
       diagnosticLogs.push(codexLog);
       roundDiagnosticLogs.push(codexLog);
@@ -9599,7 +9624,7 @@ async function runWorkflow(options) {
           codexResult.report = validatedCodexReport;
         }
       } catch (error) {
-        throw await profileViolationFirst(error, 'post-codex');
+        throw await profileViolationFirst(error, 'post-implementer');
       }
       responseHistory.push(...codexResult.report.findingResponses);
       const needsHuman = codexResult.report.findingResponses.find(
@@ -9611,12 +9636,12 @@ async function runWorkflow(options) {
               findingId: needsHuman.findingId,
               question: redactSensitive(needsHuman.question),
             }),
-            { code: 'HUMAN_DECISION_REQUIRED', stage: 'codex' },
+            { code: 'HUMAN_DECISION_REQUIRED', stage: 'implementer' },
           )
         : undefined;
       sessionId = codexResult.sessionId;
       try {
-        await assertProjectProfileAfter('post-codex', () =>
+        await assertProjectProfileAfter('post-implementer', () =>
           assertPostCodexStateUnchanged({
             runner,
             repositoryRoot: cwd,
@@ -9633,14 +9658,14 @@ async function runWorkflow(options) {
           await assertDocsCandidate({
             runner,
             cwd,
-            stage: 'post-codex',
+            stage: 'post-implementer',
             profile: selectedProfile,
             protectedPaths: projectProfileReport?.files.map(({ path }) => path),
           });
         await assertRequiredGates({
           runner,
           cwd,
-          stage: 'post-codex',
+          stage: 'post-implementer',
           task,
           profile: selectedProfile,
         });
@@ -9971,7 +9996,7 @@ async function runWorkflow(options) {
               analysisArtifact,
             }),
           onAttemptStart: (attempt) => {
-            const id = `round-${round}:claude:${attempt.attempt}`;
+            const id = `round-${round}:reviewer:${attempt.attempt}`;
             attemptStarts.set(attempt.attempt, monotonicNow());
             emit({
               type: 'stage:start',
@@ -9991,7 +10016,7 @@ async function runWorkflow(options) {
             });
           },
           onAttemptEnd: (attempt) => {
-            const id = `round-${round}:claude:${attempt.attempt}`;
+            const id = `round-${round}:reviewer:${attempt.attempt}`;
             emit({
               type: 'stage:end',
               id,
@@ -10026,9 +10051,9 @@ async function runWorkflow(options) {
       const claudeLog = await saveDiagnosticLog({
         runDirectory,
         relativePath: join('logs', `round-${round}-claude.log`),
-        label: msg('log.claudeRound', { round }),
+        label: msg('log.reviewerRound', { round }),
         stderr: claudeResult.stderr,
-        stage: 'claude',
+        stage: 'reviewer',
       });
       diagnosticLogs.push(claudeLog);
       roundDiagnosticLogs.push(claudeLog);
@@ -10128,7 +10153,7 @@ async function runWorkflow(options) {
         pendingFindings = unresolvedFindings;
         throw new AgentWorkflowError(
           msg('finding.dispute', { findingId: dispute.findingId }),
-          { code: 'FINDING_DISPUTE', stage: 'claude' },
+          { code: 'FINDING_DISPUTE', stage: 'reviewer' },
         );
       }
 
@@ -10200,7 +10225,7 @@ async function runWorkflow(options) {
       if (round === maxRounds) {
         throw new AgentWorkflowError(
           msg('run.maxRounds', { maxRounds }),
-          { code: 'MAX_ROUNDS', stage: 'claude' },
+          { code: 'MAX_ROUNDS', stage: 'reviewer' },
         );
       }
     }
@@ -10272,7 +10297,9 @@ async function runWorkflow(options) {
     };
     if (runDirectory) report.reportPath = reportPath;
     if (normalized.diagnostic && runDirectory) {
-      const includeStdout = !['codex', 'claude'].includes(normalized.stage);
+      const includeStdout = !['implementer', 'reviewer'].includes(
+        normalized.stage,
+      );
       lastDiagnosticLog = await saveDiagnosticLog({
         runDirectory,
         relativePath: join(

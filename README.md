@@ -208,10 +208,13 @@ Claude Code CLI as the reviewer).
 
 Trust boundaries:
 
-- **The implementer** works in the real working tree: with Codex CLI (the
-  default) in the Codex sandbox with network access disabled; with Claude
-  Code (experimental) with file tools confined to the repository and
-  commands only in the Claude Code sandbox without network; see
+- **The implementer** works in the real working tree, in the sandbox
+  without network that its provider module declares (see
+  [implementer requirements](docs/providers.md#implementer-requirements)).
+  With the built-in modules: `codex` (the default) uses the Codex sandbox
+  with network access disabled; `claude` (experimental) confines file tools
+  to the repository and runs commands only in the Claude Code sandbox
+  without network; see
   [docs/architecture.md](docs/architecture.md#claude-code-as-implementer).
   Its `git` is a guard that passes only an allowlist of
   read-only subcommand names (options are not filtered); its `pnpm` allows
@@ -311,10 +314,12 @@ code has run by then); an uncommitted or changed file stops the run with
 `HEAD` itself is trusted: after a `PROFILE_MODIFIED` or
 `UNEXPECTED_GIT_MUTATION` stop, check `git log` too.
 `--dry-run` runs the preflight and prints the plan as JSON without starting
-an agent round; the preflight still runs `codex --version` (and
-`claude --version` when review is required). Other options: `--task-mode`,
-`--review-profile`, `--codex-model`, `--sol-effort`, `--verbose`,
-`--no-animation`, `--json`.
+an agent round; the preflight still runs the version check of the
+implementer's CLI (and of the reviewer's CLI when review is required). Other
+options: `--task-mode`, `--review-profile`, `--implementer-model`,
+`--implementer-effort`, `--verbose`, `--no-animation`, `--json`.
+`--codex-model` and `--sol-effort` are deprecated aliases of
+`--implementer-model` and `--implementer-effort`.
 
 The earlier entry point still works:
 `node scripts/agent-review-loop.mjs path/to/task.md` runs on the repository
@@ -392,16 +397,20 @@ before any process starts. In short:
   which of them skip review (only classes limited to documentation paths) and
   which paths such a change may touch.
 - **`implementer`**, **`reviewer`** (optional): provider, model, effort and
-  review profiles of each role. Without them the default profile setting
-  applies: `codex` as the implementer and `claude` as the reviewer.
-  Providers are the built-in ones below or provider modules passed in
+  review profiles of each role. A role is defined by its requirements, not
+  by a CLI: any provider that meets them can serve it (see
+  [implementer requirements](docs/providers.md#implementer-requirements)
+  and [stability](docs/providers.md#stability)). Without these fields the
+  default profile setting applies, `codex` as the implementer and `claude`
+  as the reviewer, which the user changes in the profile. Providers are the
+  built-in modules below or provider modules passed in
   **`providerModules`** (see [docs/providers.md](docs/providers.md)); CLI
   options override the values within the profile's allowlists.
 
-  | Built-in provider | Implementer | Reviewer |
+  | Built-in module (example) | Implementer | Reviewer |
   | --- | --- | --- |
-  | `codex` (Codex CLI) | stable (default) | — |
-  | `claude` (Claude Code CLI) | experimental, not for untrusted tasks: see [known limits](docs/architecture.md#claude-code-as-implementer) | stable (default) |
+  | `codex` (Codex CLI) | experimental (default) | — |
+  | `claude` (Claude Code CLI) | experimental, not for untrusted tasks: see [known limits](docs/architecture.md#claude-code-as-implementer) | experimental (default) |
 - **`locale`** (optional): `'en'` (default) or `'pl'`, the language of the
   runner's messages, of the implementer and reviewer prompts and of the
   default task schema.
@@ -413,10 +422,11 @@ Reference and examples: [docs/profile.md](docs/profile.md),
 
 - Early stage. Extracted from an internal project; the API, file names and
   report format may change.
-- The built-in providers are the Codex CLI (implementer) and the Claude
-  Code CLI (reviewer, or experimental implementer); the profile chooses the
-  provider of each role (by default Codex CLI as the implementer and Claude
-  Code CLI as the reviewer), their models, efforts and review profiles.
+- The profile chooses the provider of each role, its model, efforts and
+  review profiles; any provider module that meets the role's requirements
+  can serve it. Two modules are built in as examples and defaults: `codex`
+  (Codex CLI, implementer, the default) and `claude` (Claude Code CLI,
+  reviewer and the default one, or experimental implementer).
   Target projects must use pnpm.
 - Runner messages are in English, with Polish as a localization
   (`locale: 'pl'` in the profile); the messages of the `ringi` command are

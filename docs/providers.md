@@ -9,15 +9,19 @@ guarantee. The runner ships two built-in modules, `codex`
 can be added as modules that a project profile passes in
 [`providerModules`](profile.md#providermodules).
 
-The profile chooses the provider of each role, the implementer and the
-reviewer; the default profile setting is `codex` as the implementer and
-`claude` as the reviewer. Roles and status, as declared in the modules
-(`roles`, `stability`):
+The roles, the implementer and the reviewer, are defined by requirements
+(see [Implementer requirements](#implementer-requirements) and
+[Role rules](#role-rules)), not by a CLI. The profile chooses the provider of
+each role; any module that meets the requirements of a role can serve it.
+The default profile setting is `codex` as the implementer and `claude` as
+the reviewer, a default the user changes in the profile. Roles and status,
+as declared in the modules (`roles`, `stability`; see
+[Stability](#stability) for what the status means):
 
 | Provider | Implementer | Reviewer |
 | --- | --- | --- |
-| `codex` (built-in) | stable (default) | — |
-| `claude` (built-in) | experimental | stable (default) |
+| `codex` (built-in) | experimental (default) | — |
+| `claude` (built-in) | experimental | experimental (default) |
 | `example-agent` (template in `examples/`, not shipped) | experimental | experimental |
 
 Only the two built-in modules are part of the runner. No module for any other
@@ -141,7 +145,7 @@ of the module.
   core copies it once and uses only the copy (see [Contract](#contract)).
   Before the process starts, the core scans the copy against the
   [forbidden-argument list](#forbidden-arguments) (`PROVIDER_CONTRACT_VIOLATION`,
-  stage `codex` for the implementer, `claude` for the reviewer). The scan is a
+  stage `implementer` for the implementer, `reviewer` for the reviewer). The scan is a
   safety net against known mistakes, not a guarantee: an argument outside
   the list can still weaken a CLI. Values the core passed in (paths, model,
   output schema and, for the built-in providers, the session ID) are not
@@ -246,6 +250,37 @@ directory after every round). A CLI not on the list is checked by the
 general rules only.
 These are left to review of the module.
 
+## Implementer requirements
+
+One list applies to every provider that serves the implementer role,
+built-in or from `providerModules`:
+
+1. **Role rules (declaration).** `noApprovalPrompts`, `sandboxByMode`,
+   `noCommandNetwork`, `noUserConfiguration`, `pathGuards`,
+   `isolatedEnvironment` and `explicitResume` declared `enforced`, and a
+   `preflight` function (see [Role rules](#role-rules)). The core reads
+   the declaration only; whether the CLI keeps it rests on review of the
+   module against the real CLI.
+2. **Core checks for every module.** The argv copy and the
+   forbidden-argument scan, the exact environment with the guards first on
+   `PATH`, the model, effort and mode checks, the preflight result, schema
+   validation of the output, `isValidSessionId` for read and resumed
+   session IDs, and every check listed under "Everything else" in
+   [Core checks](#core-checks).
+3. **Conformance.** The suite passes without failures, with fixtures from
+   the real CLI, including at least one host the preflight refuses.
+
+The built-in modules differ from this list in the following points, which
+are visible in the code:
+
+| Point | `codex` | `claude` | Module from `providerModules` |
+| --- | --- | --- | --- |
+| Git directory fingerprint, process group kill, private index, scratch directories | not applied (`gitDirectoryWritable` not declared; built-in modules are exempt from the forced checks) | applied (`gitDirectoryWritable: true`) | always applied |
+| Preflight | accepts every host and version | Claude Code from 2.1.285 up to, but not including, 2.2.0 on macOS or Linux | must refuse at least one fixture host |
+| Conformance, preflight that refuses no fixture host | warning | failure | failure |
+| A resumed round must report the same session ID | not checked | checked (`resumeKeepsSessionId`) | always checked |
+| Session ID in the argv | exempt from the forbidden-argument scan | exempt from the forbidden-argument scan | scanned like any other argument |
+
 ## Built-in and example declarations
 
 | Guarantee | `codex` implementer | `claude` implementer (experimental) | `claude` reviewer | `example-agent` (template) |
@@ -321,6 +356,37 @@ an environment without the guards, and others). Passing the suite does not
 show that the CLI keeps the declared sandbox, network or approval
 behaviour.
 
+## Stability
+
+`stability` is declared per role. The same criteria apply to every module,
+built-in or not. A role is `stable` when it meets all of them:
+
+1. **Role rules.** The role rules of the role are met.
+2. **Conformance.** The suite reports no failure for the module.
+3. **Declarations checked.** Every guarantee declared `enforced` was checked
+   by a probe of the real CLI, and the probe is described (CLI version,
+   what was tried, what the CLI did).
+4. **No breaking limitation.** No known limitation breaks a guarantee the
+   role depends on.
+5. **Preflight.** The preflight refuses CLI versions and platforms where
+   the declarations were not checked.
+
+Otherwise the role is `experimental`.
+
+Built-in modules against these criteria (✓ met, ✗ not met):
+
+| Criterion | `codex` implementer | `claude` implementer | `claude` reviewer |
+| --- | --- | --- | --- |
+| 1. Role rules | ✓ | ✓ | ✓ |
+| 2. Conformance | ✓ (one warning: the preflight refuses no host, see 5) | ✓ | ✓ |
+| 3. Declarations checked | ✗ no probe is described; the module's limitations rely on the Codex documentation for `.git` staying read-only | partly: probes of 2.1.285 for the sandbox settings (network denied, writes outside the working directory denied); no described probe for `noUserConfiguration` or `explicitResume` | ✗ no probe of the reviewer argv is described |
+| 4. No breaking limitation | ✗ the runner does not check whether the CLI refuses to run commands when its sandbox cannot start (`sandboxByMode`) | ✗ Bash can write in `.git` (detected after the round, not prevented); background processes can outlive the CLI | ✓ settings files and admin settings still apply; no limitation shown to break `readOnlyTools` |
+| 5. Preflight | ✗ accepts every host and version | ✓ 2.1.285 up to 2.2.0, macOS or Linux | ✗ the reviewer role has no preflight in the contract, so the version is not restricted |
+
+No built-in role meets every criterion, so all three are declared
+`experimental`; the open items are listed in [ROADMAP.md](../ROADMAP.md).
+`example-agent` is a template for a fictional CLI and stays `experimental`.
+
 ## Adding a provider
 
 1. Copy [examples/providers/example-provider.mjs](../examples/providers/example-provider.mjs)
@@ -332,8 +398,8 @@ behaviour.
    suite in your tests.
 4. Pass the module in the profile's `providerModules` and select it in
    `implementer` or `reviewer`.
-5. Keep `stability: 'experimental'` until the module has been reviewed and
-   used.
+5. Keep `stability: 'experimental'` until the role meets every
+   [stability criterion](#stability).
 
 A new built-in provider (one the core imports) is a change of the core and
 needs the same review as any core change.

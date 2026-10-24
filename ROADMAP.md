@@ -27,9 +27,9 @@ Everything below "Planned" is a plan, not a feature. The
   `docsCandidatePolicy` in the profile, with core invariants (review may be
   skipped only for documentation-only classes).
 - Neutral roles and provider adapters. Roles `implementer` and `reviewer` in
-  the profile and the report; adapters for the Codex CLI (implementer) and
-  the Claude Code CLI (reviewer) in a closed core registry
-  (`scripts/agent-review-providers.mjs`).
+  the profile and the report, defined by their requirements; adapters for
+  the Codex CLI and the Claude Code CLI as the default implementer and
+  reviewer settings.
 - The Claude Code CLI as an implementer (experimental). A profile may select
   `implementer.provider: 'claude'`: print mode without approval prompts,
   read-only tools in analysis, Bash only inside the CLI's offline sandbox, no
@@ -37,7 +37,7 @@ Everything below "Planned" is a plan, not a feature. The
   accepted CLI versions checked in preflight; the core fingerprints the Git
   directory around every round (see
   [docs/architecture.md](docs/architecture.md#claude-code-as-implementer)).
-  The default implementer stays `codex`.
+  The default implementer setting of the profile is `codex`.
 - An open provider interface. A provider contract
   (`scripts/providers/contract.mjs`): roles with task modes, command and
   environment building, result and session reading, host preflight, and a
@@ -76,13 +76,14 @@ Everything below "Planned" is a plan, not a feature. The
   English by default, Polish with `locale: 'pl'` in the profile. With
   `'pl'` full runs, the terminal output and the CLI parser are identical to
   the runner before the catalog (a test compares them with the code of that
-  version). Stop codes, report fields and prompts are unchanged.
+  version), apart from texts that name the role instead of a provider. Stop codes
+  and report field names are unchanged.
 - English agent prompts and task headings. The profile's `locale` also
   selects the writer and reviewer prompts and the default task schema:
   `'en'` (default) prompts are neutral about providers, models and projects
   and quote English section names; the default schema has English canonical
   names with Polish aliases. With `'pl'` prompts and schema are the previous
-  ones, byte for byte. Stop codes, report fields and agent result schemas
+  ones, apart from naming the role instead of a provider. Stop codes, report fields and agent result schemas
   are unchanged.
 - Name and license. The project is Ringi Gate (package name `ringi-gate`,
   the command stays `ringi`), licensed under the Apache License 2.0
@@ -123,6 +124,12 @@ Everything below "Planned" is a plan, not a feature. The
   provenance.
 - Public repository at
   [github.com/kxmskx/ringi-gate](https://github.com/kxmskx/ringi-gate).
+- Role names instead of provider names. Report stages `implementer`,
+  `post-implementer` and `reviewer`; CLI options `--implementer-model` and
+  `--implementer-effort` (`--codex-model` and `--sol-effort` remain as
+  deprecated aliases); log, dashboard and prompt texts name the role.
+  Implementer requirements and stability criteria, equal for every module,
+  are in [docs/providers.md](docs/providers.md#stability).
 - An agent CLI that exits before reading its whole prompt. The runner no
   longer crashes on `EPIPE`; a failing exit stays the agent's own failure,
   and an exit with 0 without the whole prompt read stops with
@@ -134,6 +141,11 @@ Everything below "Planned" is a plan, not a feature. The
   [docs/good-first-issues.md](docs/good-first-issues.md).
 - Entry point, branding and a presentation boundary (the terminal dashboard
   as one of several presenters).
+- Built-in roles that meet the stability criteria and can be declared
+  `stable`: described probes of the real CLI for every built-in role, a
+  `codex` preflight that refuses unchecked versions and platforms, a check
+  of the `codex` sandbox start, and a version check for the reviewer role
+  in the contract; see [docs/providers.md](docs/providers.md#stability).
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.

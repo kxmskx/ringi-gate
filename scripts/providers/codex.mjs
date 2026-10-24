@@ -102,7 +102,7 @@ export default defineProvider({
   isValidModel: isValidModelId,
   implementer: {
     modes: ['implementation', 'analysis'],
-    stability: 'stable',
+    stability: 'experimental',
     limitations: [
       'Preflight does not restrict the CLI version or platform; the runner does not check whether the CLI refuses to run commands when its sandbox cannot start.',
       'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex (not checked by this runner).',

@@ -1163,7 +1163,7 @@ test('ringi profile loader: a FIFO is refused without blocking; a failed module 
           "  const local = process.env.RINGI_TEST_ROOT + '/ringi/local.mjs';",
           '  rmSync(local);',
           "  if (spawnSync('mkfifo', [local]).status !== 0) throw new Error('mkfifo failed');",
-          "  await lib.internal.assertProjectProfileUnchanged(projectProfile, 'post-codex');",
+          "  await lib.internal.assertProjectProfileUnchanged(projectProfile, 'post-implementer');",
         ].join('\n'),
       );
       assert.equal(outcome.code, 'PROFILE_MODIFIED');

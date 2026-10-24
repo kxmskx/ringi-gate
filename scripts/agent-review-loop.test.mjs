@@ -1185,31 +1185,16 @@ test('runner surface contract: prompts named exports and no imports', async () =
     ],
     'prompts named exports',
   );
-  // The prompt module has no dependencies: the core passes it validated values.
+  // The prompt module has no dependencies(no imports, re-exports or dynamic imports):
+  // the core passes it validated values.
   const source = await readFile(
     new URL('./agent-review-prompts.mjs', import.meta.url),
     'utf8',
   );
-  const syntax = ts.createSourceFile(
-    'agent-review-prompts.mjs',
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS,
+  assert.deepEqual(
+    moduleImportSpecifiers(source, 'agent-review-prompts.mjs'),
+    [],
   );
-  assert.equal(syntax.parseDiagnostics.length, 0);
-  let imports = 0;
-  const visit = (node) => {
-    if (
-      ts.isImportDeclaration(node) ||
-      (ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword)
-    )
-      imports += 1;
-    ts.forEachChild(node, visit);
-  };
-  visit(syntax);
-  assert.equal(imports, 0);
 });
 
 // Core module with the provider adapters. Constants moved out of lib stay

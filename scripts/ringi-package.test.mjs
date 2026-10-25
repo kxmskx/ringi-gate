@@ -29,7 +29,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const runnerRoot = join(scriptDirectory, '..');
 const PACKAGE_MANAGER = 'pnpm@11.20.0';
 const PNPM_VERSION = '11.20.0';
-const CODEX_VERSION = 'codex-cli 0.147.0';
+const CODEX_VERSION = 'codex-cli 0.160.0';
 const CLAUDE_VERSION = '2.1.290 (Claude Code)';
 
 function which(name) {

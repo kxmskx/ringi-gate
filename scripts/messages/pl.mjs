@@ -344,6 +344,11 @@ export default Object.freeze({
   'preflight.unsupportedPlatform':
     'Platforma {platform} nie obsługuje sandboxa poleceń {program} dla roli implementer.',
   'preflight.refused': 'Preflight dostawcy {id} odmówił roli implementer na tym hoście.',
+  'preflight.reviewerUnsupportedVersion':
+    'Wersja {program} ({version}) nie jest obsługiwana dla roli reviewer.',
+  'preflight.reviewerUnsupportedPlatform':
+    'Platforma {platform} nie jest obsługiwana przez {program} dla roli reviewer.',
+  'preflight.reviewerRefused': 'Preflight dostawcy {id} odmówił roli reviewer na tym hoście.',
 
   'stage.preflight': 'Walidacja repozytorium i narzędzi',
   'stage.analysis': 'Analiza read-only',

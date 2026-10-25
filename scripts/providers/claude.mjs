@@ -54,7 +54,7 @@ function claudeEnvelope(stdout) {
 // when the text does not start with such a version followed by whitespace
 // or the end (a pre-release or build suffix such as -beta.1 is refused).
 function compareVersion(text, triple) {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?=\s|$)/.exec(text);
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?=\s|$)/.exec(text);
   if (!match) return undefined;
   for (let index = 0; index < triple.length; index += 1) {
     const part = Number(match[index + 1]);
@@ -66,6 +66,23 @@ function compareVersion(text, triple) {
 function versionInRange(text, minimum, limit) {
   const low = compareVersion(text, minimum);
   return low !== undefined && low >= 0 && compareVersion(text, limit) < 0;
+}
+
+// The same host check for both roles: the implementer's sandbox settings
+// were probed on these CLI versions and platforms; the reviewer uses the
+// same range until its own argv is probed.
+function preflight({ version, platform }) {
+  if (
+    !versionInRange(
+      version,
+      CLAUDE_IMPLEMENTER_MIN_VERSION,
+      CLAUDE_IMPLEMENTER_VERSION_LIMIT,
+    )
+  )
+    return 'UNSUPPORTED_VERSION';
+  if (!CLAUDE_SANDBOX_PLATFORMS.includes(platform))
+    return 'UNSUPPORTED_PLATFORM';
+  return undefined;
 }
 
 // Errors that allow the reviewer fallback, and errors that never do (checked
@@ -179,19 +196,7 @@ const implementer = Object.freeze({
   // runs.
   gitDirectoryWritable: true,
   scratchDirectories: Object.freeze(['.claude/.cc-writes']),
-  preflight({ version, platform }) {
-    if (
-      !versionInRange(
-        version,
-        CLAUDE_IMPLEMENTER_MIN_VERSION,
-        CLAUDE_IMPLEMENTER_VERSION_LIMIT,
-      )
-    )
-      return 'UNSUPPORTED_VERSION';
-    if (!CLAUDE_SANDBOX_PLATFORMS.includes(platform))
-      return 'UNSUPPORTED_PLATFORM';
-    return undefined;
-  },
+  preflight,
 });
 
 const reviewer = Object.freeze({
@@ -228,6 +233,7 @@ const reviewer = Object.freeze({
     if (envelope.verdict) return { value: envelope };
     return undefined;
   },
+  preflight,
   fallbackReason(text) {
     if (CLAUDE_FALLBACK_DENIAL_PATTERNS.some((pattern) => pattern.test(text)))
       return undefined;

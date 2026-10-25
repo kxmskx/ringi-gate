@@ -16,9 +16,9 @@
 // - reviewer.malformed: parsed outputs the module must refuse;
 // - preflight.accepted / preflight.refused: hosts ({ version, platform }
 //   and, for refused hosts, the expected reason, required and one of
-//   PREFLIGHT_REASONS); an implementer needs at
-//   least one refused host (only the built-in codex module, whose preflight
-//   accepts every host as before the provider interface, gets a warning).
+//   PREFLIGHT_REASONS); an implementer needs at least one refused host;
+// - reviewer.preflight.accepted / reviewer.preflight.refused: the same for a
+//   reviewer with a preflight.
 //
 // The suite checks: the contract and the role rules (the same validation as
 // the core), the few declarations visible in the argv (schema, output file,
@@ -28,7 +28,6 @@
 // and the preflight. It cannot check that the CLI keeps its sandbox, network
 // or approval declarations: those rest on review of the module. Passing it
 // does not replace the core's own checks.
-import codexProvider from './codex.mjs';
 import {
   GUARANTEES,
   PREFLIGHT_REASONS,
@@ -109,6 +108,49 @@ export function checkProviderConformance(candidate, fixtures = {}) {
     check('contract', false, error?.message ?? String(error));
     return { id: candidate?.id, checks, failures, warnings };
   }
+  // Preflight: undefined or a known reason, and the fixtures' hosts.
+  const checkPreflight = (role, preflight, hosts = {}, path) => {
+    for (const host of [
+      { version: '', platform: 'conformance-os' },
+      { version: 'not a version', platform: 'win32' },
+    ]) {
+      const reason = attempt(`${role}.preflight`, () => preflight(host));
+      check(
+        `${role}.preflight`,
+        reason === undefined || PREFLIGHT_REASONS.includes(reason),
+        `preflight returns ${JSON.stringify(reason)}`,
+      );
+    }
+    for (const host of hosts.accepted ?? [])
+      check(
+        `${role}.preflight`,
+        attempt(`${role}.preflight`, () => preflight(host)) === undefined,
+        `preflight refuses ${JSON.stringify(host)}`,
+      );
+    // A refused host names its reason from PREFLIGHT_REASONS: without one a
+    // preflight that refuses nothing (returns undefined) would pass.
+    for (const { reason, ...host } of hosts.refused ?? []) {
+      if (
+        !check(
+          `${role}.fixtures`,
+          PREFLIGHT_REASONS.includes(reason),
+          `${path}.refused ${JSON.stringify(host)} has no reason from ${PREFLIGHT_REASONS.join(', ')}`,
+        )
+      )
+        continue;
+      check(
+        `${role}.preflight`,
+        attempt(`${role}.preflight`, () => preflight(host)) === reason,
+        `preflight does not refuse ${JSON.stringify(host)} with ${reason}`,
+      );
+    }
+    // A preflight that refuses no host does not restrict the CLI.
+    check(
+      `${role}.fixtures`,
+      (hosts.refused ?? []).length > 0,
+      `${path}.refused is empty (a preflight must refuse a host where the declarations were not checked)`,
+    );
+  };
   const model = fixtures.model ?? 'conformance-model';
   check(
     'model',
@@ -307,56 +349,7 @@ export function checkProviderConformance(candidate, fixtures = {}) {
         );
     }
 
-    // Preflight: undefined or a known reason, and the fixtures' hosts.
-    const preflight = fixtures.preflight ?? {};
-    for (const host of [
-      { version: '', platform: 'conformance-os' },
-      { version: 'not a version', platform: 'win32' },
-    ]) {
-      const reason = attempt('implementer.preflight', () => implementer.preflight(host));
-      check(
-        'implementer.preflight',
-        reason === undefined || PREFLIGHT_REASONS.includes(reason),
-        `preflight returns ${JSON.stringify(reason)}`,
-      );
-    }
-    for (const host of preflight.accepted ?? [])
-      check(
-        'implementer.preflight',
-        attempt('implementer.preflight', () => implementer.preflight(host)) ===
-          undefined,
-        `preflight refuses ${JSON.stringify(host)}`,
-      );
-    // A refused host names its reason from PREFLIGHT_REASONS: without one a
-    // preflight that refuses nothing (returns undefined) would pass.
-    for (const { reason, ...host } of preflight.refused ?? []) {
-      if (
-        !check(
-          'implementer.fixtures',
-          PREFLIGHT_REASONS.includes(reason),
-          `fixtures.preflight.refused ${JSON.stringify(host)} has no reason from ${PREFLIGHT_REASONS.join(', ')}`,
-        )
-      )
-        continue;
-      check(
-        'implementer.preflight',
-        attempt('implementer.preflight', () => implementer.preflight(host)) ===
-          reason,
-        `preflight does not refuse ${JSON.stringify(host)} with ${reason}`,
-      );
-    }
-    // A preflight that refuses no host does not check the sandbox: an error
-    // for every module except the built-in codex (behaviour of the base).
-    if ((preflight.refused ?? []).length === 0) {
-      if (module === codexProvider)
-        warnings.push('implementer: preflight refuses no host in the fixtures');
-      else
-        check(
-          'implementer.fixtures',
-          false,
-          'fixtures.preflight.refused is empty (a preflight must refuse a host without the sandbox)',
-        );
-    }
+    checkPreflight('implementer', implementer.preflight, fixtures.preflight, 'fixtures.preflight');
   }
 
   const reviewer = module.reviewer;
@@ -392,6 +385,15 @@ export function checkProviderConformance(candidate, fixtures = {}) {
         `fallbackReason(${JSON.stringify(text)}) returns ${JSON.stringify(reason)}`,
       );
     }
+    // The reviewer's preflight is optional; when present it is checked as
+    // the implementer's.
+    if (reviewer.preflight)
+      checkPreflight(
+        'reviewer',
+        reviewer.preflight,
+        given.preflight,
+        'fixtures.reviewer.preflight',
+      );
   }
   return { id: module.id, checks, failures, warnings };
 }

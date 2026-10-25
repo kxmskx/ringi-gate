@@ -10,14 +10,6 @@ already assigned. General rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 Items marked **Needs a decision before code** need a quick agreement in the
 issue first.
 
-## Count re-exports in the prompts "no imports" test
-
-Issue: [#1](https://github.com/kxmskx/ringi-gate/issues/1). **Taken.**
-
-The prompts module is supposed to have no imports. Its surface test, `runner surface contract: prompts named exports and no imports` in `scripts/agent-review-loop.test.mjs`, walks the syntax tree with its own `visit` function and counts `import` declarations and dynamic `import()`. It misses re-exports like `export { x } from './y.mjs'` or `export * from './y.mjs'`, which load a module too.
-
-The providers test already catches them: `moduleImportSpecifiers` in the same file also collects export declarations that have a module specifier. Use it in the prompts test as well (the expected list is empty) instead of a second visitor. `npm test` should pass.
-
 ## Reject U+1E9E in docs candidate paths
 
 Issue: [#2](https://github.com/kxmskx/ringi-gate/issues/2).

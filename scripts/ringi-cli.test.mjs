@@ -41,7 +41,7 @@ const runnerRoot = join(scriptDirectory, '..');
 const ringiBin = join(runnerRoot, 'bin', 'ringi.mjs');
 const PACKAGE_MANAGER = 'pnpm@11.20.0';
 const PNPM_VERSION = '11.20.0';
-const CODEX_VERSION = 'codex-cli 0.147.0';
+const CODEX_VERSION = 'codex-cli 0.160.0';
 const CLAUDE_VERSION = '2.1.290 (Claude Code)';
 
 function which(name) {
@@ -429,6 +429,10 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
   const binWithoutAgents = await createStubBin();
   const binWithoutClaude = await createStubBin({ codex: CODEX_VERSION });
   const binOldClaude = await createStubBin({ claude: '2.1.200 (Claude Code)' });
+  const binOldReviewer = await createStubBin({
+    codex: CODEX_VERSION,
+    claude: '2.1.200 (Claude Code)',
+  });
   const env = (extra = {}) => ({
     PATH: `${bin}:/usr/bin:/bin`,
     HOME: process.env.HOME,
@@ -544,6 +548,13 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
       code: 'IMPLEMENTER_PREFLIGHT_FAILED',
     },
     {
+      name: 'reviewer-cli version (claude reviewer)',
+      env: { PATH: `${binOldReviewer}:/usr/bin:/bin` },
+      failed: ['reviewer-cli'],
+      code: 'REVIEWER_PREFLIGHT_FAILED',
+      hint: /^Use a claude version and platform the reviewer accepts;/,
+    },
+    {
       name: 'reviewer-cli missing',
       env: { PATH: `${binWithoutClaude}:/usr/bin:/bin` },
       failed: ['reviewer-cli'],
@@ -562,7 +573,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         assert.equal(table.status, 0);
         assert.equal(table.stdout, formatDoctorTable(result));
         assert.match(table.stdout, /^STATUS  CHECK +DETAIL$/m);
-        assert.match(table.stdout, /^ok +implementer-cli +codex: codex-cli 0\.147\.0$/m);
+        assert.match(table.stdout, /^ok +implementer-cli +codex: codex-cli 0\.160\.0$/m);
         assert.match(table.stdout, /^ok +reviewer-cli +claude: 2\.1\.290 \(Claude Code\)$/m);
         assert.match(table.stdout, /^ok +runner-location +runner installed outside the repository$/m);
         assert.match(table.stdout, /ringi doctor: 15 ok, 0 warn, 0 fail\n$/);

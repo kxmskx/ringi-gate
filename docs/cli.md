@@ -153,8 +153,8 @@ depends on a failed one is `warn` with `not checked: … failed`.
 | `profile` | `ringi.config.mjs` exists, loads under the rules of [profile.md](profile.md#protection-of-ringiconfigmjs), passes the profile validation and the run's fingerprint check right after the load, and every module it imports is committed and equal to `HEAD` (otherwise `PROFILE_UNCOMMITTED`; their code has run by then) | `loadProjectProfile` (which uses `resolveRunnerProfile`), `assertProjectProfileUnchanged`, `readUncommittedProjectProfileFiles` |
 | `providers` | the profile's implementer and reviewer map to provider modules that serve those roles; a module that breaks the role rules fails here with `PROVIDER_ROLE_NOT_ALLOWED` | `resolveRunnerProfile`, `roleProvider` |
 | `repository-layout` | for an implementer whose Git directory is checked (Claude Code, modules from `providerModules`): no linked worktree, submodule or object alternates | `assertImplementerRepositoryLayout` |
-| `implementer-cli` | the implementer CLI answers `--version`, and its module's preflight accepts the version and platform (for Claude Code as implementer: versions from 2.1.285 up to, not including, 2.2.0, macOS or Linux) | `environmentReport` |
-| `reviewer-cli` | the reviewer CLI answers `--version` | `environmentReport` |
+| `implementer-cli` | the implementer CLI answers `--version`, and its module's preflight accepts the version and platform (Codex CLI: versions from 0.160.0 up to, not including, 0.161.0; Claude Code: versions from 2.1.285 up to, not including, 2.2.0; macOS or Linux for both) | `environmentReport` |
+| `reviewer-cli` | the reviewer CLI answers `--version`, and its module's preflight, when it has one, accepts the version and platform (Claude Code: the same range as for the implementer) | `environmentReport` |
 
 These are the preflight steps of a run, not all of them: a run also checks
 the task file, the secret scan, the dependency fingerprints and installed
@@ -185,7 +185,7 @@ ok      profile-committed  ringi.config.mjs is committed and matches HEAD (check
 ok      profile            ringi.config.mjs valid; 1 module(s), sha256 e3a2ab45081e
 ok      providers          implementer codex, reviewer claude
 ok      repository-layout  layout accepted for implementer codex
-ok      implementer-cli    codex: codex-cli 0.147.0
+ok      implementer-cli    codex: codex-cli 0.160.0
 ok      reviewer-cli       claude: 2.1.290 (Claude Code)
 
 ringi doctor: 15 ok, 0 warn, 0 fail

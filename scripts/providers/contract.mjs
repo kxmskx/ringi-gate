@@ -47,7 +47,8 @@ export const GUARANTEES = Object.freeze([
 ]);
 
 // Guarantees a role needs as 'enforced'; anything else refuses the module.
-// The implementer also needs a preflight function (host and sandbox check).
+// The implementer also needs a preflight function (host and sandbox check);
+// for the reviewer it is optional.
 export const ROLE_REQUIREMENTS = Object.freeze({
   implementer: Object.freeze([
     'noApprovalPrompts',
@@ -225,7 +226,7 @@ const ROLE_KEYS = Object.freeze({
     ...OPTIONAL_IMPLEMENTER_FLAGS,
     'scratchDirectories',
   ]),
-  reviewer: new Set([...DECLARATION_KEYS, ...ROLE_FUNCTIONS.reviewer]),
+  reviewer: new Set([...DECLARATION_KEYS, ...ROLE_FUNCTIONS.reviewer, 'preflight']),
 });
 const GUARANTEE_KEYS = Object.freeze({
   enforced: new Set(['status', 'mechanism']),
@@ -447,6 +448,10 @@ function readRole(value, role, path) {
         { max: 4 },
       );
   }
+  // Optional for the reviewer: the same host check as the implementer's,
+  // called before the first review.
+  if (role === 'reviewer' && Object.hasOwn(fields, 'preflight'))
+    definition.preflight = readFunction(fields.preflight, `${path}.preflight`);
   return Object.freeze(definition);
 }
 

@@ -382,16 +382,17 @@ export async function runDoctor({
       reviewer: resolved.reviewer,
       platform,
     });
-  const cliHint = (program) => (details) =>
-    details.code === 'IMPLEMENTER_PREFLIGHT_FAILED'
-      ? `Use a ${program} version and platform the implementer accepts; see docs/architecture.md.`
+  const cliHint = (program, role) => (details) =>
+    details.code === 'IMPLEMENTER_PREFLIGHT_FAILED' ||
+    details.code === 'REVIEWER_PREFLIGHT_FAILED'
+      ? `Use a ${program} version and platform the ${role} accepts; see docs/providers.md.`
       : `Install ${program} and put it on PATH; \`${program} --version\` must succeed.`;
   const implementerCli = await attempt(
     'implementer-cli',
     () => report(false),
     (value) =>
       `${roles.value.implementer.program}: ${String(value.implementer.version).slice(0, 80)}`,
-    cliHint(roles.value.implementer.program),
+    cliHint(roles.value.implementer.program, 'implementer'),
   );
   if (implementerCli) {
     await attempt(
@@ -399,7 +400,7 @@ export async function runDoctor({
       () => report(true),
       (value) =>
         `${roles.value.reviewer.program}: ${String(value.reviewer.version).slice(0, 80)}`,
-      cliHint(roles.value.reviewer.program),
+      cliHint(roles.value.reviewer.program, 'reviewer'),
     );
   } else {
     notChecked('reviewer-cli', 'implementer-cli');

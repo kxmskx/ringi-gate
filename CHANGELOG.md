@@ -27,9 +27,24 @@ is published by hand, without provenance; later versions are published by
 - Every built-in role is declared `experimental`, including the `codex`
   implementer and the `claude` reviewer, until it meets the stability
   criteria in `docs/providers.md`. The default profile is unchanged.
+- The `codex` implementer's preflight accepts only Codex CLI versions from
+  0.160.0 up to, but not including, 0.161.0, on macOS or Linux; any other
+  host stops the run with `IMPLEMENTER_PREFLIGHT_FAILED`.
+- The `claude` reviewer's preflight accepts only Claude Code versions from
+  2.1.285 up to, but not including, 2.2.0, on macOS or Linux (the
+  implementer's range). When a review is required, any other host stops the
+  run before the first round with the new code `REVIEWER_PREFLIGHT_FAILED`,
+  and the doctor check `reviewer-cli` fails.
+- The conformance suite no longer gives the built-in `codex` module a
+  warning instead of a failure for a preflight that refuses no host.
 
 ### Added
 
+- An optional `reviewer.preflight({ version, platform })` in the provider
+  contract, with the implementer's semantics. The core calls it after the
+  reviewer's version check, and the conformance suite checks it against
+  `reviewer.preflight` fixtures (`accepted`, `refused`) the same way as the
+  implementer's.
 - `--implementer-model <id>` and `--implementer-effort <effort>`. The
   options `--codex-model` and `--sol-effort` remain as deprecated aliases
   with the same validation; giving an alias together with its new option is

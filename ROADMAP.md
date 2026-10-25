@@ -40,7 +40,9 @@ Everything below "Planned" is a plan, not a feature. The
   The default implementer setting of the profile is `codex`.
 - An open provider interface. A provider contract
   (`scripts/providers/contract.mjs`): roles with task modes, command and
-  environment building, result and session reading, host preflight, and a
+  environment building, result and session reading, host preflight
+  (required for the implementer, optional for the reviewer; the built-in
+  `codex` and `claude` modules restrict CLI versions and platforms), and a
   security declaration (`enforced` with its mechanism, or `not-supported`)
   for each safety guarantee, with `stable`/`experimental` stability and
   known limits. Role rules in the core refuse an `implementer` whose
@@ -142,10 +144,11 @@ Everything below "Planned" is a plan, not a feature. The
 - Entry point, branding and a presentation boundary (the terminal dashboard
   as one of several presenters).
 - Built-in roles that meet the stability criteria and can be declared
-  `stable`: described probes of the real CLI for every built-in role, a
-  `codex` preflight that refuses unchecked versions and platforms, a check
-  of the `codex` sandbox start, and a version check for the reviewer role
-  in the contract; see [docs/providers.md](docs/providers.md#stability).
+  `stable`: described probes of the real CLI for every built-in role on
+  the versions and platforms their preflights accept, and a check of the
+  `codex` sandbox start (the Codex CLI help documents no setting that makes
+  the CLI fail when its sandbox cannot start); see
+  [docs/providers.md](docs/providers.md#stability).
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.

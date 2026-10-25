@@ -8039,35 +8039,58 @@ async function environmentReport({
     );
     return result.stdout.trim() || result.stderr.trim();
   };
-  const writer = roleProvider(implementer, 'implementer');
-  const codex = await version(writer);
   // The module may refuse a host where it cannot keep its guarantees. Any
-  // result other than undefined, or an exception, refuses the host.
-  let refusal;
-  try {
-    refusal = writer.implementer.preflight({ version: codex, platform });
-  } catch {
-    refusal = 'PREFLIGHT_ERROR';
-  }
-  if (refusal !== undefined) {
+  // result other than undefined, or an exception, refuses the host. The
+  // reviewer's preflight is optional and has its own stop code.
+  const assertPreflight = (adapter, role, hostVersion) => {
+    const preflight = adapter[role].preflight;
+    if (typeof preflight !== 'function') return;
+    let refusal;
+    try {
+      refusal = preflight({ version: hostVersion, platform });
+    } catch {
+      refusal = 'PREFLIGHT_ERROR';
+    }
+    if (refusal === undefined) return;
+    const reviewerRole = role === 'reviewer';
     throw new AgentWorkflowError(
       refusal === 'UNSUPPORTED_VERSION'
-        ? msg('preflight.unsupportedVersion', {
-            program: writer.program,
-            version: redactSensitive(codex).slice(0, 80),
-          })
+        ? msg(
+            reviewerRole
+              ? 'preflight.reviewerUnsupportedVersion'
+              : 'preflight.unsupportedVersion',
+            {
+              program: adapter.program,
+              version: redactSensitive(hostVersion).slice(0, 80),
+            },
+          )
         : refusal === 'UNSUPPORTED_PLATFORM'
-          ? msg('preflight.unsupportedPlatform', {
-              platform,
-              program: writer.program,
-            })
-          : msg('preflight.refused', { id: writer.id }),
-      { code: 'IMPLEMENTER_PREFLIGHT_FAILED', stage: 'preflight' },
+          ? msg(
+              reviewerRole
+                ? 'preflight.reviewerUnsupportedPlatform'
+                : 'preflight.unsupportedPlatform',
+              { platform, program: adapter.program },
+            )
+          : msg(reviewerRole ? 'preflight.reviewerRefused' : 'preflight.refused', {
+              id: adapter.id,
+            }),
+      {
+        code: reviewerRole
+          ? 'REVIEWER_PREFLIGHT_FAILED'
+          : 'IMPLEMENTER_PREFLIGHT_FAILED',
+        stage: 'preflight',
+      },
     );
+  };
+  const writer = roleProvider(implementer, 'implementer');
+  const codex = await version(writer);
+  assertPreflight(writer, 'implementer', codex);
+  let claude = null;
+  if (independentReviewRequired) {
+    const review = roleProvider(reviewer, 'reviewer');
+    claude = await version(review);
+    assertPreflight(review, 'reviewer', claude);
   }
-  const claude = independentReviewRequired
-    ? await version(roleProvider(reviewer, 'reviewer'))
-    : null;
   const policy = resolveReviewProfile(reviewProfile, reviewer);
   const plannedAttempts = (
     independentReviewRequired ? policy.attempts : []

@@ -1293,7 +1293,7 @@ test('runner surface contract: providers named exports, no imports and lib re-ex
     ['providers/contract.mjs', ['node:util']],
     ['providers/codex.mjs', ['./contract.mjs']],
     ['providers/claude.mjs', ['./contract.mjs']],
-    ['providers/conformance.mjs', ['./codex.mjs', './contract.mjs']],
+    ['providers/conformance.mjs', ['./contract.mjs']],
   ]) {
     const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
     assert.deepEqual(moduleImportSpecifiers(source, name), expected, name);
@@ -1494,6 +1494,8 @@ test('runner surface contract: error and stop codes', async () => {
       // declaration does not allow the role (role rules).
       'PROVIDER_CONTRACT_VIOLATION',
       'PROVIDER_ROLE_NOT_ALLOWED',
+      // Reviewer adapter preflight (CLI version, platform).
+      'REVIEWER_PREFLIGHT_FAILED',
       // A file of the runner's import graph changed during the run.
       'RUNNER_MODIFIED',
       'SECRET_DETECTED',
@@ -2118,10 +2120,10 @@ function createMockRunner({ failCheck, interruptCheck, onRun } = {}) {
         if (mockedResult) return mockedResult;
         if (cancelled) return result('', 130, 'Ctrl+C', { signal: 'SIGINT' });
         if (program === 'codex' && args[0] === '--version') {
-          return result('codex-cli 0.147.0\n');
+          return result('codex-cli 0.160.0\n');
         }
         if (program === 'claude' && args[0] === '--version') {
-          return result('2.1.220 (Claude Code)\n');
+          return result('2.1.285 (Claude Code)\n');
         }
         if (program === 'pnpm') {
           const name = `pnpm ${args.join(' ')}`;
@@ -17623,6 +17625,7 @@ const CLAUDE_IMPLEMENTER_PROFILE = deepFreeze({
   implementer: CLAUDE_IMPLEMENTER,
 });
 const CLAUDE_IMPLEMENTER_VERSION = '2.1.285 (Claude Code)';
+const CODEX_CLI_VERSION = 'codex-cli 0.160.0';
 // Flags and values that must not appear in the claude implementer argv.
 const CLAUDE_FORBIDDEN_ARGS = [
   '--dangerously-skip-permissions',
@@ -18142,6 +18145,93 @@ test('claude implementer profile: passes validation, model and effort follow the
       .implementerModel,
     'claude-fable-5',
   );
+});
+
+test('reviewer and codex preflight: CLI version and platform of both roles, STOP before the first round', async () => {
+  const claudeModule = claudeModuleExports.default;
+  const codexModule = codexModuleExports.default;
+  // The claude reviewer accepts the same hosts as the claude implementer.
+  for (const version of [CLAUDE_IMPLEMENTER_VERSION, '2.1.1000', '2.2.0', '2.1.284', '2.1.285-rc.1', '2.01.285', ''])
+    for (const platform of ['darwin', 'linux', 'win32'])
+      assert.equal(
+        claudeModule.reviewer.preflight({ version, platform }),
+        claudeModule.implementer.preflight({ version, platform }),
+        `${version} ${platform}`,
+      );
+  // codex: >=0.160.0 <0.161.0 on macOS or Linux.
+  for (const version of [CODEX_CLI_VERSION, 'codex-cli 0.160.12', '0.160.0'])
+    for (const platform of ['darwin', 'linux'])
+      assert.equal(codexModule.implementer.preflight({ version, platform }), undefined, version);
+  for (const version of [
+    'codex-cli 0.159.0',
+    'codex-cli 0.161.0',
+    'codex-cli 1.0.0',
+    'codex-cli 0.160.0-alpha.2',
+    'codex-cli 0.160',
+    'codex-cli 0.0160.0',
+    'codex 0.160.0',
+    ' codex-cli 0.160.0',
+    '',
+  ])
+    assert.equal(
+      codexModule.implementer.preflight({ version, platform: 'darwin' }),
+      'UNSUPPORTED_VERSION',
+      version,
+    );
+  for (const platform of ['win32', 'freebsd', undefined])
+    assert.equal(
+      codexModule.implementer.preflight({ version: CODEX_CLI_VERSION, platform }),
+      'UNSUPPORTED_PLATFORM',
+      String(platform),
+    );
+
+  const directory = await createRepository();
+  try {
+    for (const [program, version, role, code] of [
+      ['claude', '2.1.284 (Claude Code)', /reviewer/, 'REVIEWER_PREFLIGHT_FAILED'],
+      ['claude', '2.2.0 (Claude Code)', /reviewer/, 'REVIEWER_PREFLIGHT_FAILED'],
+      ['codex', 'codex-cli 0.159.0', /implementer/, 'IMPLEMENTER_PREFLIGHT_FAILED'],
+      ['codex', 'codex-cli 0.161.0', /implementer/, 'IMPLEMENTER_PREFLIGHT_FAILED'],
+    ]) {
+      let rounds = 0;
+      const runner = createMockRunner({
+        onRun: (name, args) =>
+          name === program && args[0] === '--version' ? result(`${version}\n`) : undefined,
+      });
+      await assert.rejects(
+        runFixture(directory, {
+          runner,
+          codexRound: async () => {
+            rounds += 1;
+            throw new Error('must not execute');
+          },
+        }),
+        (error) =>
+          error.code === code &&
+          error.stage === 'preflight' &&
+          role.test(error.message) &&
+          error.report?.status === 'STOPPED',
+        version,
+      );
+      assert.equal(rounds, 0, version);
+      assert.equal(
+        runner.calls.some(
+          ({ program: name, args }) => name === 'claude' && args[0] !== '--version',
+        ),
+        false,
+        version,
+      );
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+    }
+    // Supported versions of both CLIs (the mock runner's defaults): the run passes.
+    const { report } = await runFixture(directory);
+    assert.equal(report.status, 'APPROVE');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('claude implementer preflight: CLI version and sandbox platform, STOP before the implementer process', async () => {
@@ -20627,6 +20717,29 @@ const CODEX_CONFORMANCE_FIXTURES = deepFreeze({
       `${JSON.stringify({ type: 'thread.started', thread_id: '' })}\n`,
     ],
   },
+  preflight: {
+    accepted: [
+      { version: CODEX_CLI_VERSION, platform: 'darwin' },
+      { version: '0.160.9', platform: 'linux' },
+    ],
+    refused: [
+      { version: 'codex-cli 0.159.9', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
+      { version: 'codex-cli 0.161.0', platform: 'linux', reason: 'UNSUPPORTED_VERSION' },
+      { version: 'codex-cli 0.160.1-alpha.1', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
+      { version: CODEX_CLI_VERSION, platform: 'win32', reason: 'UNSUPPORTED_PLATFORM' },
+    ],
+  },
+});
+const CLAUDE_PREFLIGHT_FIXTURES = deepFreeze({
+  accepted: [
+    { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'darwin' },
+    { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'linux' },
+  ],
+  refused: [
+    { version: '2.2.0 (Claude Code)', platform: 'linux', reason: 'UNSUPPORTED_VERSION' },
+    { version: '2.1.284', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
+    { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'win32', reason: 'UNSUPPORTED_PLATFORM' },
+  ],
 });
 const CLAUDE_CONFORMANCE_FIXTURES = deepFreeze({
   model: 'claude-opus-5',
@@ -20648,18 +20761,9 @@ const CLAUDE_CONFORMANCE_FIXTURES = deepFreeze({
   reviewer: {
     envelope: (review) => ({ type: 'result', structured_output: review }),
     malformed: [{ type: 'result' }, { result: 42 }, { structured_output: null }],
+    preflight: CLAUDE_PREFLIGHT_FIXTURES,
   },
-  preflight: {
-    accepted: [
-      { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'darwin' },
-      { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'linux' },
-    ],
-    refused: [
-      { version: '2.2.0 (Claude Code)', platform: 'linux', reason: 'UNSUPPORTED_VERSION' },
-      { version: '2.1.284', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
-      { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'win32', reason: 'UNSUPPORTED_PLATFORM' },
-    ],
-  },
+  preflight: CLAUDE_PREFLIGHT_FIXTURES,
 });
 
 test('provider conformance suite: codex, claude and the example provider pass without calling a CLI or a model', (t) => {
@@ -20679,13 +20783,8 @@ test('provider conformance suite: codex, claude and the example provider pass wi
     results.map(({ id }) => id),
     ['codex', 'claude', 'example-agent'],
   );
-  // codex rejects no host in preflight (legacy behavior): the suite reports
-  // it as a warning, not an error.
-  assert.deepEqual(results[0].warnings, [
-    'implementer: preflight refuses no host in the fixtures',
-  ]);
-  assert.deepEqual(results[1].warnings, []);
-  assert.deepEqual(results[2].warnings, []);
+  // No built-in provider gets a warning: codex has a preflight too.
+  for (const outcome of results) assert.deepEqual(outcome.warnings, [], outcome.id);
   assert.equal(
     assertProviderConformance(exampleProvider, exampleFixtures).id,
     'example-agent',
@@ -20697,18 +20796,15 @@ test('provider conformance suite: codex, claude and the example provider pass wi
     ),
   );
   assert.throws(() => assertProviderConformance(exampleProvider), /fails conformance/);
-  // A non-core module without a rejected host in its fixtures fails (also a
-  // codex copy under another id); the warning applies only to the built-in
-  // codex.
+  // A module without a refused host in its fixtures fails, the built-in
+  // codex included.
   const { preflight: examplePreflight, ...withoutPreflight } = exampleFixtures;
-  const { implementer: codexImplementer, ...codexRest } = codexModuleExports.default;
+  const { preflight: _codexPreflight, ...codexWithoutPreflight } =
+    CODEX_CONFORMANCE_FIXTURES;
   for (const [module, fixtures] of [
     [exampleProvider, withoutPreflight],
     [exampleProvider, { ...exampleFixtures, preflight: { accepted: examplePreflight.accepted } }],
-    [
-      { ...codexRest, id: 'codex-fork', implementer: { ...codexImplementer } },
-      CODEX_CONFORMANCE_FIXTURES,
-    ],
+    [codexModuleExports.default, codexWithoutPreflight],
   ]) {
     const outcome = checkProviderConformance(module, fixtures);
     assert.deepEqual(
@@ -20718,6 +20814,48 @@ test('provider conformance suite: codex, claude and the example provider pass wi
     );
     assert.deepEqual(outcome.warnings, [], module.id);
   }
+  // The reviewer's preflight is checked the same way: without refused hosts
+  // in the fixtures, or with a host it does not refuse, the suite fails.
+  const claudeModule = claudeModuleExports.default;
+  const { preflight: _reviewerPreflight, ...reviewerWithoutPreflight } =
+    CLAUDE_CONFORMANCE_FIXTURES.reviewer;
+  for (const [module, reviewerFixtures, expected] of [
+    [claudeModule, reviewerWithoutPreflight, ['reviewer.fixtures']],
+    [
+      claudeModule,
+      { ...reviewerWithoutPreflight, preflight: { accepted: CLAUDE_PREFLIGHT_FIXTURES.accepted } },
+      ['reviewer.fixtures'],
+    ],
+    [
+      { ...claudeModule, reviewer: { ...claudeModule.reviewer, preflight: () => undefined } },
+      CLAUDE_CONFORMANCE_FIXTURES.reviewer,
+      ['reviewer.preflight', 'reviewer.preflight', 'reviewer.preflight'],
+    ],
+    [
+      { ...claudeModule, reviewer: { ...claudeModule.reviewer, preflight: () => 'NO' } },
+      CLAUDE_CONFORMANCE_FIXTURES.reviewer,
+      Array(7).fill('reviewer.preflight'),
+    ],
+  ]) {
+    const outcome = checkProviderConformance(module, {
+      ...CLAUDE_CONFORMANCE_FIXTURES,
+      reviewer: reviewerFixtures,
+    });
+    assert.deepEqual(
+      outcome.failures.map(({ check }) => check),
+      expected,
+    );
+  }
+  // Without a reviewer preflight the module still passes (it is optional).
+  const { preflight: _claudeReviewerPreflight, ...reviewerWithoutFunction } =
+    claudeModule.reviewer;
+  assert.deepEqual(
+    checkProviderConformance(
+      { ...claudeModule, reviewer: reviewerWithoutFunction },
+      { ...CLAUDE_CONFORMANCE_FIXTURES, reviewer: reviewerWithoutPreflight },
+    ).failures,
+    [],
+  );
   // Built-in provider declarations: roles and stability.
   assert.equal(codexModuleExports.default.implementer.stability, 'experimental');
   assert.equal(claudeModuleExports.default.implementer.stability, 'experimental');
@@ -22987,8 +23125,10 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   assert.deepEqual(keys.filter((key) => !used.has(key)), []);
   // 341 + runner.modified, runner.unverifiable, runner.modifiedResume,
   // cli.missingValue, process.inputNotRead, label.reviewerOutput,
-  // label.reviewerFinding, cli.optionAliasConflict.
-  assert.equal(keys.length, 348);
+  // label.reviewerFinding, cli.optionAliasConflict,
+  // preflight.reviewerUnsupportedVersion, preflight.reviewerUnsupportedPlatform,
+  // preflight.reviewerRefused.
+  assert.equal(keys.length, 351);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);

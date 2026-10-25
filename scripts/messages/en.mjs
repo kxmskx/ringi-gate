@@ -337,6 +337,12 @@ export default Object.freeze({
   'preflight.unsupportedPlatform':
     'Platform {platform} does not support the {program} command sandbox in the writer role.',
   'preflight.refused': 'The preflight of provider {id} refused the writer role on this host.',
+  'preflight.reviewerUnsupportedVersion':
+    '{program} {version} is not supported in the reviewer role.',
+  'preflight.reviewerUnsupportedPlatform':
+    'Platform {platform} is not supported for {program} in the reviewer role.',
+  'preflight.reviewerRefused':
+    'The preflight of provider {id} refused the reviewer role on this host.',
 
   'stage.preflight': 'Repository and tool validation',
   'stage.analysis': 'Read-only analysis',

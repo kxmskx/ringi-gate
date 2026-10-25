@@ -77,6 +77,7 @@ and functions:
 | reviewer | `processEnvironment({ environment })` | Exactly `environment`. |
 | reviewer | `reviewOutput(envelope)` | The review inside the parsed JSON output as `{ value }` or `{ text }`, or `undefined`. |
 | reviewer | `fallbackReason(text)` | `MODEL_UNAVAILABLE`, `CAPACITY_UNAVAILABLE`, `USAGE_LIMIT_EXHAUSTED` or `undefined` for a failed attempt's redacted output; never a reason for authentication, permission or configuration errors. |
+| reviewer, optional | `preflight({ version, platform })` | The same as the implementer's, called before the first review when a review is required. |
 
 Fields are read as data properties only: unknown fields, missing functions,
 getters, `Symbol` keys, objects whose prototype is not `Object` (or `null`),
@@ -157,9 +158,11 @@ of the module.
 - **Model, efforts and modes.** The core model rule and the module's
   `isValidModel`; efforts from the module's list and the profile's
   allowlist; task modes from the role's `modes`.
-- **Preflight.** After the version check, any result of `preflight` other
-  than `undefined`, or an exception, stops the run with
-  `IMPLEMENTER_PREFLIGHT_FAILED`.
+- **Preflight.** After the version check of each role, any result of that
+  role's `preflight` other than `undefined`, or an exception, stops the run
+  with `IMPLEMENTER_PREFLIGHT_FAILED` or, for the reviewer,
+  `REVIEWER_PREFLIGHT_FAILED` (stage `preflight`). The reviewer's version is read and
+  its preflight called only when a review is required.
 - **Output and sessions.** Results go through the same schema validation as
   for the built-in providers; anything else is `INVALID_AGENT_OUTPUT`. A
   session ID must meet `isValidSessionId` (read and resumed IDs alike),
@@ -276,8 +279,7 @@ are visible in the code:
 | Point | `codex` | `claude` | Module from `providerModules` |
 | --- | --- | --- | --- |
 | Git directory fingerprint, process group kill, private index, scratch directories | not applied (`gitDirectoryWritable` not declared; built-in modules are exempt from the forced checks) | applied (`gitDirectoryWritable: true`) | always applied |
-| Preflight | accepts every host and version | Claude Code from 2.1.285 up to, but not including, 2.2.0 on macOS or Linux | must refuse at least one fixture host |
-| Conformance, preflight that refuses no fixture host | warning | failure | failure |
+| Preflight | Codex CLI from 0.160.0 up to, but not including, 0.161.0 on macOS or Linux | Claude Code from 2.1.285 up to, but not including, 2.2.0 on macOS or Linux, in both roles | must refuse at least one fixture host |
 | A resumed round must report the same session ID | not checked | checked (`resumeKeepsSessionId`) | always checked |
 | Session ID in the argv | exempt from the forbidden-argument scan | exempt from the forbidden-argument scan | scanned like any other argument |
 
@@ -316,7 +318,8 @@ CLI's output format, which only the module author knows (see the example):
 `model`; `implementer.stdout(report, sessionId)`,
 `implementer.withoutSession`, `implementer.malformed`;
 `reviewer.envelope(review)`, `reviewer.malformed`; `preflight.accepted` and
-`preflight.refused` hosts.
+`preflight.refused` hosts of the implementer, and `reviewer.preflight` with
+the same fields for a reviewer that has a preflight.
 
 The suite checks:
 
@@ -344,9 +347,9 @@ The suite checks:
   needs a `reason` from `PREFLIGHT_REASONS` (`UNSUPPORTED_VERSION`,
   `UNSUPPORTED_PLATFORM`); an empty list or a host without such a reason
   is a failure (`implementer.fixtures`), so a preflight that accepts every
-  host (`preflight: () => undefined`) does not pass. Only the built-in
-  `codex` module, whose preflight accepts every host unchanged from
-  earlier versions, gets a warning instead of the empty-list failure.
+  host (`preflight: () => undefined`) does not pass. A reviewer's preflight,
+  when the module has one, is checked the same way against
+  `reviewer.preflight` (`reviewer.fixtures`, `reviewer.preflight`).
 
 The runner's tests run the suite for `codex`, `claude` and the example
 provider, and check that it catches bad modules (forbidden flags such as
@@ -378,10 +381,14 @@ Built-in modules against these criteria (✓ met, ✗ not met):
 | Criterion | `codex` implementer | `claude` implementer | `claude` reviewer |
 | --- | --- | --- | --- |
 | 1. Role rules | ✓ | ✓ | ✓ |
-| 2. Conformance | ✓ (one warning: the preflight refuses no host, see 5) | ✓ | ✓ |
+| 2. Conformance | ✓ | ✓ | ✓ |
 | 3. Declarations checked | ✗ no probe is described; the module's limitations rely on the Codex documentation for `.git` staying read-only | partly: probes of 2.1.285 for the sandbox settings (network denied, writes outside the working directory denied); no described probe for `noUserConfiguration` or `explicitResume` | ✗ no probe of the reviewer argv is described |
-| 4. No breaking limitation | ✗ the runner does not check whether the CLI refuses to run commands when its sandbox cannot start (`sandboxByMode`) | ✗ Bash can write in `.git` (detected after the round, not prevented); background processes can outlive the CLI | ✓ settings files and admin settings still apply; no limitation shown to break `readOnlyTools` |
-| 5. Preflight | ✗ accepts every host and version | ✓ 2.1.285 up to 2.2.0, macOS or Linux | ✗ the reviewer role has no preflight in the contract, so the version is not restricted |
+| 4. No breaking limitation | ✗ the Codex CLI help documents no setting that makes the CLI fail when its sandbox cannot start, and the runner does not check it (`sandboxByMode`) | ✗ Bash can write in `.git` (detected after the round, not prevented); background processes can outlive the CLI | ✓ settings files and admin settings still apply; no limitation shown to break `readOnlyTools` |
+| 5. Preflight | partly: 0.160.0 up to 0.161.0, macOS or Linux; the range is restricted, but no probe has checked the declarations on it yet (see 3) | ✓ 2.1.285 up to 2.2.0, macOS or Linux | partly: 2.1.285 up to 2.2.0, macOS or Linux, the implementer's range; no probe of the reviewer argv on it yet (see 3) |
+
+The built-in preflights accept macOS and Linux. Probes of the real CLI for
+criterion 3 run on macOS; until a probe on Linux is described, Linux counts
+as not checked for that criterion.
 
 No built-in role meets every criterion, so all three are declared
 `experimental`; the open items are listed in [ROADMAP.md](../ROADMAP.md).

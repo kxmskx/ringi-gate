@@ -667,6 +667,15 @@ deprecated `codexModel` and `solEffort` are still read when the new options
 are absent); there an invalid value stops the run with
 `INVALID_CODEX_MODEL` or `INVALID_SOL_EFFORT` (stage `preflight`).
 
+Before the first round the runner reads the version of each role's CLI and
+calls its module's preflight. With `provider: 'codex'` a Codex CLI version
+outside 0.160.0 up to, but not including, 0.161.0, an unreadable version,
+or a platform other than macOS or Linux stops the run with
+`IMPLEMENTER_PREFLIGHT_FAILED` (stage `preflight`). When a review is
+required, the `claude` reviewer is checked against the same Claude Code
+range and platforms as the `claude` implementer (below); a refused host
+stops the run with `REVIEWER_PREFLIGHT_FAILED` (stage `preflight`).
+
 With `provider: 'claude'` the implementer is Claude Code in print mode. The
 profile chooses only the model and the efforts; permissions, tools, sandbox
 and session handling are fixed by the core (see

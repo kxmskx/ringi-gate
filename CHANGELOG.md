@@ -5,6 +5,28 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Added
+
+- Described probes of the real CLIs on macOS for every guarantee the
+  built-in roles declare `enforced`: `docs/providers/probes/` (Codex CLI
+  0.160.0, Claude Code 2.1.285). The stability table in
+  `docs/providers.md` follows their results. Every built-in role stays
+  `experimental`.
+
+### Fixed
+
+- Documentation of the `codex` implementer: the probes show that commands
+  run in a login shell, so the guard directory is not first on `PATH`
+  inside them (`pathGuards`) and the user's shell profile can add
+  variables. The declaration is unchanged; the stability table lists it
+  as refuted.
+- Documentation of the `claude` implementer: probes of 2.1.285 ran
+  commands joined with `;` (`echo a; echo b` and a joined command of
+  `touch` writes) inside the sandbox without a denial; the documentation
+  said such commands are denied. Other joined commands were not probed.
+
 ## 0.2.0 — 2026-10-25
 
 ### Breaking

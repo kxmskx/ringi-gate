@@ -111,10 +111,13 @@ of this section). A profile may select `implementer.provider: 'claude'`.
 The adapter keeps the
 guarantees of the `codex` writer with Claude Code CLI mechanisms, checked
 against the help of Claude Code 2.1.285 and by probes of the real 2.1.285
-CLI with the adapter's flags (results in the worker's report of the task):
-with and without `--safe-mode`, a sandboxed `curl` to an outside host was
-denied by the sandbox's network rules, and `touch` outside the working
-directory (and in the user's home) failed with "Operation not permitted".
+CLI with the adapter's flags: `touch` outside the working directory (and
+in the user's home) failed with "Operation not permitted", and the model
+reported a sandboxed `curl` to an outside host as refused by the sandbox
+proxy (403); the probes rate the network result as partly checked,
+because it rests on the model's report. Probes with the adapter's argv as it is
+(with `--safe-mode`) are described in
+[providers/probes/claude-implementer.md](providers/probes/claude-implementer.md).
 
 | Guarantee of the `codex` writer | `claude` writer |
 | --- | --- |
@@ -343,10 +346,11 @@ Limits that the CLI does not let the runner close (known limits):
   commands accepted in `acceptEdits`, could then run unsandboxed.
 - There is no model-free command that reports whether the sandbox can start;
   the fail-closed check is `failIfUnavailable` at CLI startup.
-- Commands joined with `;` (for example `make; echo $?`) are not
-  auto-allowed: the CLI asks for approval, which `--permission-prompts none`
-  denies. This is fail-closed but limits what the writer can run; such
-  denials appear in `permissionDenials`.
+- Commands joined with `;`: probes of 2.1.285 ran `echo a; echo b` and a
+  joined command of `touch` writes inside the sandbox without a denial
+  ([probes](providers/probes/claude-implementer.md)). A command the CLI
+  does not auto-allow would need approval, which `--permission-prompts
+  none` denies; such denials appear in `permissionDenials`.
 - The sandbox also allows writes to temporary directories, and the
   environment passes `TMPDIR`; a repository located under a temporary
   directory therefore lets commands write next to it.

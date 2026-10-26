@@ -376,19 +376,20 @@ built-in or not. A role is `stable` when it meets all of them:
 
 Otherwise the role is `experimental`.
 
-Built-in modules against these criteria (✓ met, ✗ not met):
+Built-in modules against these criteria (✓ met, ✗ not met, partly: met
+with the gaps named in the cell, open: not checked yet):
 
 | Criterion | `codex` implementer | `claude` implementer | `claude` reviewer |
 | --- | --- | --- | --- |
 | 1. Role rules | ✓ | ✓ | ✓ |
 | 2. Conformance | ✓ | ✓ | ✓ |
-| 3. Declarations checked | ✗ no probe is described; the module's limitations rely on the Codex documentation for `.git` staying read-only | partly: probes of 2.1.285 for the sandbox settings (network denied, writes outside the working directory denied); no described probe for `noUserConfiguration` or `explicitResume` | ✗ no probe of the reviewer argv is described |
-| 4. No breaking limitation | ✗ the Codex CLI help documents no setting that makes the CLI fail when its sandbox cannot start, and the runner does not check it (`sandboxByMode`) | ✗ Bash can write in `.git` (detected after the round, not prevented); background processes can outlive the CLI | ✓ settings files and admin settings still apply; no limitation shown to break `readOnlyTools` |
-| 5. Preflight | partly: 0.160.0 up to 0.161.0, macOS or Linux; the range is restricted, but no probe has checked the declarations on it yet (see 3) | ✓ 2.1.285 up to 2.2.0, macOS or Linux | partly: 2.1.285 up to 2.2.0, macOS or Linux, the implementer's range; no probe of the reviewer argv on it yet (see 3) |
+| 3. Declarations checked | ✗ [probes of 0.160.0](providers/probes/codex-implementer.md) on macOS: five of eight checked (`noApprovalPrompts`, `sandboxByMode`, `noCommandNetwork`, `schemaOutput`, `explicitResume`); `isolatedEnvironment` partly (the login shell adds what the user's shell profile exports); `noUserConfiguration` not checked (no login in a substituted `CODEX_HOME`); `pathGuards` refuted (commands run in a login shell, whose profiles put the system and Homebrew directories before the guard directory on `PATH`); Linux not probed | partly: [probes of 2.1.285](providers/probes/claude-implementer.md) on macOS: three of eight checked (`noApprovalPrompts`, `schemaOutput`, `explicitResume`); the other five partly, mostly because the result envelope carries no tool output and the evidence is the model's report (`sandboxByMode` for analysis, `noCommandNetwork`, `pathGuards`, `isolatedEnvironment`), and for `noUserConfiguration` because the user configuration directory, project settings files, hooks and MCP servers are not checked; Linux not probed | partly: [probes of 2.1.285](providers/probes/claude-reviewer.md) on macOS: `noApprovalPrompts` and `schemaOutput` checked; `readOnlyTools` partly (the model's report and absent canaries); `isolatedEnvironment` partly (not observable, project settings files not probed); Linux not probed |
+| 4. No breaking limitation | ✗ the Codex CLI help documents no setting that makes the CLI fail when its sandbox cannot start, and the runner does not check it (`sandboxByMode`); the guard directory is not first on `PATH` inside commands (`pathGuards`) | ✗ Bash can write in `.git` (detected after the round, not prevented); background processes can outlive the CLI | open: settings files of the reviewed copy still apply (no `--restricted`), so a `.claude/settings.json` written by the implementer may add variables to the reviewer's environment (`isolatedEnvironment`); not probed. No limitation shown to break `readOnlyTools` |
+| 5. Preflight | partly: 0.160.0 up to 0.161.0, macOS or Linux; probed on 0.160.0 on macOS only, so Linux is accepted unchecked | partly: 2.1.285 up to 2.2.0, macOS or Linux; probed on 2.1.285 on macOS only | partly: 2.1.285 up to 2.2.0, macOS or Linux, the implementer's range; probed on 2.1.285 on macOS only |
 
 The built-in preflights accept macOS and Linux. Probes of the real CLI for
 criterion 3 run on macOS; until a probe on Linux is described, Linux counts
-as not checked for that criterion.
+as not checked for criteria 3 and 5.
 
 No built-in role meets every criterion, so all three are declared
 `experimental`; the open items are listed in [ROADMAP.md](../ROADMAP.md).

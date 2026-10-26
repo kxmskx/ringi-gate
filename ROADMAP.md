@@ -144,11 +144,19 @@ Everything below "Planned" is a plan, not a feature. The
 - Entry point, branding and a presentation boundary (the terminal dashboard
   as one of several presenters).
 - Built-in roles that meet the stability criteria and can be declared
-  `stable`: described probes of the real CLI for every built-in role on
-  the versions and platforms their preflights accept, and a check of the
-  `codex` sandbox start (the Codex CLI help documents no setting that makes
-  the CLI fail when its sandbox cannot start); see
-  [docs/providers.md](docs/providers.md#stability).
+  `stable`; see [docs/providers.md](docs/providers.md#stability). Probes
+  on macOS are described in
+  [docs/providers/probes/](docs/providers/probes/). Open: probes on Linux
+  for every role; `codex`: the guard directory first on `PATH` inside
+  commands (the CLI runs them in a login shell; a fix is proposed in the
+  probe description), the user configuration check, and a check of the
+  sandbox start (the Codex CLI help documents no setting that makes the
+  CLI fail when its sandbox cannot start); `claude` implementer: probes of
+  the user configuration directory, project settings files, hooks and MCP
+  servers, and evidence of tool output beyond the model's report; `claude`
+  reviewer: whether a project `.claude/settings.json` in the reviewed copy
+  reaches the reviewer's environment, and evidence of the available tools
+  beyond the model's report.
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.

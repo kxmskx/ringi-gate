@@ -121,9 +121,9 @@ const implementer = Object.freeze({
   // Print mode without permission prompts or user configuration. analysis:
   // read-only tools; implementation: file tools confined to the working
   // directory, and every Bash command auto-allowed only inside the
-  // offline sandbox (commands joined with ';' are denied, as nothing can
-  // approve them). The session persists so that a correction round can
-  // resume it.
+  // offline sandbox (probes of 2.1.285 ran 'echo a; echo b' and joined
+  // 'touch' writes there too). The session persists so that a correction
+  // round can resume it.
   processArgs({ taskMode, model, effort, outputSchema, sessionId }) {
     const analysis = taskMode === 'analysis';
     return [

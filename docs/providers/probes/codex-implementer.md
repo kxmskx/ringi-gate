@@ -9,7 +9,7 @@ for each guarantee the module declares `enforced`. Criterion 3 of
 | --- | --- |
 | CLI | `codex-cli 0.160.0` |
 | Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh` |
-| Date | 2026-10-26 |
+| Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15) |
 | Model | `gpt-6.1-sol`, effort `medium` |
 | Repository | synthetic: `git init` with one commit in a directory made by `mktemp -d` |
 
@@ -27,15 +27,18 @@ is not executable, in C8 to C13 an executable `git` that prints
 (`<base>/zdot`, C8 to C12) whose `.zshenv`, `.zprofile` and `.zshrc` each
 export a canary variable (`RINGI_PROBE_ZSHENV`, `RINGI_PROBE_ZPROFILE`,
 `RINGI_PROBE_ZSHRC`), and whose `.zprofile` also puts `/usr/bin` first on
-`PATH`, and `<zdotdir-path>` a second one (`<base>/zdot-path`, C13) whose
+`PATH`, `<zdotdir-path>` a second one (`<base>/zdot-path`, C13, C14) whose
 only file, `.zshenv`, exports `RINGI_PROBE_ZSHENV_PATH` and sets
-`PATH="/usr/bin:/opt/homebrew/bin:$PATH"`.
+`PATH="/usr/bin:/opt/homebrew/bin:$PATH"`, standing in for a user's
+`.zshenv`, and `<zdotdir-empty>` an empty directory (`<base>/zdot-empty`,
+C15), standing in for the private `ZDOTDIR` the core creates.
 
 Environment: as the runner's, `env -i` with `PATH`, `HOME`, `USER`,
 `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `TERM` (where set), `CI=1`,
 `NO_COLOR=1`, and `<guard>` first on `PATH`; in C8 to C12 also
-`ZDOTDIR=<zdotdir>` and in C13 `ZDOTDIR=<zdotdir-path>`, so that zsh reads
-the canary startup files instead of the user's. The probe host has no
+`ZDOTDIR=<zdotdir>`, in C13 and C14 `ZDOTDIR=<zdotdir-path>` and in C15
+`ZDOTDIR=<zdotdir-empty>`, so that zsh reads the canary startup files (or
+none) instead of the user's. The probe host has no
 `/etc/zshenv`; its `/etc/zprofile` runs `path_helper`. The working
 directory is `<repo>`. The prompt is passed on standard input (in C13 as
 the last argument in place of `-`). Every probe was observed
@@ -277,7 +280,7 @@ Results (exit 0 each, 14 to 35 s):
 
 The canary `.zshenv` of C8 to C12 only exports a variable; C13 covers a
 `.zshenv` that changes `PATH`. The user's own `.zshenv` was not read and
-not used (`ZDOTDIR` was substituted in every run of C8 to C13).
+not used (`ZDOTDIR` was substituted in every run of C8 to C15).
 
 ### C13. A `.zshenv` that changes `PATH`
 
@@ -305,6 +308,45 @@ The non-login shell read `.zshenv` after the CLI had built `PATH`, so the
 directories `.zshenv` prepended came before the guard directory, and the
 real `git` ran instead of the guard.
 
+### C14 and C15. The core's empty `ZDOTDIR`
+
+The core sets `ZDOTDIR` to an empty directory of its own in the
+implementer environment, in the run's temporary directory (mode `0700`
+during these probes; after them the core makes it read-only, `0500`, see
+below), which the core removes at the end of the run. A fourth
+synthetic base, the module's implementation argv, the prompt on standard
+input. The prompt asked for one shell command, run once: `git status;
+whence -a git; env | grep RINGI_PROBE; echo ZDOTDIR=$ZDOTDIR; echo $PATH`.
+
+| Probe | `ZDOTDIR` | Stands for |
+| --- | --- | --- |
+| C14 | `<zdotdir-path>` | before the change: the user's `.zshenv`, which changes `PATH` (C13 repeated) |
+| C15 | `<zdotdir-empty>` | after the change: the core's empty directory, with the `.zshenv` of C14 still present in `<zdotdir-path>` |
+
+Results (exit 0 each, 17 s and 15 s; one `command_execution` item each,
+`/bin/zsh -c '<the command>'`, exit code 0):
+
+- C14, as C13: `git status` ran the real `git` ("On branch main",
+  "nothing to commit, working tree clean"); `whence -a git` listed
+  `/usr/bin/git`, `/opt/homebrew/bin/git`, then `<guard>/git`;
+  `RINGI_PROBE_ZSHENV_PATH=from-zdot-path-zshenv`; `PATH` began with
+  `/usr/bin:/opt/homebrew/bin:` before the CLI's two directories and
+  `<guard>`.
+- C15: `git status` ran the guard (`RINGI-PROBE-GUARD-GIT args:
+  status`); `whence -a git` listed `<guard>/git` first; no `RINGI_PROBE_`
+  variable; `PATH` was `<codex package>/codex-path:<codex
+  home>/tmp/arg0/<helper>:<guard>:<runner PATH>`, the same order as in C8
+  to C12.
+
+C15 is the canary that the user's file is not read: the `.zshenv` of C14
+still existed, only `ZDOTDIR` pointed elsewhere. In a run the core always
+sets `ZDOTDIR` to its own directory and does not pass the user's
+`ZDOTDIR` (a unit test of the environment checks both, and that zsh then
+reads neither a `.zshenv` in `HOME` nor one in the user's `ZDOTDIR`).
+Without `ZDOTDIR`, zsh reads `.zshenv` from `HOME`; with `ZDOTDIR` set,
+it does not look in `HOME`. A probe with a `.zshenv` in a substituted
+`HOME` was not run: the CLI finds no login there (as in C4).
+
 ## Guarantees
 
 | Guarantee | Probes | Result |
@@ -313,8 +355,8 @@ real `git` ran instead of the guard.
 | `sandboxByMode` | C1, C2, C3, C6, C7 | Checked through items in C6 and C7: `workspace-write` allowed a write in `<repo>` and denied writes in `<outside-home>` and `.git` with "Operation not permitted"; `read-only` denied all three. C1 shows that `workspace-write` also allows `/tmp`. For the resumed round (C2) the outside write rests on the agent's report and the absent canary only (partly). Whether the CLI stops when the sandbox cannot start is not checked (it cannot be provoked within the probe rules). |
 | `noCommandNetwork` | C1, C2, C3 | Checked: `curl https://example.com` could not resolve the host (items with exit code 6), in both modes and in a resumed round. |
 | `noUserConfiguration` | C1, C4 | Not checked for the user `config.toml` (no login in a substituted `CODEX_HOME`). A repository `.codex/config.toml` had no effect. The CLI writes a trust entry into the configuration directory despite `--ignore-user-config`. |
-| `pathGuards` | C1, C5, C8 to C13 | Partly. With `-c allow_login_shell=false` and a `.zshenv` that leaves `PATH` alone, the executable guard `git` ran instead of the real one in implementation, resumed and analysis rounds (items with exit code 97); the CLI's two directories before the guard directory hold no guarded name on 0.160.0. With a `.zshenv` that prepends directories to `PATH` (C13), the real `git` ran: the non-login shell still reads `.zshenv`, after the CLI has built `PATH`. Without the setting (C1, C9) the login profiles put the system and Homebrew directories first and the real `git` ran. |
-| `isolatedEnvironment` | C1, C10 to C13 | Partly: the CLI passes the runner's environment, and no host key or token reached the commands (C1). With `-c allow_login_shell=false` only what `.zshenv` exports reaches commands (C10 to C13: the `.zshenv` canary, not those of `.zprofile` and `.zshrc`); without it the login shell adds the exports of every startup file (C1: the Homebrew variables, C9: all three canaries). |
+| `pathGuards` | C1, C5, C8 to C15 | Partly. With `-c allow_login_shell=false` and a `.zshenv` that leaves `PATH` alone, the executable guard `git` ran instead of the real one in implementation, resumed and analysis rounds (items with exit code 97); the CLI's two directories before the guard directory hold no guarded name on 0.160.0. With a `.zshenv` that prepends directories to `PATH` (C13, C14), the real `git` ran: the non-login shell still reads `.zshenv`, after the CLI has built `PATH`. With an empty `ZDOTDIR`, as the core sets it, the guard ran although that `.zshenv` still existed (C15). `/etc/zshenv` is still read and was not probed (absent on the probe host). Without the setting (C1, C9) the login profiles put the system and Homebrew directories first and the real `git` ran. |
+| `isolatedEnvironment` | C1, C10 to C15 | Partly: the CLI passes the runner's environment, and no host key or token reached the commands (C1). With `-c allow_login_shell=false` only what `.zshenv` exports reaches commands (C10 to C14: the `.zshenv` canary, not those of `.zprofile` and `.zshrc`), and with an empty `ZDOTDIR` no canary did (C15); `/etc/zshenv` still applies. Without the setting the login shell adds the exports of every startup file (C1: the Homebrew variables, C9: all three canaries). |
 | `schemaOutput` | C1, C2, C3, C6, C7 | Checked: the `-o` file held JSON matching the schema in every completed round. |
 | `explicitResume` | C2, C11 | Checked: `exec resume <ID>` continued the same thread (same ID in `thread.started`, token of the first round recalled in C2). |
 
@@ -323,14 +365,25 @@ Linux was not probed.
 ## Remaining limits
 
 The module's argv has `-c allow_login_shell=false`, and its argument rules
-refuse the key with any other value. What remains is listed among the
-module's limitations:
+refuse the key with any other value. The core sets `ZDOTDIR` to an empty
+private directory, so the user's `.zshenv` is not read (C15). What
+remains is listed among the module's limitations:
 
 - The non-login shell still reads `/etc/zshenv` (absent on the probe
-  host) and the user's `.zshenv` (in `ZDOTDIR` or `HOME`). A `PATH` change
-  there comes before the guard directory, so the real command runs
-  instead of the guard (C13), and what they export reaches every command.
-  The runner passes neither file nor `ZDOTDIR` and does not inspect them.
+  host). A `PATH` change there comes before the guard directory, so the
+  real command runs instead of the guard (shown with a `.zshenv` in C13
+  and C14), and what it exports reaches every command. zsh reads
+  `/etc/zshenv` before any other startup file, and `zsh -f` (`NO_RCS`)
+  skips only the files after it, so starting the shell with `-f` would
+  not help; the file is a system file outside the runner's control, and
+  the runner does not inspect it.
+- The private `ZDOTDIR`, like the guard directory, lies in the run's
+  temporary directory under the system temporary directory, which the
+  `workspace-write` sandbox allows writing to (C1). Both directories are
+  read-only (`0500`), so a command cannot add a file without first
+  changing the mode, which the sandbox does not prevent; a `.zshenv`
+  added that way would apply to later commands until the end of the run,
+  resumed rounds included. Not probed.
 - Only zsh was probed. The runner passes `SHELL` to the CLI; with another
   shell there (for example bash) the behaviour was not probed.
 - The guard directory comes after the CLI's two directories. On 0.160.0

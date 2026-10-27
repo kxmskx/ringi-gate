@@ -9,7 +9,7 @@ one for each guarantee the role declares `enforced`. Criterion 3 of
 | --- | --- |
 | CLI | `2.1.285 (Claude Code)` |
 | Platform | macOS (Darwin 27.0, Apple silicon) |
-| Date | 2026-10-26 |
+| Date | 2026-10-26 (K1 to K5), 2026-10-27 (K6 to K9) |
 | Model | `haiku`, effort `low` (below the module's efforts, to keep the probes cheap; the effort does not change the flags under test) |
 | Repository | synthetic: `git init` with one commit in a directory made by `mktemp -d` |
 
@@ -150,6 +150,38 @@ Result (exit 0, 7 s, 0.012 USD): `semi-a.txt` and `semi-b.txt` present in
 matches one joined command with the third write denied by the sandbox.
 The envelope does not show whether the model made one call or several.
 
+### K6 to K9. Shell startup files and the core's empty `ZDOTDIR`
+
+A third synthetic base, the implementation argv of K1, the executable
+guard `git` of [codex-implementer.md](codex-implementer.md) (C8 to C15)
+first on `PATH`, and `ZDOTDIR` set to one of its directories
+(`<zdotdir>`, `<zdotdir-path>`, `<zdotdir-empty>`, described there).
+`SHELL` is `/bin/zsh`. Each prompt asked for one Bash call with one
+joined command that writes its own output into a file in `<repo>`, then
+prints it: `git status` (with standard error), `whence -a git`, `env |
+grep RINGI_PROBE`, `printenv ZDOTDIR` and `printenv PATH`. The file,
+written by the command itself, is the evidence; the model's report
+matched it.
+
+| Probe | `ZDOTDIR` | Result |
+| --- | --- | --- |
+| K6 | `<zdotdir-path>` | Not run: the command used `$?`, `$ZDOTDIR` and `$PATH`, and the CLI denied it (`permission_denials`, tool `Bash`; the model reported a restriction on "simple_expansion"); no file. K7 to K9 use `printenv` instead. |
+| K7 | `<zdotdir-path>` | `git status` ran the guard (`RINGI-PROBE-GUARD-GIT args: status`); `whence -a git` listed `<guard>/git` first; `RINGI_PROBE_ZSHENV_PATH` set; `PATH` began with `<guard>`, followed by the runner's `PATH`, without the directories `.zshenv` prepended. |
+| K8 | `<zdotdir-empty>` | Guard ran, `<guard>/git` first, no `RINGI_PROBE_` variable, `PATH` as in K7. |
+| K9 | `<zdotdir>` | Guard ran; only `RINGI_PROBE_ZSHENV` set (not those of `.zprofile` and `.zshrc`); `PATH` as in K7, without the `/usr/bin` that `.zprofile` prepends. |
+
+Results (exit 0 each, 8 to 13 s, 0.034, 0.014, 0.017 and 0.013 USD):
+`permission_denials` empty in K7 to K9, `is_error: false`. Bash commands
+read `$ZDOTDIR/.zshenv` and nothing else of the canaries; its exports
+reached the commands, but `PATH` came out in the order the runner passed,
+so a `PATH` change there did not move the guard directory from the front.
+With the core's empty `ZDOTDIR` (K8) no canary reached the commands
+although the `.zshenv` of K7 still existed. `/etc/zshenv` (absent on the
+probe host) was not probed. The core's `ZDOTDIR` is read-only (`0500`),
+like the guard directory; Bash in the sandbox may write in temporary
+directories, so a command that changes the mode first could add a
+`.zshenv` that applies to later commands of the run; not probed.
+
 ## Guarantees
 
 | Guarantee | Probes | Result |
@@ -158,8 +190,8 @@ The envelope does not show whether the model made one call or several.
 | `sandboxByMode` | K1, K2, K3, K5 | Partly. Implementation, checked: file tools confined to the working directory (`permission_denials`); Bash writes in `<repo>`, in temporary directories and in `.git` (known limitation) done (files present); a Bash write in `<outside-home>` denied inside a command that demonstrably ran (K5). Analysis, partly: that no write or command tool was available rests on the model's report and the absent canaries (K3). Whether the CLI stops when the sandbox cannot start (`failIfUnavailable`) is not checked (it cannot be provoked within the probe rules). |
 | `noCommandNetwork` | K1, K2 | Partly: the model reported that `curl https://example.com` was refused by the sandbox proxy (403), also in a resumed round; the envelope has no tool output, and no canary shows network access. |
 | `noUserConfiguration` | K1, K4 | Partly: the repository's `CLAUDE.md` was ignored (`--safe-mode`; no canary file). The user configuration directory, project settings files, hooks and MCP servers are not checked (see K4). |
-| `pathGuards` | K1 | Partly: the model reported `PATH` inside Bash with the guard directory first; no canary shows it. |
-| `isolatedEnvironment` | K1 | Partly: the model reported the variable names inside Bash: the allowlisted variables plus the CLI's own sandbox and session variables, no host key or token; no canary shows it. |
+| `pathGuards` | K1, K7 to K9 | Checked: the executable guard `git` ran in Bash, shown by its message in a file the command wrote (K7 to K9), also with a `.zshenv` that prepends directories to `PATH` (K7); the guard directory came first on `PATH`. Resumed rounds were not probed for this; analysis rounds have no Bash. |
+| `isolatedEnvironment` | K1, K7 to K9 | Partly: the model reported the variable names inside Bash: the allowlisted variables plus the CLI's own sandbox and session variables, no host key or token (K1, report only). What `$ZDOTDIR/.zshenv` exports reaches commands (K7, K9); with the core's empty `ZDOTDIR` no canary did (K8); `/etc/zshenv` still applies. |
 | `schemaOutput` | K1, K2, K3, K5 | Checked: `structured_output` matching the schema in a `result` envelope with `is_error: false`. |
 | `explicitResume` | K2 | Checked: `--resume <ID>` kept the session ID in the envelope, and `structured_output` held the token of the first round. |
 
@@ -175,3 +207,7 @@ Linux was not probed.
   reason, were not probed. The module's comment and
   [docs/architecture.md](../../architecture.md) said such commands are
   denied; the documentation now describes the probed behaviour.
+- A joined command with `$?`, `$ZDOTDIR` and `$PATH` was denied (K6),
+  while the joined command of K5, with `$?` only, ran. Which expansion
+  led to the denial was not examined; a denial shows in
+  `permissionDenials` and does not run the command.

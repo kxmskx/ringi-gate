@@ -23,10 +23,16 @@ is published by hand, without provenance; later versions are published by
   before the guard directory on `PATH` (`pathGuards`) and add the
   variables they export; with the new argument an executable guard is
   reached in implementation, analysis and resumed rounds. The shell still
-  reads `/etc/zshenv` and the user's `.zshenv`, and a probe showed that a
-  `PATH` change there puts its directories before the guard directory;
-  the module lists this as a limitation. The argument rules refuse
+  reads `.zshenv` files; see the next entry for the user's `.zshenv`. The argument rules refuse
   `-c allow_login_shell` other than `false` for `codex`.
+- Implementer environment (`codex` and `claude`): `ZDOTDIR` points to an
+  empty read-only directory (mode `0500`) in the run's temporary
+  directory, removed with it, so zsh no longer reads the user's
+  `.zshenv`. Probes of Codex CLI 0.160.0 showed the guard reached with it
+  where a user's `.zshenv` that changes `PATH` had put the real `git`
+  first; in probes of Claude Code 2.1.285 such a `.zshenv` exported
+  variables to commands but left the guard directory first on `PATH`.
+  `/etc/zshenv` is still read and stays a limitation.
 - Documentation of the `claude` implementer: probes of 2.1.285 ran
   commands joined with `;` (`echo a; echo b` and a joined command of
   `touch` writes) inside the sandbox without a denial; the documentation

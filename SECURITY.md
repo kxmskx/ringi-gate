@@ -49,7 +49,9 @@ on.
   `.cache`, `tmp`, `playwright-report`, `test-results` or
   `.agent-review-loop`. Any unexpected change stops the run.
 - The reviewer works on a read-only copy with read-only tools and an
-  allowlisted set of environment variables.
+  allowlisted set of environment variables. The `claude` reviewer ignores
+  the settings files and MCP servers of the copy (`--restricted`,
+  `--strict-mcp-config`) and its `CLAUDE.md` files (`--safe-mode`).
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
 

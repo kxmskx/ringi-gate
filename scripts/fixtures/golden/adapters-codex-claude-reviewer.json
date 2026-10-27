@@ -115,6 +115,8 @@
         "first": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -133,7 +135,7 @@
       },
       "subtrees": {
         "outputs": {
-          "sha256": "760bf7ec5039385cc5f1208cba70bafaac4e90919773976921cda4f279a0fb98"
+          "sha256": "56c49edb28bc00043531cb266393949f63bde9d5d7503d93a336e3b07aeda2d0"
         }
       }
     },
@@ -533,6 +535,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -552,7 +556,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "7b72c5f82bcf15a81dfd4286622d18e638dab58de66f47c27ef4ec418dc8212f"
+          "sha256": "1337382b287bb9940896f91ff00803e3eb32ccbd06ce1b43732636872275eae6"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"
@@ -565,6 +569,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -584,7 +590,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "7b72c5f82bcf15a81dfd4286622d18e638dab58de66f47c27ef4ec418dc8212f"
+          "sha256": "1337382b287bb9940896f91ff00803e3eb32ccbd06ce1b43732636872275eae6"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"
@@ -597,6 +603,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -616,7 +624,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "c20e061d8a0469a04e86e840bf22e99844450e8e6c825c9231ec4b503f26ffd5"
+          "sha256": "d0a6300ef7b682e0561d022dbd12796f1d1004232f148e8b89a36dc55346a1a7"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"
@@ -629,6 +637,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -648,7 +658,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "c20e061d8a0469a04e86e840bf22e99844450e8e6c825c9231ec4b503f26ffd5"
+          "sha256": "d0a6300ef7b682e0561d022dbd12796f1d1004232f148e8b89a36dc55346a1a7"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"
@@ -661,6 +671,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -680,7 +692,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "f860f393f1437bdf57bfeccea750c5812814e0950285c0b5bae0b2c88b5ccddd"
+          "sha256": "93cb40dc6f92ad39077a293c47780fbc6cee8d45982555ca77791ece2686f355"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"
@@ -693,6 +705,8 @@
         "args": [
           "-p",
           "--safe-mode",
+          "--restricted",
+          "--strict-mcp-config",
           "--no-session-persistence",
           "--disable-slash-commands",
           "--model",
@@ -712,7 +726,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "1024166bc49917443db8c1fa92102db374acf2b1c7ad070148264ab60042dddc"
+          "sha256": "9e15e10247a7621b0d9dcda940f0c86a206c1300aafe92d35672faefcadb7246"
         },
         "outcome": {
           "sha256": "ae4612615c3e50776ab4e7518ea6866e7057f2e40299e01f3095121be699d080"

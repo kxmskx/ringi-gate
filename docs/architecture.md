@@ -39,7 +39,7 @@ means the implementer.
 | --- | --- | --- |
 | Implementer (writer) | Any provider that meets the [implementer requirements](providers.md#implementer-requirements). Built-in: Codex CLI (`codex exec`, default) or Claude Code CLI (`claude -p`, experimental) | Real working tree, in the sandbox the module declares. Codex: sandbox `workspace-write` (implementation) or `read-only` (analysis), network access disabled, approvals disabled. Claude Code: see [Claude Code as implementer](#claude-code-as-implementer). `git`, `pnpm`, `corepack` and other package managers on its `PATH` are guard scripts (see below). |
 | Gates | The runner itself | Runs the checks from the profile after the writer, with `shell: false`, outside the implementer's sandbox and with the user's permissions. Only the environment is isolated: separate home, configuration, cache and temporary directories, an empty npm user configuration, global Git configuration disabled, Corepack network disabled. |
-| Reviewer | Any provider whose reviewer role declares read-only tools ([role rules](providers.md#role-rules)). Built-in: Claude Code CLI (`claude -p`, default) | A read-only copy of the repository. Claude Code: tools limited to `Read`, `Glob` and `Grep`; permission mode `dontAsk`; no session persistence; slash commands disabled. |
+| Reviewer | Any provider whose reviewer role declares read-only tools ([role rules](providers.md#role-rules)). Built-in: Claude Code CLI (`claude -p`, default) | A read-only copy of the repository. Claude Code: tools limited to `Read`, `Glob` and `Grep`; permission mode `dontAsk`; `--safe-mode`, `--restricted` and `--strict-mcp-config`, so settings files, memory files and MCP servers of the copy are not loaded; no session persistence; slash commands disabled. |
 | Decision | A human | Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`; the runner never sets it to `true`. |
 
 Exactly one writer works per round, and the runner refuses to start a second
@@ -86,8 +86,8 @@ or model.
 
 Modules only describe the process; the provider's own sandbox settings are
 part of its argv (for `codex`: sandbox by task mode, network access and
-approvals disabled; for `claude` as reviewer: read-only tools, `dontAsk`, no
-session persistence; for `claude` as implementer: see below). The core keeps
+approvals disabled; for `claude` as reviewer: read-only tools, `dontAsk`, `--safe-mode`,
+`--restricted`, `--strict-mcp-config`, no session persistence; for `claude` as implementer: see below). The core keeps
 everything else that makes a run fail-closed,
 for every provider: validation and stop codes, the isolated writer
 environment without credentials and with Corepack network disabled, the

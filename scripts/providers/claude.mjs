@@ -200,11 +200,16 @@ const implementer = Object.freeze({
 });
 
 const reviewer = Object.freeze({
-  // Print mode, read-only tools, no persistence, no slash commands.
+  // Print mode, read-only tools, no persistence, no slash commands. The
+  // reviewed copy holds the implementer's files: --restricted ignores its
+  // settings files (env, hooks, permissions) and --strict-mcp-config its
+  // MCP servers (probes of 2.1.311 with canaries in the copy).
   processArgs({ model, effort, outputSchema }) {
     return [
       '-p',
       '--safe-mode',
+      '--restricted',
+      '--strict-mcp-config',
       '--no-session-persistence',
       '--disable-slash-commands',
       '--model',
@@ -296,7 +301,7 @@ export default defineProvider({
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
     limitations: [
-      'Settings files are not ignored (no --restricted); admin-managed (policy) settings apply.',
+      'Admin-managed (policy) settings still apply.',
     ],
     security: {
       noApprovalPrompts: enforced('--permission-mode dontAsk'),
@@ -306,8 +311,8 @@ export default defineProvider({
       noCommandNetwork: notSupported(
         'The reviewer has no command or web tool (--tools Read,Glob,Grep); no network sandbox is configured.',
       ),
-      noUserConfiguration: notSupported(
-        '--safe-mode and --disable-slash-commands only; settings files are not ignored.',
+      noUserConfiguration: enforced(
+        '--safe-mode, --restricted, --strict-mcp-config, --disable-slash-commands',
       ),
       pathGuards: notSupported('The reviewer has no command tool; the core adds no guards.'),
       isolatedEnvironment: enforced(

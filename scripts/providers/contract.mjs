@@ -29,7 +29,8 @@ export const GUARANTEE_STATUSES = Object.freeze(['enforced', 'not-supported']);
 // - noCommandNetwork: commands the agent runs reach no network host;
 // - noUserConfiguration: user and project configuration of the CLI (rules,
 //   hooks, plugins, MCP servers, settings files) is not loaded;
-// - pathGuards: commands find the core's guard directory first on PATH;
+// - pathGuards: commands find the core's guard directory on PATH before any
+//   other directory that holds a guarded command;
 // - isolatedEnvironment: the process gets only the core's environment;
 // - schemaOutput: the CLI constrains the result to the core's JSON schema;
 // - explicitResume: a correction round resumes the session by its ID only;
@@ -597,9 +598,11 @@ const valueOutside = (allowed) => (value) => !allowed.includes(value);
 
 // A codex -c/--config override key=value, read by its key with quotes and
 // whitespace removed: no sandbox, approval, environment, MCP, notify or
-// profile setting, and of the sandbox_workspace_write table only
+// profile setting, of the sandbox_workspace_write table only
 // network_access=false (an inline table such as
-// sandbox_workspace_write={writable_roots=[...]} is refused).
+// sandbox_workspace_write={writable_roots=[...]} is refused), and
+// allow_login_shell only as false (a login shell puts its profiles' PATH
+// before the guard directory).
 const CODEX_CONFIG_FORBIDDEN =
   /^(?:sandbox_mode|approval_policy|shell_environment_policy|mcp_servers|notify|profiles?)(?:\.|$)/;
 function codexConfig(value) {
@@ -610,7 +613,7 @@ function codexConfig(value) {
     '',
   );
   if (CODEX_CONFIG_FORBIDDEN.test(key)) return true;
-  if (key === 'sandbox_workspace_write.network_access')
+  if (key === 'sandbox_workspace_write.network_access' || key === 'allow_login_shell')
     return text.slice(separator + 1).trim() !== 'false';
   return key === 'sandbox_workspace_write' || key.startsWith('sandbox_workspace_write.');
 }

@@ -147,11 +147,12 @@ Everything below "Planned" is a plan, not a feature. The
   `stable`; see [docs/providers.md](docs/providers.md#stability). Probes
   on macOS are described in
   [docs/providers/probes/](docs/providers/probes/). Open: probes on Linux
-  for every role; `codex`: the guard directory first on `PATH` inside
-  commands (the CLI runs them in a login shell; a fix is proposed in the
-  probe description), the user configuration check, and a check of the
-  sandbox start (the Codex CLI help documents no setting that makes the
-  CLI fail when its sandbox cannot start); `claude` implementer: probes of
+  for every role; `codex`: the user's `.zshenv`, which the shell of
+  commands still reads (a probe showed that a `PATH` change there puts its
+  directories before the guard directory, and it can export variables),
+  the user configuration check, and a check of the sandbox start (the
+  Codex CLI help documents no setting that makes the CLI fail when its
+  sandbox cannot start); `claude` implementer: probes of
   the user configuration directory, project settings files, hooks and MCP
   servers, and evidence of tool output beyond the model's report; `claude`
   reviewer: whether a project `.claude/settings.json` in the reviewed copy

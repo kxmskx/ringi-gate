@@ -145,6 +145,8 @@
           "model_reasoning_effort=\"medium\"",
           "-c",
           "sandbox_workspace_write.network_access=false",
+          "-c",
+          "allow_login_shell=false",
           "exec",
           "--ignore-user-config",
           "--strict-config",
@@ -158,7 +160,7 @@
       },
       "subtrees": {
         "outputs": {
-          "sha256": "241aeab3d976814bf703568747793b3b722d903d012635a4aa1d8d307942424e"
+          "sha256": "7912d6cc0ef0be87c9884c6eda71f9249d02d71a06ec7800daf20f00fc9e5968"
         }
       }
     },
@@ -272,6 +274,8 @@
           "model_reasoning_effort=\"high\"",
           "-c",
           "sandbox_workspace_write.network_access=false",
+          "-c",
+          "allow_login_shell=false",
           "exec",
           "--ignore-user-config",
           "--strict-config",
@@ -286,7 +290,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "78baacbc0398ad7146e67596fbf504b765b4e01265cd934e5dd0e91b7338379c"
+          "sha256": "d9d7251bd901bdb98b8c038e71294361477d6de77aca786ee4c2297d9a2b70c7"
         },
         "outcome": {
           "sha256": "1d2e0fd55f77c315831e08497e72fe94df4f3e17bd54312d87b3f8ed67fbf2f8"
@@ -309,6 +313,8 @@
           "model_reasoning_effort=\"high\"",
           "-c",
           "sandbox_workspace_write.network_access=false",
+          "-c",
+          "allow_login_shell=false",
           "exec",
           "resume",
           "--ignore-user-config",
@@ -325,7 +331,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "48505f13bb5dba40755f28d8732866a3c12f82c0d413d36614efc5dafb231b7f"
+          "sha256": "10bd2bb9dc3853f1951fd463c067473717e75427a1403827d097a1faaef7c4fd"
         },
         "outcome": {
           "sha256": "1d2e0fd55f77c315831e08497e72fe94df4f3e17bd54312d87b3f8ed67fbf2f8"
@@ -348,6 +354,8 @@
           "model_reasoning_effort=\"high\"",
           "-c",
           "sandbox_workspace_write.network_access=false",
+          "-c",
+          "allow_login_shell=false",
           "exec",
           "--ignore-user-config",
           "--strict-config",
@@ -362,7 +370,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "b5465a5472bd345528a89c452a68ecd4acc648dac755423d53b7936fbfacd420"
+          "sha256": "d8cb8b22128ec716043cd3ca5402af248b88736432dda18e5076d3665c05e1de"
         },
         "outcome": {
           "sha256": "b6e3c3c9d66f0bbe4e02e1e207f13318fe2e955c2ea4a40450c5f5b42a426294"
@@ -385,6 +393,8 @@
           "model_reasoning_effort=\"high\"",
           "-c",
           "sandbox_workspace_write.network_access=false",
+          "-c",
+          "allow_login_shell=false",
           "exec",
           "resume",
           "--ignore-user-config",
@@ -401,7 +411,7 @@
       },
       "subtrees": {
         "call": {
-          "sha256": "c9a87366bd53e0b09248ff30511879bc64a16374535420cc34bc37a4ed0c26d6"
+          "sha256": "faaa693d3eb547e3c0dbe988dd7dc6ff5d34d4e1e4a9a124b2e7f790867caf87"
         },
         "outcome": {
           "sha256": "b7782a1b9c7d29b40940c9ce6aa8fd7d04c96454d3d9eafab958bf98a91a2363"

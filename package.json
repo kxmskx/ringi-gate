@@ -1,6 +1,6 @@
 {
   "name": "ringi-gate",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "description": "Fail-closed pipeline for AI coding agents: one writer, independent read-only review, deterministic gates, human decides on publication.",
   "license": "Apache-2.0",

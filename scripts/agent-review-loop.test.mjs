@@ -18,7 +18,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -8441,6 +8441,51 @@ test('an environment variable disables automatic repair without a misleading npm
   } finally {
     await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
   }
+});
+
+test('the implementer environment sets an empty private ZDOTDIR, so zsh skips the user .zshenv', async () => {
+  const runId = 'isolated-zdotdir';
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), `${TEST_PROFILE.tempPrefix}${runId}-`),
+  );
+  const userRoot = await mkdtemp(join(tmpdir(), 'ringi-user-zsh-'));
+  const userHome = join(userRoot, 'home');
+  const userZdotdir = join(userRoot, 'zdotdir');
+  const userBin = join(userRoot, 'bin');
+  const zdotdir = join(tempRoot, 'codex-environment', 'zdotdir');
+  try {
+    await Promise.all(
+      [userHome, userZdotdir, userBin].map((path) => mkdir(path)),
+    );
+    // The user's startup files, in HOME and in the user's ZDOTDIR, each
+    // export a canary and put another directory first on PATH.
+    const zshenv = `export RINGI_TEST_ZSHENV=read\nexport PATH="${userBin}:$PATH"\n`;
+    await writeFile(join(userHome, '.zshenv'), zshenv);
+    await writeFile(join(userZdotdir, '.zshenv'), zshenv);
+    const environment = await internal.createIsolatedCodexEnvironment({
+      tempRoot,
+      source: { PATH: process.env.PATH, HOME: userHome, ZDOTDIR: userZdotdir },
+      corepackHome: join(tempRoot, 'codex-corepack'),
+    });
+    assert.equal(environment.ZDOTDIR, zdotdir);
+    assert.equal(environment.HOME, userHome);
+    assert.equal((await lstat(zdotdir)).mode & 0o777, 0o500);
+    assert.deepEqual(await readdir(zdotdir), []);
+    if (existsSync('/bin/zsh')) {
+      const shell = spawnSync(
+        '/bin/zsh',
+        ['-c', 'printenv RINGI_TEST_ZSHENV; printenv PATH'],
+        { env: environment, encoding: 'utf8' },
+      );
+      assert.equal(shell.status, 0, shell.stderr);
+      assert.doesNotMatch(shell.stdout, /^read$/m);
+      assert.equal(shell.stdout.includes(userBin), false);
+    }
+  } finally {
+    await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
+    await rm(userRoot, { recursive: true, force: true });
+  }
+  assert.equal(existsSync(zdotdir), false);
 });
 
 test('pnpm 11.20.0 reads verifyDepsBeforeRun from the workspace and the higher-priority env', async () => {

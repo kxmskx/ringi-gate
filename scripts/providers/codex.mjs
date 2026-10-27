@@ -136,7 +136,7 @@ export default defineProvider({
       'The CLI has no documented setting that makes it fail when its sandbox cannot start, and the runner does not check it; preflight accepts only versions from 0.160.0 up to, but not including, 0.161.0, on macOS or Linux.',
       'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex (not checked by this runner).',
       'Codex system (admin) configuration still applies.',
-      "Commands run in a non-login shell; zsh still reads /etc/zshenv and the user's .zshenv (in ZDOTDIR or HOME), so a PATH change there puts the real command before the guard (probed on 0.160.0), and what they export reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command.",
+      "Commands run in a non-login shell, and the core sets ZDOTDIR to an empty private directory, so zsh skips the user's .zshenv; it still reads /etc/zshenv, where a PATH change puts the real command before the guard (shown with a .zshenv on 0.160.0), and what it exports reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command.",
     ],
     security: {
       noApprovalPrompts: enforced('-a never'),
@@ -146,7 +146,7 @@ export default defineProvider({
       noCommandNetwork: enforced('-c sandbox_workspace_write.network_access=false'),
       noUserConfiguration: enforced('--ignore-user-config --strict-config'),
       pathGuards: enforced(
-        "processEnvironment puts the core guard directory before the runner's PATH; the CLI prepends its own directories, which hold no guarded command, and -c allow_login_shell=false keeps the login profiles from reordering PATH; limitation: the shell still reads /etc/zshenv and the user's .zshenv, and a PATH change there comes before the guard directory",
+        "processEnvironment puts the core guard directory before the runner's PATH; the CLI prepends its own directories, which hold no guarded command. -c allow_login_shell=false keeps the login profiles from reordering PATH, and the core's empty ZDOTDIR keeps the user's .zshenv out; limitation: the shell still reads /etc/zshenv, and a PATH change there comes before the guard directory",
       ),
       isolatedEnvironment: enforced(
         "processEnvironment passes the core's isolated offline environment unchanged apart from PATH",

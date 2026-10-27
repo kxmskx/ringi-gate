@@ -3279,10 +3279,19 @@ async function createIsolatedCodexEnvironment({
   await mkdir(root, { recursive: true, mode: 0o700 });
   const npmConfig = join(root, 'npmrc');
   await writeFile(npmConfig, ISOLATED_NPMRC, { mode: 0o600 });
+  // An empty, private zsh startup directory: the command shell of the
+  // implementer CLI reads $ZDOTDIR/.zshenv (without ZDOTDIR, the one in
+  // HOME), and a PATH change there would put other directories before the
+  // guard directory. /etc/zshenv is still read. Read-only, like the guard
+  // directory, so that the agent cannot add a .zshenv there.
+  const zdotdir = join(root, 'zdotdir');
+  await mkdir(zdotdir, { recursive: true, mode: 0o700 });
+  await chmod(zdotdir, 0o500);
   const env = safeAgentEnvironment(source);
   delete env.CLAUDE_CONFIG_DIR;
   return {
     ...env,
+    ZDOTDIR: zdotdir,
     NPM_CONFIG_USERCONFIG: npmConfig,
     COREPACK_HOME: corepackHome,
     COREPACK_ENABLE_NETWORK: '0',

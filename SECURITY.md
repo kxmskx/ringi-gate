@@ -109,10 +109,14 @@ on.
   probe of Codex CLI 0.160.0 on macOS reached the guards
   ([probes](docs/providers/probes/codex-implementer.md)); in a login
   shell the profiles (`/etc/zprofile` with `path_helper`) put the system
-  directories before the guard directory. The shell still reads
-  `/etc/zshenv` and the user's `.zshenv`: a `PATH` change there comes
-  before the guard directory, and the probe showed the real `git` running
-  instead of the guard; what they export reaches every command. The `git`
+  directories before the guard directory. The runner gives the
+  implementer (`codex` and `claude`) an empty private `ZDOTDIR`, so zsh
+  does not read the user's `.zshenv`; probes showed the guard reached
+  with it, and the real `git` running instead of the guard when a user's
+  `.zshenv` that changes `PATH` was read by `codex`. zsh still reads the
+  system file `/etc/zshenv`, which the runner does not control: a `PATH`
+  change there comes before the guard directory for `codex`, and what it
+  exports reaches every command. The `git`
   guard checks only the subcommand name, so options of allowed
   subcommands (for example ones that write output files or start external
   programs) are passed through.

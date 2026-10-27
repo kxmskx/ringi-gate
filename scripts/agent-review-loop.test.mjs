@@ -772,6 +772,19 @@ function legacyClaudeArgs({
   ];
 }
 
+// The legacy claude argv with --restricted --strict-mcp-config after
+// --safe-mode, the one change of the module's reviewer argv since the move.
+function claudeReviewerArgsRestricted(options) {
+  const args = legacyClaudeArgs(options);
+  const safeMode = args.indexOf('--safe-mode');
+  return [
+    ...args.slice(0, safeMode + 1),
+    '--restricted',
+    '--strict-mcp-config',
+    ...args.slice(safeMode + 1),
+  ];
+}
+
 function legacySafeAgentEnvironment(source = process.env) {
   const allowed = [
     'PATH',
@@ -9649,6 +9662,8 @@ test('critical-opus passes the exact Opus xhigh argv without Fable or CLI fallba
     assert.deepEqual(call.args, [
       '-p',
       '--safe-mode',
+      '--restricted',
+      '--strict-mcp-config',
       '--no-session-persistence',
       '--disable-slash-commands',
       '--model',
@@ -16132,7 +16147,7 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
   assert.equal(comparisons, 2 * 2 * 5 * 5 * 2 + 1 + 6 + 2 * 3 * 2);
 });
 
-test('adapter compatibility: Claude argv, environment and prompt from the adapter are identical to the legacy core', async (t) => {
+test('adapter compatibility: Claude argv, environment and prompt from the adapter are identical to the legacy core apart from --restricted --strict-mcp-config', async (t) => {
   let comparisons = 0;
   const claude = providerExports.PROVIDERS.claude;
   const attempts = Object.values(LEGACY_REVIEW_PROFILES).flat();
@@ -16144,7 +16159,7 @@ test('adapter compatibility: Claude argv, environment and prompt from the adapte
           effort,
           outputSchema: internal.claudeSchema(taskMode),
         }),
-        legacyClaudeArgs({ taskMode, model, effort }),
+        claudeReviewerArgsRestricted({ taskMode, model, effort }),
       );
       comparisons += 1;
     }
@@ -16180,7 +16195,7 @@ test('adapter compatibility: Claude argv, environment and prompt from the adapte
     const expectedCall = ({ model, effort }) => {
       const call = calls.at(-1);
       assert.equal(call.program, 'claude');
-      assert.deepEqual(call.args, legacyClaudeArgs({ model, effort }));
+      assert.deepEqual(call.args, claudeReviewerArgsRestricted({ model, effort }));
       assert.deepEqual(call.options.env, legacySafeAgentEnvironment());
       assert.equal(call.options.input, legacyClaudePrompt({ task, ...snapshot }));
       assert.equal(call.options.cwd, directory);
@@ -17864,7 +17879,7 @@ test('claude implementer adapter: full argv, sandbox settings and environment fo
         outputSchema: internal.claudeSchema(taskMode),
         sessionId: TEST_SESSION_ID,
       });
-      assert.deepEqual(args, legacyClaudeArgs({ taskMode, model, effort }));
+      assert.deepEqual(args, claudeReviewerArgsRestricted({ taskMode, model, effort }));
       assert.ok(args.includes('--no-session-persistence'));
       for (const flag of [
         '--resume',

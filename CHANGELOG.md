@@ -5,6 +5,36 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Fixed
+
+- `claude` reviewer: the argv adds `--restricted` and
+  `--strict-mcp-config`, so the CLI no longer reads the settings files
+  (`.claude/settings.json`, `.claude/settings.local.json`) or the MCP
+  servers of the reviewed copy, which the implementer can write. Probes of
+  Claude Code 2.1.311 showed that the earlier argv still read those files
+  (their `permissions` were dropped only because the copy was not a
+  trusted workspace), that an `env` block of those files reaches the
+  processes the CLI starts and a `.mcp.json` server starts when the files
+  are read and `--safe-mode` is left out, and that with the new flags the
+  files are not read and no canary appeared.
+  `--restricted` also ignores the user's settings files (as for the
+  `claude` implementer) and confines the file tools to the working
+  directory. Admin-managed (policy) settings still apply. The reviewer now
+  declares `noUserConfiguration` as `enforced`; the role stays
+  `experimental`. See `docs/providers/probes/claude-reviewer.md`.
+
+### Changed
+
+- `claude` reviewer (the default reviewer): because of `--restricted`,
+  the reviewer no longer applies the user's Claude Code settings files.
+  An `apiKeyHelper`, an `env` block (for example `ANTHROPIC_BASE_URL`, a
+  proxy, Bedrock or Vertex settings) and `permissions.deny` rules there
+  stop applying to the reviewer, as they already did for the `claude`
+  implementer. The stored login keeps working; admin-managed (policy)
+  settings still apply.
+
 ## 0.2.1 — 2026-10-27
 
 ### Added

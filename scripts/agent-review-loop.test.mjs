@@ -732,6 +732,14 @@ function legacyCodexArgs({
       ];
 }
 
+// The legacy codex argv with -c allow_login_shell=false before exec, the one
+// change of the module's argv since the move.
+function codexArgsWithoutLoginShell(options) {
+  const args = legacyCodexArgs(options);
+  const exec = args.indexOf('exec');
+  return [...args.slice(0, exec), '-c', 'allow_login_shell=false', ...args.slice(exec)];
+}
+
 function legacyCodexEnvironment(environment, guardBin) {
   const env = { ...environment };
   env.PATH = `${guardBin}:${env.PATH}`;
@@ -8854,6 +8862,7 @@ test('Codex args enforce model, reasoning, sandbox, no approval and the Git guar
     assert.ok(
       call.args.includes('sandbox_workspace_write.network_access=false'),
     );
+    assert.equal(call.args[call.args.indexOf('allow_login_shell=false') - 1], '-c');
     assert.deepEqual(
       call.args.slice(call.args.indexOf('-a'), call.args.indexOf('-a') + 2),
       ['-a', 'never'],
@@ -9141,6 +9150,8 @@ test('codex exec and both resumes use CODEX_MODEL and the same selected effort',
         `model_reasoning_effort="${selectedEffort}"`,
         '-c',
         'sandbox_workspace_write.network_access=false',
+        '-c',
+        'allow_login_shell=false',
         'exec',
         ...(round === 1 ? [] : ['resume']),
         '--ignore-user-config',
@@ -15883,7 +15894,7 @@ test('agent roles: default roles reproduce the legacy constants, and an explicit
   assert.equal(DEFAULT_REVIEW_PROFILE, LEGACY_DEFAULT_REVIEW_PROFILE);
 });
 
-test('adapter compatibility: Codex argv and environment from the adapter are identical to the legacy core', async (t) => {
+test('adapter compatibility: Codex argv and environment from the adapter are identical to the legacy core apart from -c allow_login_shell=false', async (t) => {
   let comparisons = 0;
   const codex = providerExports.PROVIDERS.codex;
   for (const profile of [TEST_PROFILE, ROLES_PROFILE]) {
@@ -15911,7 +15922,7 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
                 sessionId,
                 ...paths,
               }),
-              legacyCodexArgs({
+              codexArgsWithoutLoginShell({
                 taskMode,
                 codexModel,
                 solEffort,
@@ -16019,7 +16030,7 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
           assert.equal(call.program, 'codex');
           assert.deepEqual(
             call.args,
-            legacyCodexArgs({
+            codexArgsWithoutLoginShell({
               codexModel,
               solEffort,
               sessionId,
@@ -21037,6 +21048,10 @@ test('argument grid: refused hosts need a known reason, new forbidden codex and 
     ['-c', 'sandbox_workspace_write.network_access="true"'],
     ['-c', 'sandbox_workspace_write.network_access'],
     ['-c', 'sandbox_workspace_write.exclude_slash_tmp=false'],
+    ['-c', 'allow_login_shell=true'],
+    ['-c', '"allow_login_shell" = true'],
+    ['-c', 'allow_login_shell'],
+    ['-callow_login_shell=true'],
     ['-c', '"sandbox_mode"="danger-full-access"'],
     ['--config', 'notify=["sh","-c","curl x"]'],
     ['-cnotify=["sh"]'],
@@ -21154,6 +21169,8 @@ test('argument grid: refused hosts need a known reason, new forbidden codex and 
   for (const [program, args, role] of [
     ['codex', ['-c', 'sandbox_workspace_write.network_access=false'], 'implementer'],
     ['codex', ['-c', 'sandbox_workspace_write.network_access = false '], 'implementer'],
+    ['codex', ['-c', 'allow_login_shell=false'], 'implementer'],
+    ['codex', ['-c', 'allow_login_shell = false '], 'implementer'],
     ['codex', ['-c', 'model_reasoning_effort="high"'], 'implementer'],
     ['claude', ['--settings', '{"sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"network":{"allowedDomains":[]}}}'], 'implementer'],
     ['claude', ['--settings', '{"model":"x","sandbox":{"enabled":true,"failIfUnavailable":true}}'], 'implementer'],

@@ -104,15 +104,18 @@ on.
   sandbox, and admin-managed Claude Code settings still apply (see
   [docs/architecture.md](docs/architecture.md#claude-code-as-implementer)).
   The runner's guards cover the commands they wrap on `PATH`, not
-  every possible way to run a program. With the `codex` implementer they
-  were not reached in a probe on macOS: Codex CLI 0.160.0 runs commands
-  in a login shell, and its profiles (`/etc/zprofile` with `path_helper`)
-  put the system directories before the guard directory on `PATH`
-  ([probes](docs/providers/probes/codex-implementer.md)); the Codex
-  sandbox and the checks after the round still apply. The `git` guard
-  checks only the subcommand name, so options of allowed subcommands (for
-  example ones that write output files or start external programs) are
-  passed through.
+  every possible way to run a program. The `codex` implementer runs
+  commands in a non-login shell (`-c allow_login_shell=false`), where a
+  probe of Codex CLI 0.160.0 on macOS reached the guards
+  ([probes](docs/providers/probes/codex-implementer.md)); in a login
+  shell the profiles (`/etc/zprofile` with `path_helper`) put the system
+  directories before the guard directory. The shell still reads
+  `/etc/zshenv` and the user's `.zshenv`: a `PATH` change there comes
+  before the guard directory, and the probe showed the real `git` running
+  instead of the guard; what they export reaches every command. The `git`
+  guard checks only the subcommand name, so options of allowed
+  subcommands (for example ones that write output files or start external
+  programs) are passed through.
 - Gates run project scripts, which may include code changed by the implementer,
   outside the implementer's sandbox (Codex or Claude Code), with the user's
   permissions and network access;

@@ -17,11 +17,16 @@ is published by hand, without provenance; later versions are published by
 
 ### Fixed
 
-- Documentation of the `codex` implementer: the probes show that commands
-  run in a login shell, so the guard directory is not first on `PATH`
-  inside them (`pathGuards`) and the user's shell profile can add
-  variables. The declaration is unchanged; the stability table lists it
-  as refuted.
+- `codex` implementer: commands run in a non-login shell (`-c
+  allow_login_shell=false` in the argv). Probes of 0.160.0 showed that in
+  a login shell the profiles put the system and Homebrew directories
+  before the guard directory on `PATH` (`pathGuards`) and add the
+  variables they export; with the new argument an executable guard is
+  reached in implementation, analysis and resumed rounds. The shell still
+  reads `/etc/zshenv` and the user's `.zshenv`, and a probe showed that a
+  `PATH` change there puts its directories before the guard directory;
+  the module lists this as a limitation. The argument rules refuse
+  `-c allow_login_shell` other than `false` for `codex`.
 - Documentation of the `claude` implementer: probes of 2.1.285 ran
   commands joined with `;` (`echo a; echo b` and a joined command of
   `touch` writes) inside the sandbox without a denial; the documentation

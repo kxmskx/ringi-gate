@@ -126,8 +126,9 @@ runs offline from the local Corepack cache. The package has no dependencies,
 so installing the tarball fetches nothing.
 
 - **Contents:** `npm pack --dry-run --json` lists exactly the files of the
-  `files` field in `package.json`: `bin/`, `scripts/` without tests and
-  without `scripts/fixtures/`, `examples/` without its test, `docs/`
+  `files` field in `package.json`: `bin/`, `scripts/` without tests,
+  without `scripts/fixtures/` and without `scripts/probes/` (left out by its
+  own `.npmignore`), `examples/` without its test, `docs/`
   (including `docs/development/`, which the default profile's task classes
   point to), `LICENSE`, `NOTICE`, `README.md`, `CHANGELOG.md`,
   `SECURITY.md` and `package.json`. No `*.test.mjs`, snapshots, dotfiles,
@@ -156,9 +157,89 @@ so installing the tarball fetches nothing.
   token by default, `id-token: write` only in the release job; no secrets
   and no `NODE_AUTH_TOKEN` in either workflow; the release job's npm
   version check, run
-  against sample versions, fails below 11.5.1.
+  against sample versions, fails below 11.5.1. The codex sandbox workflow
+  has no write permission, uses the same pinned actions as `test.yml`, and
+  its version input reaches the steps only through the `CODEX_VERSION`
+  variable; its version check, run against sample inputs, accepts only
+  `major.minor.patch` and runs before the installation; its matrix
+  expects `stop` on both Ubuntu runners and `pass` on macOS, without
+  `continue-on-error`, and the file has no `sudo`, `apt` or `sysctl`.
 
 The workflows themselves are not run by the tests.
+
+## Codex sandbox probe
+
+`scripts/probes/codex-sandbox-check.mjs` runs the core's sandbox check
+(the `codex sandbox` call made before every `codex` round) with the real
+Codex CLI from `PATH`, without a model and without a login. It is not part
+of `npm test` and not in the npm package. In a synthetic Git repository in
+the system temporary directory it runs the check in `implementation` and
+`analysis` mode, with an empty `CODEX_HOME` as the core does, and prints the
+CLI version, `uname -a`, the result of each mode (`pass`, or the stop code
+and message) and the argv, exit code, stdout and stderr of the
+`codex sandbox` call. On Linux it also prints the kernel settings for
+unprivileged user namespaces and whether `bwrap` is on `PATH`. It removes
+its temporary directory.
+
+`--expect pass` (the default) and `--expect stop` set the expected result.
+With `pass` the probe exits with 0 only when both modes pass. With `stop`
+it exits with 0 only when both modes stop because the sandbox did not
+start: the core's single `codex sandbox` call exited with 1 (no signal, no
+timeout) without a result line, and the core stopped with
+`IMPLEMENTER_PREFLIGHT_FAILED` and the reason `exit 1`. The probe does not
+read stderr, so an exit 1 for another reason (for example an option a
+newer CLI refuses) counts as a stop too; the macOS runner, which expects
+`pass`, catches such an argv change. A pass in either
+mode, or a stop for any other reason (a written canary, a connection, a
+timeout, another exit code, a failed preparation), exits with 1. The
+summary prints the result of each mode and whether the expectation was
+met.
+
+Locally, with the Codex CLI installed:
+
+```sh
+node scripts/probes/codex-sandbox-check.mjs
+node scripts/probes/codex-sandbox-check.mjs --expect stop
+```
+
+On macOS the first passes and the second exits with 1.
+
+With `--diagnose` (or `RINGI_PROBE_DIAGNOSE=1` in the environment) the
+probe then runs `codex sandbox` directly, with the same environment and an
+empty `CODEX_HOME`, in diagnostic variants: the module's argv unchanged in
+both modes, the same with `-c features.use_legacy_landlock=true`, and
+`implementation` mode with `sandbox_workspace_write.network_access=true`.
+For each it prints the exit code, stdout, stderr and the error code of the
+write outside the writable roots, the write to the Git directory and the
+local connection. The variants are diagnostics only: neither the module nor
+the core uses them, and they do not change the exit code, which still
+depends on the core's check alone.
+
+```sh
+node scripts/probes/codex-sandbox-check.mjs --diagnose
+```
+
+In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
+`@openai/codex` from npm (0.164.0 by default) and runs the probe on
+`ubuntu-latest`, `ubuntu-24.04-arm` and `macos-latest`. It runs on pull
+requests that change the core, the `codex` or contract module, the probes
+or the workflow, and by hand (`workflow_dispatch`) with another
+`major.minor.patch` version as input. The job gets no secrets and is not a
+required check. Each matrix entry sets the expected result: `stop` on
+both Ubuntu runners and `pass` on macOS, passed to the probe as
+`--expect "$PROBE_EXPECT"`. On the GitHub-hosted Ubuntu 24.04 runners the
+Codex CLI sandbox does not start under the default AppArmor restriction
+of unprivileged user namespaces, so the core stops every round there
+([Linux probes](providers/probes/codex-implementer.md#linux)); the Linux
+jobs pass while that stop is the result, and fail when the sandbox starts
+or the core stops for another reason. Nothing in the workflow runs with
+`sudo`, installs system packages or changes kernel or AppArmor settings.
+On Linux a read-only step first prints `uname -a`, the user namespace
+settings, the exit code of `unshare --user --map-root-user` (with and
+without a network namespace), whether `bwrap` is on `PATH`, its version,
+the exit code of `bwrap --unshare-user --unshare-net --ro-bind / / true`
+and whether the AppArmor `bwrap-userns-restrict` profile is present, and
+then turns on the probe's diagnostics.
 
 ## What the core tests cover
 

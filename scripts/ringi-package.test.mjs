@@ -135,8 +135,9 @@ const IDENTIFIER_SHAPE = /\b(?:(?:[A-Z]{2,}(?:-[A-Z]{2,})*|P\d+)-\d+|[A-Z][A-Z0-
 const ALLOWED_IDENTIFIER_SHAPES = new Set(['SHA-1', 'SHA-256', 'UTF-8', 'LICENSE-2', 'A-Z0']);
 
 // The files the package must contain, from the working tree: everything under
-// bin/, docs/, examples/ and scripts/ except tests, scripts/fixtures/ and
-// dotfiles, plus the root files.
+// bin/, docs/, examples/ and scripts/ except tests, scripts/fixtures/,
+// scripts/probes/ (left out by its .npmignore) and dotfiles, plus the root
+// files.
 async function expectedPackageFiles() {
   const files = [...ROOT_FILES];
   for (const directory of PACKAGE_DIRECTORIES) {
@@ -151,6 +152,7 @@ async function expectedPackageFiles() {
       if (
         path.endsWith('.test.mjs') ||
         path.startsWith('scripts/fixtures/') ||
+        path.startsWith('scripts/probes/') ||
         path.split('/').some((segment) => segment.startsWith('.'))
       )
         continue;
@@ -257,6 +259,7 @@ test('package contents: npm pack lists the runner, its docs and examples, withou
     for (const path of files) {
       assert.doesNotMatch(path, /\.test\.mjs$/, path);
       assert.doesNotMatch(path, /^scripts\/fixtures\//, path);
+      assert.doesNotMatch(path, /^scripts\/probes\//, path);
       assert.doesNotMatch(path, /(?:^|\/)(?:\.github|\.git|node_modules)(?:\/|$)/, path);
       assert.doesNotMatch(path, /(?:^|\/)\./, path);
       assert.doesNotMatch(path, IDENTIFIER_SHAPE, path);
@@ -331,7 +334,11 @@ test('package contents: npm pack lists the runner, its docs and examples, withou
 // release.yml publishes through npm trusted publishing, without an npm token.
 test('workflows: actions pinned to a commit SHA, no pull_request_target, read-only token, no secrets', async () => {
   const directory = join(runnerRoot, '.github', 'workflows');
-  assert.deepEqual((await readdir(directory)).sort(), ['release.yml', 'test.yml']);
+  assert.deepEqual((await readdir(directory)).sort(), [
+    'codex-sandbox.yml',
+    'release.yml',
+    'test.yml',
+  ]);
   const read = async (name) => readFile(join(directory, name), 'utf8');
   for (const name of ['release.yml', 'test.yml']) {
     const text = await read(name);
@@ -394,6 +401,122 @@ test('workflows: actions pinned to a commit SHA, no pull_request_target, read-on
     });
     assert.equal(child.status, status, `npm ${version}: ${child.stderr}`);
   }
+});
+
+// The sandbox check workflow installs the Codex CLI and runs the probe
+// script only: no secrets, no write permission, the same pinned actions as
+// test.yml, and the version input reaches the steps through the environment
+// alone, checked before the installation.
+test('workflows: the codex sandbox check runs without secrets, with the pinned actions of test.yml and a checked version input', async () => {
+  const directory = join(runnerRoot, '.github', 'workflows');
+  const text = await readFile(join(directory, 'codex-sandbox.yml'), 'utf8');
+  const testWorkflow = await readFile(join(directory, 'test.yml'), 'utf8');
+  assert.doesNotMatch(text, /\t/);
+  assert.doesNotMatch(text, /pull_request_target|workflow_run|push:/);
+  assert.doesNotMatch(text, /secrets|TOKEN|github\.token|id-token|write/i);
+  assert.match(text, /^permissions:\n {2}contents: read\n\n/m);
+  assert.equal([...text.matchAll(/permissions:/g)].length, 1);
+  assert.match(text, /^ {10}persist-credentials: false$/m);
+  const uses = (workflow) =>
+    [...workflow.matchAll(/^\s*-?\s*uses:\s*(.+)$/gm)].map(([, value]) => value).sort();
+  assert.deepEqual(uses(text), uses(testWorkflow));
+  assert.match(
+    text,
+    /^on:\n {2}workflow_dispatch:\n {4}inputs:\n {6}codex-version:\n(?: {8}.+\n)+ {2}pull_request:\n {4}paths:\n(?: {6}- .+\n)+\n/m,
+  );
+  for (const path of [
+    'scripts/agent-review-loop-lib.mjs',
+    'scripts/providers/codex.mjs',
+    'scripts/providers/contract.mjs',
+    'scripts/probes/**',
+    '.github/workflows/codex-sandbox.yml',
+  ])
+    assert.ok(text.includes(`\n      - ${path}\n`), path);
+  assert.match(text, /^ {8}default: '0\.164\.0'$/m);
+  // The probe must stop on the Linux runners and pass on macOS.
+  assert.ok(
+    text.includes(
+      [
+        '      matrix:',
+        '        include:',
+        '          - os: ubuntu-latest',
+        '            expect: stop',
+        '          - os: ubuntu-24.04-arm',
+        '            expect: stop',
+        '          - os: macos-latest',
+        '            expect: pass',
+        '    env:',
+      ].join('\n'),
+    ),
+    'matrix',
+  );
+  assert.equal([...text.matchAll(/expect: /g)].length, 3);
+  assert.match(text, /^ {6}fail-fast: false$/m);
+  assert.match(text, /^ {4}timeout-minutes: \d+$/m);
+  assert.doesNotMatch(text, /continue-on-error/);
+  // Expressions only in the job name, the runner and the two variables.
+  assert.deepEqual(
+    text.split('\n').filter((line) => line.includes('${{')).map((line) => line.trim()),
+    [
+      'name: codex sandbox check (${{ matrix.os }})',
+      'runs-on: ${{ matrix.os }}',
+      "CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}",
+      'PROBE_EXPECT: ${{ matrix.expect }}',
+    ],
+  );
+  assert.doesNotMatch(text, /latest"|@latest|codex@\$\{/);
+  const install = text.indexOf('run: npm install -g "@openai/codex@$CODEX_VERSION"\n');
+  assert.ok(install > 0, 'installation');
+  assert.equal([...text.matchAll(/npm (?:install|i) /g)].length, 1);
+  assert.match(
+    text,
+    /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs --expect "\$PROBE_EXPECT"\n$/,
+  );
+  // The namespace diagnostics run on Linux only, before the probe, read
+  // only, and turn on the probe's diagnostics for the steps after them.
+  const diagnostics = text.match(
+    /\n {6}- name: Linux namespace diagnostics\n {8}if: runner\.os == 'Linux'\n {8}run: \|\n((?: {10}.+\n)+)/,
+  );
+  assert.ok(diagnostics, 'namespace diagnostics');
+  assert.ok(diagnostics.index < text.indexOf('- name: Sandbox check'));
+  assert.match(diagnostics[1], /^ {10}echo "RINGI_PROBE_DIAGNOSE=1" >> "\$GITHUB_ENV"\n$/m);
+  assert.match(
+    diagnostics[1],
+    /^ {10}status=0\n {10}bwrap --unshare-user --unshare-net --ro-bind \/ \/ true \|\| status=\$\?\n/m,
+  );
+  // Nothing in the workflow runs with elevated rights, installs system
+  // packages or changes kernel or AppArmor settings.
+  assert.doesNotMatch(text, /sudo|apt|sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
+  assert.equal([...text.matchAll(/GITHUB_ENV/g)].length, 1);
+  // The version check runs before the installation and accepts only
+  // major.minor.patch.
+  const check = text.match(
+    /\n {6}- name: Check the Codex CLI version input\n {8}run: \|\n {10}node -e '\n([^']+)'\n/,
+  );
+  assert.ok(check, 'version check');
+  assert.ok(check.index < install);
+  for (const [version, status] of [
+    ['0.164.0', 0],
+    ['12.0.10', 0],
+    ['', 1],
+    ['latest', 1],
+    ['0.164', 1],
+    ['0.164.0-alpha.1', 1],
+    ['0.164.0 && id', 1],
+    ['0.164.0\nid', 1],
+    ['$(id)', 1],
+  ]) {
+    const child = spawnSync(process.execPath, ['-e', check[1]], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, CODEX_VERSION: version },
+    });
+    assert.equal(child.status, status, `${JSON.stringify(version)}: ${child.stderr}`);
+  }
+  const unset = spawnSync(process.execPath, ['-e', check[1]], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH },
+  });
+  assert.equal(unset.status, 1);
 });
 
 // Stand-in programs: git and node (the real ones), and agent CLIs that only

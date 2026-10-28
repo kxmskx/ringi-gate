@@ -8,7 +8,7 @@ for each guarantee the module declares `enforced`. Criterion 3 of
 | | |
 | --- | --- |
 | CLI | `codex-cli 0.160.0` (C1 to C15), `codex-cli 0.164.0` (C16 to C27) |
-| Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh` |
+| Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh`; Linux in CI for L1 to L5 ([Linux](#linux)) |
 | Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15), 2026-10-28 (C16 to C27) |
 | Model | `gpt-6.1-sol`, effort `medium` (C16 to C27: none) |
 | Repository | synthetic: `git init` with one commit in a directory made by `mktemp -d` |
@@ -399,9 +399,48 @@ a change of the system or of permissions. C23 shows the form of a start failure 
 71, no output of the command); the check stops on any exit code other than
 0 and on missing output. The case without a sandbox is covered by a unit
 test whose fake `codex` runs the check command unsandboxed (both writes
-and the connection succeed, the run stops). Linux (Landlock, `bwrap`) was
-not probed; the check does not depend on `CODEX_SANDBOX`, which C17 shows
-on macOS only.
+and the connection succeed, the run stops). For Linux see [Linux](#linux);
+the check does not depend on `CODEX_SANDBOX`, which C17 shows on macOS
+only.
+
+## Linux
+
+The core's sandbox check (C16 to C27) on Linux, run in GitHub Actions by
+`.github/workflows/codex-sandbox.yml` with
+`scripts/probes/codex-sandbox-check.mjs` ([docs/testing.md](../../testing.md#codex-sandbox-probe)),
+in three workflow runs on 2026-10-28 (CI 1 to CI 3). No model call, no
+login, no secrets.
+
+| | |
+| --- | --- |
+| CLI | `codex-cli 0.164.0`, installed with `npm install -g @openai/codex@0.164.0`; Node.js 24 |
+| Runners | `ubuntu-latest` (x86_64) and `ubuntu-24.04-arm` (aarch64), Ubuntu 24.04, kernel `6.17.0-1022-azure` or `7.0.0-1017-azure` depending on the runner machine; `macos-latest` (Darwin 25.6, arm64) for comparison |
+| Kernel settings | `kernel.unprivileged_userns_clone=1`, `kernel.apparmor_restrict_unprivileged_userns=1` on every Linux run |
+| Repository | synthetic: `git init` in the system temporary directory, run in `implementation` and `analysis` mode with an empty `CODEX_HOME`, as the core does |
+
+| Probe | Runs | Command | Result on both Linux runners |
+| --- | --- | --- | --- |
+| L1 | CI 1 to CI 3 | the core's check with the module's argv, both modes | Exit 1, no output of the check command, stderr `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; no canary file, no connection. The core stopped with `IMPLEMENTER_PREFLIGHT_FAILED` (reason `exit 1`) in both modes. |
+| L2 | CI 2, CI 3 | `unshare --user --map-root-user true`, and the same with `--net ip link set lo up` | Exit 1, `unshare: write failed /proc/self/uid_map: Operation not permitted`. |
+| L3 | CI 2, CI 3 | the module's argv with `-c features.use_legacy_landlock=true`, both modes | Exit 101: the CLI panicked with `filesystem-restricted execution requires bubblewrap to isolate app-server sockets`; the command did not run. |
+| L4 | CI 2, CI 3 | the `implementation` argv with `sandbox_workspace_write.network_access=true` | Exit 1, `bwrap: setting up uid map: Permission denied`; the command did not run. |
+| L5 | CI 3 | the distribution's `bubblewrap` 0.9.0 installed (`/usr/bin/bwrap` on `PATH`), then `bwrap --unshare-user --unshare-net --ro-bind / / true` and L1, L3, L4 | `bwrap` exit 1 with `loopback: Failed RTM_NEWADDR: Operation not permitted`; L1, L3 and L4 as without it. The AppArmor profile `bwrap-userns-restrict` was absent. The workflow of CI 3 had a one-off step `sudo apt-get install -y bubblewrap`, removed afterwards because it changed nothing. |
+| L6 | CI 1 to CI 3 | L1 on `macos-latest` | Pass in both modes: `{"outside":"EPERM","git":"EPERM","network":"EPERM"}`, exit 0. |
+
+L3 and L4 are diagnostics: the module does not use these settings. Every
+Linux run also printed a warning that the CLI could not create its helper
+binaries under `/tmp`, because the empty `CODEX_HOME` lies there.
+
+On the GitHub-hosted Ubuntu 24.04 runners, with the default AppArmor
+restriction of unprivileged user namespaces, the sandbox of the Codex CLI
+does not start, neither with the `bwrap` bundled with the CLI nor with the
+distribution's `bubblewrap`. `codex sandbox` exits with 1 without running
+the command, so the core stops the round with
+`IMPLEMENTER_PREFLIGHT_FAILED` before the implementer starts (fail-closed).
+No guarantee of the module was checked on Linux: a Linux host where
+unprivileged user namespaces work was not probed. The workflow expects
+this stop on the Linux runners (`--expect stop`) and a pass on macOS, so
+a change of either result fails the job.
 
 ## Guarantees
 
@@ -416,7 +455,9 @@ on macOS only.
 | `schemaOutput` | C1, C2, C3, C6, C7 | Checked: the `-o` file held JSON matching the schema in every completed round. |
 | `explicitResume` | C2, C11 | Checked: `exec resume <ID>` continued the same thread (same ID in `thread.started`, token of the first round recalled in C2). |
 
-Linux was not probed.
+No guarantee was checked on Linux: on the runners of L1 to L5 the CLI's
+sandbox did not start and the core's check stopped every round
+([Linux](#linux)).
 
 ## Remaining limits
 

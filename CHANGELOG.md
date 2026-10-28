@@ -5,6 +5,46 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Added
+
+- `codex` implementer: before every round the core runs a check command
+  through `codex sandbox` in the round's mode, without a model and with an
+  empty `CODEX_HOME`. A write to the core's temporary directory or to the
+  repository's Git directory (the one `.git` names in a linked worktree or
+  a submodule) or a connection to a local listener that is not refused, a
+  sandbox that does not start, a check that times out or cannot be run,
+  or missing evidence stops the run with `IMPLEMENTER_PREFLIGHT_FAILED`
+  before the implementer process. The check is a lower bound, not proof
+  for `codex exec`: it runs another command path with stricter writable
+  roots and no user configuration. Provider modules may declare the
+  optional `sandboxCheckArgs`; its argv goes through `forbiddenArgument`
+  with `call: 'sandboxCheck'`, the only call where `codex` may set
+  `sandbox_mode` (`read-only` or `workspace-write`) and the stricter
+  `exclude_tmpdir_env_var` and `exclude_slash_tmp`.
+- `codex` argument grid: `--sandbox-state-json`,
+  `--sandbox-state-readable-root`, `--allow-unix-socket`, `-P`,
+  `--permission-profile`, `--include-managed-config`, `--enable` and
+  `--disable` are forbidden in every `codex` argv, `exec` included, so a
+  provider module that passes `codex exec --enable <feature>` is now
+  refused.
+
+### Changed
+
+- `codex` implementer: the sandbox check was probed on Codex CLI 0.164.0
+  on macOS only, with no probe on Linux. On another host or CLI version
+  where `codex sandbox` takes another form or reports other error codes,
+  every round stops with `IMPLEMENTER_PREFLIGHT_FAILED` before the
+  implementer (fail-closed), although the preflight accepts any CLI
+  version. A linked worktree or a submodule was not probed: there the
+  round starts only if the sandbox refuses the write to its Git directory.
+  The check does not try to write the `.git` file in the working tree
+  itself, so if the sandbox leaves that file writable, the implementer
+  could point its `gitdir:` line elsewhere; this layout was not checked
+  before either. A `.git` that is a symbolic link now stops a `codex`
+  run with `IMPLEMENTER_PREFLIGHT_FAILED`.
+
 ## 0.2.3 — 2026-10-28
 
 ### Changed

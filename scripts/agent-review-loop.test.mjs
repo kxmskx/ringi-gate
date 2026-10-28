@@ -20,6 +20,7 @@ import {
 } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { registerHooks } from 'node:module';
+import { connect as netConnect } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import nodeTest from 'node:test';
@@ -1106,6 +1107,7 @@ test('runner surface contract: internal keys', () => {
       'runClaudeReview',
       'runClaudeReviewWithPolicy',
       'runCodexRound',
+      'runSandboxCheck',
       'safeAgentEnvironment',
       'validateAnalysisIntegrityReport',
       'validateClaudeReview',
@@ -2122,17 +2124,34 @@ async function waitForProcessExit(pid, timeoutMs = 3_000) {
   return !processIsRunning(pid);
 }
 
+// The answer of a working codex sandbox to the core's sandbox check before a
+// round (runSandboxCheck): both writes and the connection refused. The nonce
+// is the fourth argument after '--'.
+function workingSandboxCheck(args) {
+  const nonce = args[args.indexOf('--') + 4];
+  const report = { outside: 'EPERM', git: 'EPERM', network: 'EPERM' };
+  return result(`RINGI-SANDBOX-CHECK ${nonce} ${JSON.stringify(report)}\n`);
+}
+
 function createMockRunner({ failCheck, interruptCheck, onRun } = {}) {
   const calls = [];
+  const sandboxChecks = [];
   let active = 0;
   let maxActive = 0;
   let cancelled = false;
   return {
     calls,
+    sandboxChecks,
     get maxActive() {
       return maxActive;
     },
     async run(program, args, options = {}) {
+      // Kept out of calls: the check before every round would change the
+      // call lists of the round tests.
+      if (program === 'codex' && args[0] === 'sandbox' && !cancelled) {
+        sandboxChecks.push({ args: [...args], options });
+        return workingSandboxCheck(args);
+      }
       active += 1;
       maxActive = Math.max(maxActive, active);
       calls.push({ program, args: [...args], options });
@@ -8855,8 +8874,13 @@ test('Codex args enforce model, reasoning, sandbox, no approval and the Git guar
   });
   await mkdir(runDirectory, { recursive: true });
   const calls = [];
+  const sandboxChecks = [];
   const runner = {
     async run(program, args, options) {
+      if (args[0] === 'sandbox') {
+        sandboxChecks.push({ program, args, options });
+        return workingSandboxCheck(args);
+      }
       calls.push({ program, args, options });
       const outputIndex = args.indexOf('-o');
       await writeFile(
@@ -8894,6 +8918,31 @@ test('Codex args enforce model, reasoning, sandbox, no approval and the Git guar
     });
     const call = calls[0];
     assert.equal(call.program, 'codex');
+    // Before the round: codex sandbox in the round's mode, in the round's
+    // directory, with the round's environment apart from an empty CODEX_HOME
+    // in the core's temporary directory.
+    assert.equal(sandboxChecks.length, 1);
+    const check = sandboxChecks[0];
+    assert.equal(check.program, 'codex');
+    assert.deepEqual(check.args.slice(0, check.args.indexOf('--')), [
+      'sandbox',
+      '-c',
+      'sandbox_mode="workspace-write"',
+      '-c',
+      'sandbox_workspace_write.network_access=false',
+      '-c',
+      'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+      '-c',
+      'sandbox_workspace_write.exclude_slash_tmp=true',
+    ]);
+    assert.equal(check.args[check.args.indexOf('--') + 1], process.execPath);
+    assert.equal(check.options.cwd, directory);
+    assert.equal(call.options.env.CODEX_HOME, codexHome);
+    assert.ok(check.options.env.CODEX_HOME.startsWith(`${tempRoot}/sandbox-check-`));
+    assert.deepEqual(
+      { ...check.options.env, CODEX_HOME: codexHome },
+      call.options.env,
+    );
     // The production round passes a prompt identical to the legacy core.
     assert.equal(
       call.options.input,
@@ -9017,6 +9066,11 @@ test('Codex analysis uses a read-only sandbox and requires the full artifact fie
   const calls = [];
   const runner = {
     async run(program, args, options) {
+      if (args[0] === 'sandbox') {
+        // The check before the round runs in read-only mode.
+        assert.ok(args.includes('sandbox_mode="read-only"'));
+        return workingSandboxCheck(args);
+      }
       calls.push({ program, args, options });
       const outputIndex = args.indexOf('-o');
       await writeFile(
@@ -9121,6 +9175,7 @@ test('codex exec and both resumes use CODEX_MODEL and the same selected effort',
   await mkdir(runDirectory, { recursive: true });
   const runner = {
     async run(program, args, options) {
+      if (args[0] === 'sandbox') return workingSandboxCheck(args);
       calls.push({ program, args, options });
       options.onActivityChunk(Buffer.from('{"type":"turn.'));
       options.onActivityChunk(Buffer.from('started","private":"PRIVATE"}\n'));
@@ -16037,6 +16092,7 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
   const calls = [];
   const runner = {
     async run(program, args, options) {
+      if (args[0] === 'sandbox') return workingSandboxCheck(args);
       calls.push({ program, args, options });
       await writeFile(
         args[args.indexOf('-o') + 1],
@@ -19376,6 +19432,7 @@ test('process group: an implementer background process does not outlive the roun
   const options = [];
   const runner = {
     async run(program, args, runOptions) {
+      if (args[0] === 'sandbox') return workingSandboxCheck(args);
       options.push(runOptions);
       return result(
         program === 'claude'
@@ -20061,6 +20118,7 @@ test('codex session ID: a codex session ID outside isValidSessionId is INVALID_A
       internal.runCodexRound({
         runner: {
           async run(program, args) {
+            if (args[0] === 'sandbox') return workingSandboxCheck(args);
             const output = args[args.indexOf('-o') + 1];
             await writeFile(output, JSON.stringify(completedCodex(1).report));
             return result(`${JSON.stringify({ type: 'thread.started', thread_id: threadId })}\n`);
@@ -20252,6 +20310,7 @@ async function goldenCodexRound(lib, directory, runId, options, respond) {
     ];
     const runner = {
       async run(program, args, processOptions) {
+        if (args[0] === 'sandbox') return workingSandboxCheck(args);
         calls.push(comparableCall({ program, args, options: processOptions }));
         return respond(program, args);
       },
@@ -23283,7 +23342,7 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // label.reviewerFinding, cli.optionAliasConflict,
   // preflight.reviewerUnsupportedVersion, preflight.reviewerUnsupportedPlatform,
   // preflight.reviewerRefused.
-  assert.equal(keys.length, 351);
+  assert.equal(keys.length, 352);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -24328,5 +24387,327 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     '└──────────────────────────────────────────────────────────────────────────────────────────────────┘',
     '',
   ].join('\n'),
+});
+
+// The sandbox check before a codex round (runSandboxCheck): a fake codex
+// that runs the check command without any sandbox, one that cannot start
+// it, one without evidence and one that reaches the core's listener.
+async function sandboxCheckFixture() {
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), `${TEST_PROFILE.tempPrefix}sandbox-check-`),
+  );
+  const repositoryRoot = join(tempRoot, 'repo');
+  await mkdir(join(repositoryRoot, '.git'), { recursive: true });
+  return {
+    adapter: codexModuleExports.default,
+    taskMode: 'implementation',
+    repositoryRoot,
+    tempRoot,
+    env: { PATH: process.env.PATH, CODEX_HOME: join(tempRoot, 'user-codex-home') },
+    round: 1,
+  };
+}
+
+// codex sandbox without a sandbox: runs the command after '--' as it is.
+function unsandboxedCodex(calls = []) {
+  return {
+    calls,
+    async run(program, args, options) {
+      calls.push({ program, args: [...args], options });
+      if (args[0] !== 'sandbox') return result('');
+      const [command, ...rest] = args.slice(args.indexOf('--') + 1);
+      const child = spawn(command, rest, { cwd: options.cwd, env: options.env });
+      let stdout = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      const code = await new Promise((resolvePromise) => child.on('close', resolvePromise));
+      return result(stdout, code ?? 1);
+    },
+    isCancelled() {
+      return false;
+    },
+  };
+}
+
+const sandboxUnconfirmed = (reason) => (error) =>
+  error.code === 'IMPLEMENTER_PREFLIGHT_FAILED' &&
+  error.stage === 'preflight' &&
+  error.message.includes(`(${reason})`);
+
+async function sandboxCheckLeftovers({ tempRoot, repositoryRoot }) {
+  return [
+    ...(await readdir(tempRoot)).filter((name) => name.startsWith('sandbox-check-')),
+    ...(await readdir(join(repositoryRoot, '.git'))),
+  ];
+}
+
+test('sandbox check: a working sandbox passes; without a sandbox, a start failure, no evidence or a connection is IMPLEMENTER_PREFLIGHT_FAILED and nothing is left', async () => {
+  const fixture = await sandboxCheckFixture();
+  try {
+    const working = createMockRunner();
+    await internal.runSandboxCheck({ runner: working, ...fixture });
+    assert.equal(working.sandboxChecks.length, 1);
+    const { args, options } = working.sandboxChecks[0];
+    assert.equal(options.cwd, fixture.repositoryRoot);
+    assert.equal(options.env.PATH, process.env.PATH);
+    assert.equal(dirname(options.env.CODEX_HOME), dirname(dirname(args.at(-3))));
+    assert.equal(dirname(args.at(-2)), join(fixture.repositoryRoot, '.git'));
+    assert.deepEqual(await sandboxCheckLeftovers(fixture), []);
+
+    // Without a sandbox both writes and the connection succeed; the core
+    // removes the files it finds.
+    const calls = [];
+    await assert.rejects(
+      internal.runSandboxCheck({ runner: unsandboxedCodex(calls), ...fixture }),
+      sandboxUnconfirmed('outside-write'),
+    );
+    assert.equal(calls.length, 1);
+    assert.deepEqual(await sandboxCheckLeftovers(fixture), []);
+
+    const answers = [
+      ['exit 71', () => result('', 71, 'sandbox-exec: sandbox_apply: Operation not permitted')],
+      ['exit 1', (args) => ({ ...workingSandboxCheck(args), code: 1 })],
+      ['no-evidence', () => result('')],
+      ['no-evidence', () => result(`RINGI-SANDBOX-CHECK ${'0'.repeat(24)} {"outside":"EPERM","git":"EPERM","network":"EPERM"}\n`)],
+      ['no-evidence', (args) => {
+        const nonce = args[args.indexOf('--') + 4];
+        return result(`RINGI-SANDBOX-CHECK ${nonce} {"outside":"ENOENT","git":"EPERM","network":"EPERM"}\n`);
+      }],
+      ['no-evidence', (args) => ({
+        ...workingSandboxCheck(args),
+        stdout: workingSandboxCheck(args).stdout.repeat(2),
+      })],
+      ['git-write', (args) => {
+        const nonce = args[args.indexOf('--') + 4];
+        return result(`RINGI-SANDBOX-CHECK ${nonce} {"outside":"EPERM","git":"written","network":"EPERM"}\n`);
+      }],
+      // A report of a refused connection does not count when the core's
+      // listener received one.
+      ['network', async (args) => {
+        const socket = netConnect({ host: '127.0.0.1', port: Number(args.at(-1)) });
+        await new Promise((resolvePromise) => socket.once('connect', resolvePromise));
+        socket.destroy();
+        // A check command exits after its connection; the core's listener
+        // has accepted it by then.
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        return workingSandboxCheck(args);
+      }],
+      ['timeout', () => result('', null, '', { timedOut: true, signal: 'SIGTERM' })],
+      ['start', () => {
+        throw new Error('spawn codex ENOENT');
+      }],
+    ];
+    for (const [reason, answer] of answers) {
+      const runner = {
+        run: async (_program, args) => answer(args),
+        isCancelled: () => false,
+      };
+      await assert.rejects(
+        internal.runSandboxCheck({ runner, ...fixture }),
+        sandboxUnconfirmed(reason),
+        reason,
+      );
+      assert.deepEqual(await sandboxCheckLeftovers(fixture), [], reason);
+    }
+    // An interrupt stays INTERRUPTED.
+    await assert.rejects(
+      internal.runSandboxCheck({
+        runner: {
+          run: async () => result('', 130, 'Ctrl+C', { signal: 'SIGINT' }),
+          isCancelled: () => false,
+        },
+        ...fixture,
+      }),
+      (error) => error.code === 'INTERRUPTED',
+    );
+    assert.deepEqual(await sandboxCheckLeftovers(fixture), []);
+  } finally {
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('sandbox check: in a linked worktree or a submodule (.git is a file) the canary goes to the Git directory that .git names; a .git without a Git directory is IMPLEMENTER_PREFLIGHT_FAILED', async () => {
+  const fixture = await sandboxCheckFixture();
+  const directory = await createRepository();
+  const worktree = join(fixture.tempRoot, 'worktree');
+  const canaries = async (path) =>
+    (await readdir(path)).filter((name) => name.startsWith('ringi-sandbox-check-'));
+  try {
+    command(directory, 'git', ['worktree', 'add', '--quiet', '-b', 'chore/sandbox-check-worktree', worktree]);
+    const gitDirectory = realpathSync(
+      command(worktree, 'git', ['rev-parse', '--absolute-git-dir']).trim(),
+    );
+    const linked = { ...fixture, repositoryRoot: worktree };
+    const working = createMockRunner();
+    await internal.runSandboxCheck({ runner: working, ...linked });
+    assert.equal(realpathSync(dirname(working.sandboxChecks[0].args.at(-2))), gitDirectory);
+    // Without a sandbox the write to the Git directory is found and removed;
+    // no raw error from .git being a file.
+    await assert.rejects(
+      internal.runSandboxCheck({ runner: unsandboxedCodex(), ...linked }),
+      sandboxUnconfirmed('outside-write'),
+    );
+    await assert.rejects(
+      internal.runSandboxCheck({
+        runner: {
+          run: async (_program, args) => {
+            await writeFile(args.at(-2), '');
+            return workingSandboxCheck(args);
+          },
+          isCancelled: () => false,
+        },
+        ...linked,
+      }),
+      sandboxUnconfirmed('git-write'),
+    );
+    assert.deepEqual(await canaries(gitDirectory), []);
+    assert.deepEqual(
+      (await readdir(fixture.tempRoot)).filter((name) => name.startsWith('sandbox-check-')),
+      [],
+    );
+
+    // A submodule: a relative gitdir line.
+    const submodule = join(fixture.tempRoot, 'super', 'sub');
+    const moduleDirectory = join(fixture.tempRoot, 'super', '.git', 'modules', 'sub');
+    await mkdir(submodule, { recursive: true });
+    await mkdir(moduleDirectory, { recursive: true });
+    await writeFile(join(submodule, '.git'), 'gitdir: ../.git/modules/sub\n');
+    const nested = createMockRunner();
+    await internal.runSandboxCheck({
+      runner: nested,
+      ...fixture,
+      repositoryRoot: submodule,
+    });
+    assert.equal(dirname(nested.sandboxChecks[0].args.at(-2)), moduleDirectory);
+    assert.deepEqual(await canaries(moduleDirectory), []);
+
+    // No Git directory: a gitdir line to nothing, a .git without one, no .git.
+    const broken = join(fixture.tempRoot, 'broken');
+    await mkdir(broken);
+    for (const contents of ['gitdir: ../missing\n', 'not a gitdir line\n', undefined]) {
+      if (contents === undefined) await rm(join(broken, '.git'));
+      else await writeFile(join(broken, '.git'), contents);
+      const runner = createMockRunner();
+      await assert.rejects(
+        internal.runSandboxCheck({ runner, ...fixture, repositoryRoot: broken }),
+        sandboxUnconfirmed('git-directory'),
+        String(contents),
+      );
+      assert.equal(runner.sandboxChecks.length, 0);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('sandbox check: argv from the module goes through the argument grid (call sandboxCheck) and must end with the core command; a module without sandboxCheckArgs is not checked', async () => {
+  const fixture = await sandboxCheckFixture();
+  const { forbiddenArgument, validateProviderModule } = contractExports;
+  const codex = codexModuleExports.default;
+  try {
+    for (const taskMode of ['implementation', 'analysis']) {
+      const args = codex.implementer.sandboxCheckArgs({ taskMode, command: ['x'] });
+      assert.equal(args[2], `sandbox_mode="${taskMode === 'analysis' ? 'read-only' : 'workspace-write'}"`);
+      assert.equal(forbiddenArgument('codex', args, { role: 'implementer', call: 'sandboxCheck' }), undefined);
+      // The same argv as a round is refused: the round sets the mode with -s.
+      assert.equal(forbiddenArgument('codex', args, { role: 'implementer' })?.index, 1);
+    }
+    for (const config of [
+      'sandbox_mode="danger-full-access"',
+      'sandbox_mode=bogus',
+      'sandbox_workspace_write.exclude_slash_tmp=false',
+      'sandbox_workspace_write.exclude_tmpdir_env_var=false',
+      'sandbox_workspace_write.writable_roots=["/"]',
+      'sandbox_workspace_write.network_access=true',
+      'approval_policy="on-request"',
+    ])
+      assert.ok(
+        forbiddenArgument('codex', ['sandbox', '-c', config, '--', 'x'], { call: 'sandboxCheck' }),
+        config,
+      );
+    for (const flag of [
+      '--sandbox-state-json',
+      '--sandbox-state-readable-root',
+      '--allow-unix-socket',
+      '-P',
+      '--permission-profile',
+      '--include-managed-config',
+      '--enable',
+      '--disable',
+    ])
+      assert.ok(forbiddenArgument('codex', ['sandbox', flag, 'value', '--', 'x']), flag);
+
+    const withCheck = (sandboxCheckArgs) =>
+      validateProviderModule({
+        ...codex,
+        implementer: { ...codex.implementer, sandboxCheckArgs },
+      });
+    const runner = createMockRunner();
+    await assert.rejects(
+      internal.runSandboxCheck({
+        runner,
+        ...fixture,
+        adapter: withCheck(({ command }) => ['sandbox', '--', ...command.slice(1)]),
+      }),
+      sandboxUnconfirmed('argv'),
+    );
+    await assert.rejects(
+      internal.runSandboxCheck({
+        runner,
+        ...fixture,
+        adapter: withCheck(({ command }) => ['sandbox', '--sandbox-state-json', '{}', '--', ...command]),
+      }),
+      { code: 'PROVIDER_CONTRACT_VIOLATION' },
+    );
+    assert.equal(runner.sandboxChecks.length, 0);
+    const { sandboxCheckArgs: _omitted, ...withoutCheck } = codex.implementer;
+    await internal.runSandboxCheck({
+      runner,
+      ...fixture,
+      adapter: validateProviderModule({ ...codex, implementer: withoutCheck }),
+    });
+    assert.equal(runner.sandboxChecks.length, 0);
+    assert.deepEqual(await sandboxCheckLeftovers(fixture), []);
+  } finally {
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('sandbox check: a codex round without a sandbox stops before the implementer process', async () => {
+  const directory = await createRepository();
+  const tempRoot = await mkdtemp(join(tmpdir(), `${TEST_PROFILE.tempPrefix}sandbox-round-`));
+  const runDirectory = join(directory, '.agent-review-loop', 'runs', 'sandbox-round');
+  await mkdir(runDirectory, { recursive: true });
+  const calls = [];
+  try {
+    await assert.rejects(
+      internal.runCodexRound({
+        runner: unsandboxedCodex(calls),
+        repositoryRoot: directory,
+        runDirectory,
+        tempRoot,
+        gitPath: resolve(command(directory, 'git', ['--exec-path']), '..', 'git'),
+        task: { path: 'task.md', markdown: '# Task\n' },
+        profile: TEST_PROFILE,
+        round: 1,
+        findings: [],
+        timeoutMs: 1_000,
+        environment: await fakeCodexEnvironment(tempRoot),
+      }),
+      sandboxUnconfirmed('outside-write'),
+    );
+    assert.deepEqual(calls.map(({ args }) => args[0]), ['sandbox']);
+    assert.equal(
+      (await readdir(join(directory, '.git'))).some((name) => name.startsWith('ringi-sandbox-check-')),
+      false,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    // The guard directory is read-only.
+    await chmod(join(tempRoot, 'guard-bin'), 0o700).catch(() => {});
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 });
 

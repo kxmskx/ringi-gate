@@ -344,6 +344,7 @@ export default Object.freeze({
   'preflight.unsupportedPlatform':
     'Platforma {platform} nie obsługuje sandboxa poleceń {program} dla roli implementer.',
   'preflight.refused': 'Preflight dostawcy {id} odmówił roli implementer na tym hoście.',
+  'preflight.sandboxUnconfirmed': 'Kontrola sandboxa dostawcy {id} przed rundą {round} nie wykazała działającego sandboxa ({reason}); implementer nie został uruchomiony.',
   'preflight.reviewerUnsupportedVersion':
     'Wersja {program} ({version}) nie jest obsługiwana dla roli reviewer.',
   'preflight.reviewerUnsupportedPlatform':

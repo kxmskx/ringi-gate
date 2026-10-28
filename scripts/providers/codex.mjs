@@ -62,6 +62,26 @@ function processArgs({
       ];
 }
 
+// The core's check command in the sandbox of the round's mode, without a
+// model (codex sandbox has no -s, so the mode is set with -c). The temporary
+// directories stay out of the writable roots, so that a write to the core's
+// temporary directory shows a sandbox that does not hold.
+function sandboxCheckArgs({ taskMode, command }) {
+  return [
+    'sandbox',
+    '-c',
+    `sandbox_mode=${JSON.stringify(taskMode === 'analysis' ? 'read-only' : 'workspace-write')}`,
+    '-c',
+    'sandbox_workspace_write.network_access=false',
+    '-c',
+    'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+    '-c',
+    'sandbox_workspace_write.exclude_slash_tmp=true',
+    '--',
+    ...command,
+  ];
+}
+
 // The core's isolated offline environment with the guards first on PATH.
 function processEnvironment({ environment, guardBin }) {
   const env = { ...environment };
@@ -115,15 +135,16 @@ export default defineProvider({
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
     limitations: [
-      'The CLI has no documented setting that makes it fail when its sandbox cannot start, and the runner does not check it; preflight accepts any CLI version, on macOS or Linux only. The declarations were probed on 0.160.0; another version may change flags or sandbox behaviour unchecked.',
-      'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex (not checked by this runner).',
+      "The CLI has no documented setting that makes it fail when its sandbox cannot start. Before every round the core runs a check command through codex sandbox in the round's mode, without a model and with an empty CODEX_HOME: a write to the core's temporary directory and to the Git directory and a connection to a local listener must be refused, or the run stops with IMPLEMENTER_PREFLIGHT_FAILED.",
+      'The check is a lower bound, not proof for codex exec: another command path, no user configuration, and TMPDIR and /tmp out of the writable roots the round keeps. It was probed on 0.164.0 on macOS only (no Linux, no linked worktree or submodule); on a host or version where codex sandbox takes another form or other error codes, every round stops before the implementer (fail-closed). Preflight accepts any version on macOS or Linux; the declarations were probed on 0.160.0.',
+      'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex, and the sandbox check before every round confirms that a write to the Git directory is refused.',
       'Codex system (admin) configuration still applies.',
       "Commands run in a non-login shell, and the core sets ZDOTDIR to an empty private directory, so zsh skips the user's .zshenv; it still reads /etc/zshenv, where a PATH change puts the real command before the guard (shown with a .zshenv on 0.160.0), and what it exports reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command.",
     ],
     security: {
       noApprovalPrompts: enforced('-a never'),
       sandboxByMode: enforced(
-        '-s workspace-write (implementation) or -s read-only (analysis) on every round',
+        '-s workspace-write (implementation) or -s read-only (analysis) on every round; before it, sandboxCheckArgs runs the core check command through codex sandbox in the same mode',
       ),
       noCommandNetwork: enforced('-c sandbox_workspace_write.network_access=false'),
       noUserConfiguration: enforced('--ignore-user-config --strict-config'),
@@ -143,5 +164,6 @@ export default defineProvider({
     processEnvironment,
     sessionId,
     preflight,
+    sandboxCheckArgs,
   },
 });

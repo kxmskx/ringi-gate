@@ -217,7 +217,12 @@ const ROLE_FUNCTIONS = Object.freeze({
     'fallbackReason',
   ]),
 });
-const OPTIONAL_IMPLEMENTER_FUNCTIONS = ['output', 'permissionDenials'];
+// sandboxCheckArgs({ taskMode, command }) returns the argv that runs the
+// core's check command in the CLI's sandbox of that task mode, without a
+// model; the core runs it before every round (runSandboxCheck in
+// agent-review-loop-lib.mjs) and checks it with forbiddenArgument (call
+// 'sandboxCheck').
+const OPTIONAL_IMPLEMENTER_FUNCTIONS = ['output', 'permissionDenials', 'sandboxCheckArgs'];
 const OPTIONAL_IMPLEMENTER_FLAGS = ['resumeKeepsSessionId', 'gitDirectoryWritable'];
 const ROLE_KEYS = Object.freeze({
   implementer: new Set([
@@ -602,16 +607,28 @@ const valueOutside = (allowed) => (value) => !allowed.includes(value);
 // network_access=false (an inline table such as
 // sandbox_workspace_write={writable_roots=[...]} is refused), and
 // allow_login_shell only as false (a login shell puts its profiles' PATH
-// before the guard directory).
+// before the guard directory). In the sandbox check call only (codex
+// sandbox has no -s), sandbox_mode may name read-only or workspace-write,
+// and the stricter exclude_tmpdir_env_var and exclude_slash_tmp may be true.
 const CODEX_CONFIG_FORBIDDEN =
   /^(?:sandbox_mode|approval_policy|shell_environment_policy|mcp_servers|notify|profiles?)(?:\.|$)/;
-function codexConfig(value) {
+const CODEX_SANDBOX_CHECK_EXCLUDES = [
+  'sandbox_workspace_write.exclude_tmpdir_env_var',
+  'sandbox_workspace_write.exclude_slash_tmp',
+];
+function codexConfig(value, { call } = {}) {
   const text = value ?? '';
   const separator = text.indexOf('=');
   const key = (separator === -1 ? text : text.slice(0, separator)).replace(
     /["'\s]/g,
     '',
   );
+  const setting =
+    separator === -1 ? undefined : text.slice(separator + 1).replace(/["'\s]/g, '');
+  if (call === 'sandboxCheck' && key === 'sandbox_mode')
+    return !['read-only', 'workspace-write'].includes(setting);
+  if (call === 'sandboxCheck' && CODEX_SANDBOX_CHECK_EXCLUDES.includes(key))
+    return setting !== 'true';
   if (CODEX_CONFIG_FORBIDDEN.test(key)) return true;
   if (key === 'sandbox_workspace_write.network_access' || key === 'allow_login_shell')
     return text.slice(separator + 1).trim() !== 'false';
@@ -719,6 +736,15 @@ export const FORBIDDEN_PROGRAM_FLAGS = Object.freeze({
     '--ask-for-approval': valueOutside(['never']),
     '-c': codexConfig,
     '--config': codexConfig,
+    // Options of codex sandbox that widen or replace the sandbox policy.
+    '--sandbox-state-json': true,
+    '--sandbox-state-readable-root': true,
+    '--allow-unix-socket': true,
+    '-P': true,
+    '--permission-profile': true,
+    '--include-managed-config': true,
+    '--enable': true,
+    '--disable': true,
   }),
   claude: Object.freeze({
     '--dangerously-skip-permissions': true,
@@ -757,9 +783,10 @@ const REQUIRED_PROGRAM_FLAGS = Object.freeze({
 // equal to an exempt value (values the core itself passed: paths, model,
 // schema and, for the built-in providers, the session ID) are not inspected.
 // role ('implementer' or 'reviewer') selects the rules of one role, such as
-// the read-only --tools of a claude reviewer. A missing required flag is
-// reported at index args.length with rule 'missing'.
-export function forbiddenArgument(program, args, { exempt = [], role } = {}) {
+// the read-only --tools of a claude reviewer. call 'sandboxCheck' marks the
+// argv of a module's sandboxCheckArgs (codex: sandbox_mode as -c). A missing
+// required flag is reported at index args.length with rule 'missing'.
+export function forbiddenArgument(program, args, { exempt = [], role, call } = {}) {
   const name = String(program).toLowerCase();
   const programFlags = Object.hasOwn(FORBIDDEN_PROGRAM_FLAGS, name)
     ? FORBIDDEN_PROGRAM_FLAGS[name]
@@ -795,7 +822,7 @@ export function forbiddenArgument(program, args, { exempt = [], role } = {}) {
       const rule = programFlags[parts.name];
       if (
         rule === true ||
-        rule(parts.value, { args, index, role, attached: parts.attached })
+        rule(parts.value, { args, index, role, call, attached: parts.attached })
       )
         return found(program);
     }

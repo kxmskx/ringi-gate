@@ -7,10 +7,10 @@ for each guarantee the module declares `enforced`. Criterion 3 of
 
 | | |
 | --- | --- |
-| CLI | `codex-cli 0.160.0` |
+| CLI | `codex-cli 0.160.0` (C1 to C15), `codex-cli 0.164.0` (C16 to C27) |
 | Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh` |
-| Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15) |
-| Model | `gpt-6.1-sol`, effort `medium` |
+| Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15), 2026-10-28 (C16 to C27) |
+| Model | `gpt-6.1-sol`, effort `medium` (C16 to C27: none) |
 | Repository | synthetic: `git init` with one commit in a directory made by `mktemp -d` |
 
 Placeholders: `<base>` is the probe directory, `<repo>` the repository in
@@ -347,12 +347,68 @@ Without `ZDOTDIR`, zsh reads `.zshenv` from `HOME`; with `ZDOTDIR` set,
 it does not look in `HOME`. A probe with a `.zshenv` in a substituted
 `HOME` was not run: the CLI finds no login there (as in C4).
 
+### C16 to C27. Sandbox check without a model (`codex sandbox`)
+
+On `codex-cli 0.164.0`, 2026-10-28, no model call. `codex sandbox
+[OPTIONS] [COMMAND]...` runs a command under the CLI's sandbox (Seatbelt
+on macOS). It has no `-s` and no `--ignore-user-config`; it takes `-c`
+overrides, `--sandbox-state-json`, `-P`/`--permission-profile`,
+`--allow-unix-socket` and feature switches. Every run used an empty
+`CODEX_HOME=<base>/codexhome` (no login, no trust entry), the runner's
+environment (`env -i` with `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TMPDIR`, `LANG`, `LC_ALL`, `TERM`, `CI=1`, `NO_COLOR=1`), `TMPDIR` under
+`/private/tmp`, and the working directory `<repo>`. The probe command was
+a Node.js script that tried a write in `<repo>`, in `.git`, in
+`<outside-tmp>`, in `<outside-home>` and in `TMPDIR`, a TCP connection to
+`127.0.0.1:1`, a listener on `127.0.0.1` and `fetch('https://example.com')`,
+and printed the error code of each attempt and the variables
+`CODEX_SANDBOX` and `CODEX_SANDBOX_NETWORK_DISABLED`.
+
+| Probe | Arguments of `codex sandbox` | Result |
+| --- | --- | --- |
+| C16 | `--help` | Exit 0; the options above. |
+| C17 | none | Read-only: every write `EPERM`, connection and listener `EPERM`, `fetch` `ENOTFOUND`; `CODEX_SANDBOX=seatbelt`, `CODEX_SANDBOX_NETWORK_DISABLED=1`. |
+| C18 | `-c sandbox_mode=workspace-write -c sandbox_workspace_write.network_access=false` | `<repo>`, `<outside-tmp>` and `TMPDIR` written; `.git` and `<outside-home>` `EPERM`; network as in C17. |
+| C19 | C18 with `-c sandbox_workspace_write.exclude_tmpdir_env_var=true -c sandbox_workspace_write.exclude_slash_tmp=true` | Only `<repo>` written; `.git`, `<outside-tmp>`, `<outside-home>` and `TMPDIR` `EPERM`; network as in C17. |
+| C20 | `-c sandbox_mode=read-only -c sandbox_workspace_write.network_access=false` | As C17. |
+| C21 | `-c sandbox_mode=bogus`, command `/bin/echo` | Exit 1, `unknown variant bogus` on stderr; the command did not run. |
+| C22 | `-c no_such_key_ringi=1 -c sandbox_workspace_write.no_such_ringi=true`, command `/bin/echo hi` | Exit 0, `hi`: unknown keys are ignored without a message. |
+| C23 | `-c sandbox_mode=read-only -- /nonexistent/…` | Exit 71, `sandbox-exec: execvp() … failed: No such file or directory`. |
+| C24 | the argv of `sandboxCheckArgs` (implementation), the core's check command run from a file | `RINGI-SANDBOX-CHECK <nonce> {"outside":"EPERM","git":"EPERM","network":"EPERM"}`, exit 0; no file in `<outside-tmp>` or `.git`. |
+| C25 | the argv of `sandboxCheckArgs` (analysis), as C24 | As C24. |
+| C26 | C19 with the TOML string `sandbox_mode="workspace-write"`, as the module passes it | As C19 (`<repo>` written, so the mode applied), without the `<outside-home>` attempt: that result is missing from the output, so C26 is partial against C19. |
+| C27 | `-C <worktree>` with the argv of C19, the working directory `<repo>` | Exit 2: `-C`/`--cd` requires `--permission-profile`, which the argument grid forbids; the command did not run. |
+
+C24 and C25 ran the check script from a file with `node` from `PATH`, and
+their connection went to `127.0.0.1:1`, a port without a listener, not to
+a listener of the core as in the check (`process.execPath -e`). C27 was
+meant to run the check in a linked worktree (`.git` is a file). Without
+`-C` the probe tool runs only in `<repo>`, whose `.git` is a directory, so
+the sandbox's answer for the Git directory of a linked worktree or a
+submodule was not probed. The check puts its canary in the directory that
+`.git` names there, so the round starts only if the sandbox refuses that
+write as well.
+
+C18 shows why the check takes `TMPDIR` and `/tmp` out of the writable
+roots: the core's temporary directory lies under `TMPDIR`, which the round
+may write. A sandbox that cannot start was not provoked. The stderr of C23
+(`sandbox-exec: execvp() …`) suggests, without proving it, that the CLI
+calls `/usr/bin/sandbox-exec` by its absolute path; a `PATH` without
+`/usr/bin` was refused by the probe tool and not run, and other ways need
+a change of the system or of permissions. C23 shows the form of a start failure of `sandbox-exec` (exit
+71, no output of the command); the check stops on any exit code other than
+0 and on missing output. The case without a sandbox is covered by a unit
+test whose fake `codex` runs the check command unsandboxed (both writes
+and the connection succeed, the run stops). Linux (Landlock, `bwrap`) was
+not probed; the check does not depend on `CODEX_SANDBOX`, which C17 shows
+on macOS only.
+
 ## Guarantees
 
 | Guarantee | Probes | Result |
 | --- | --- | --- |
 | `noApprovalPrompts` (`-a never`) | C1 to C3, C6 to C12 | Checked: no approval request in any event stream; writes the sandbox denied came back as command output (C6, C7), and every round ended on its own. |
-| `sandboxByMode` | C1, C2, C3, C6, C7 | Checked through items in C6 and C7: `workspace-write` allowed a write in `<repo>` and denied writes in `<outside-home>` and `.git` with "Operation not permitted"; `read-only` denied all three. C1 shows that `workspace-write` also allows `/tmp`. For the resumed round (C2) the outside write rests on the agent's report and the absent canary only (partly). Whether the CLI stops when the sandbox cannot start is not checked (it cannot be provoked within the probe rules). |
+| `sandboxByMode` | C1, C2, C3, C6, C7 | Checked through items in C6 and C7: `workspace-write` allowed a write in `<repo>` and denied writes in `<outside-home>` and `.git` with "Operation not permitted"; `read-only` denied all three. C1 shows that `workspace-write` also allows `/tmp`. For the resumed round (C2) the outside write rests on the agent's report and the absent canary only (partly). Whether the CLI stops when the sandbox cannot start is not checked (it cannot be provoked within the probe rules); since C24 to C26 the core's sandbox check before every round refuses a host where a write outside the repository or to `.git`, or a local connection, is not refused in the round's mode. |
 | `noCommandNetwork` | C1, C2, C3 | Checked: `curl https://example.com` could not resolve the host (items with exit code 6), in both modes and in a resumed round. |
 | `noUserConfiguration` | C1, C4 | Not checked for the user `config.toml` (no login in a substituted `CODEX_HOME`). A repository `.codex/config.toml` had no effect. The CLI writes a trust entry into the configuration directory despite `--ignore-user-config`. |
 | `pathGuards` | C1, C5, C8 to C15 | Partly. With `-c allow_login_shell=false` and a `.zshenv` that leaves `PATH` alone, the executable guard `git` ran instead of the real one in implementation, resumed and analysis rounds (items with exit code 97); the CLI's two directories before the guard directory hold no guarded name on 0.160.0. With a `.zshenv` that prepends directories to `PATH` (C13, C14), the real `git` ran: the non-login shell still reads `.zshenv`, after the CLI has built `PATH`. With an empty `ZDOTDIR`, as the core sets it, the guard ran although that `.zshenv` still existed (C15). `/etc/zshenv` is still read and was not probed (absent on the probe host). Without the setting (C1, C9) the login profiles put the system and Homebrew directories first and the real `git` ran. |

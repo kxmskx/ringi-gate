@@ -11,6 +11,7 @@ import {
   realpathSync,
 } from 'node:fs';
 import * as nodeModule from 'node:module';
+import { createServer } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   chmod,
@@ -7603,6 +7604,207 @@ function reportPermissionDenials(denials) {
   };
 }
 
+// The command of the sandbox check: an exclusive write to a file in the
+// core's temporary directory and to one in the Git directory, then a TCP
+// connection to the core's listener on 127.0.0.1 (no host outside the
+// machine, so that a host without network gives the same result). One line
+// with the nonce and the result of each attempt.
+const SANDBOX_CHECK_SCRIPT = [
+  "const fs = require('node:fs');",
+  "const net = require('node:net');",
+  'const [nonce, outside, git, port] = process.argv.slice(1);',
+  'const write = (path) => {',
+  "  try { fs.writeFileSync(path, '', { flag: 'wx' }); return 'written'; }",
+  "  catch (error) { return String(error.code || 'error'); }",
+  '};',
+  'const result = { outside: write(outside), git: write(git) };',
+  'let done = false;',
+  'const finish = (network) => {',
+  '  if (done) return;',
+  '  done = true;',
+  '  socket.destroy();',
+  '  result.network = network;',
+  '  console.log(`RINGI-SANDBOX-CHECK ${nonce} ${JSON.stringify(result)}`);',
+  '};',
+  "const socket = net.connect({ host: '127.0.0.1', port: Number(port) });",
+  "socket.once('connect', () => finish('connected'));",
+  "socket.once('error', (error) => finish(String(error.code || 'error')));",
+  "socket.setTimeout(5000, () => finish('timeout'));",
+].join('\n');
+const SANDBOX_DENIED_WRITE = new Set(['EPERM', 'EACCES', 'EROFS']);
+
+// The Git directory of the sandbox check: .git itself, or for a linked
+// worktree or a submodule (.git is a file) the directory named on its
+// gitdir line (the first line of the file), as Git resolves it. Undefined
+// when neither holds, also for a .git that is a symbolic link.
+async function sandboxCheckGitDirectory(repositoryRoot) {
+  const dotGit = join(repositoryRoot, '.git');
+  const stats = await lstat(dotGit).catch(() => undefined);
+  if (stats?.isDirectory()) return dotGit;
+  if (!stats?.isFile() || stats.size > 4096) return undefined;
+  const [firstLine] = (await readFile(dotGit, 'utf8').catch(() => '')).split(
+    '\n',
+  );
+  const match = /^gitdir: (.+)$/.exec(firstLine);
+  if (!match) return undefined;
+  const directory = resolve(repositoryRoot, match[1].trim());
+  return (await lstat(directory).catch(() => undefined))?.isDirectory()
+    ? directory
+    : undefined;
+}
+
+// A path counts as present unless lstat says it is missing, so that an
+// unexpected error cannot pass as a refused write.
+function sandboxCheckPathPresent(path) {
+  try {
+    return Boolean(lstatSync(path, { throwIfNoEntry: false }));
+  } catch {
+    return true;
+  }
+}
+
+// Before every round of a module with sandboxCheckArgs, the core runs its
+// check command in the CLI's sandbox of the round's mode, with the round's
+// environment and an empty CODEX_HOME (no user configuration). The round
+// starts only on evidence: both writes (one to the repository's Git
+// directory) refused with a permission error and no file left, the
+// connection refused and none received, exit code 0 and exactly one result
+// line with this check's nonce. Anything else, including a sandbox that
+// cannot start, a timeout or a CLI that cannot be run, is
+// IMPLEMENTER_PREFLIGHT_FAILED; an interrupt stays INTERRUPTED.
+async function runSandboxCheck({
+  runner,
+  adapter,
+  taskMode,
+  repositoryRoot,
+  tempRoot,
+  env,
+  round,
+}) {
+  const sandboxCheckArgs = adapter.implementer.sandboxCheckArgs;
+  if (typeof sandboxCheckArgs !== 'function') return;
+  const fail = (reason) =>
+    new AgentWorkflowError(
+      msg('preflight.sandboxUnconfirmed', { id: adapter.id, round, reason }),
+      { code: 'IMPLEMENTER_PREFLIGHT_FAILED', stage: 'preflight' },
+    );
+  const gitDirectory = await sandboxCheckGitDirectory(repositoryRoot);
+  if (!gitDirectory) throw fail('git-directory');
+  const nonce = randomBytes(12).toString('hex');
+  const directory = join(tempRoot, `sandbox-check-${nonce}`);
+  const codexHome = join(directory, 'home');
+  const outside = join(directory, 'outside', 'canary');
+  const git = join(gitDirectory, `ringi-sandbox-check-${nonce}`);
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await mkdir(dirname(outside), { recursive: true, mode: 0o700 });
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  try {
+    let port;
+    try {
+      port = await new Promise((resolvePromise, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => resolvePromise(server.address().port));
+      });
+    } catch {
+      throw fail('listener');
+    }
+    const command = [
+      process.execPath,
+      '-e',
+      SANDBOX_CHECK_SCRIPT,
+      nonce,
+      outside,
+      git,
+      String(port),
+    ];
+    const args = copyProviderArgs(
+      sandboxCheckArgs({ taskMode, command: [...command] }),
+      MAX_PROVIDER_ARGS,
+    );
+    if (!args)
+      throw providerContractViolation(
+        adapter,
+        'implementer',
+        'preflight',
+        msg('provider.argvNotStrings'),
+      );
+    const tail = args.slice(args.length - command.length);
+    if (
+      args.length < command.length ||
+      !command.every((value, index) => tail[index] === value)
+    )
+      throw fail('argv');
+    const forbidden = forbiddenArgument(adapter.program, args, {
+      exempt: command,
+      role: 'implementer',
+      call: 'sandboxCheck',
+    });
+    if (forbidden)
+      throw providerContractViolation(
+        adapter,
+        'implementer',
+        'preflight',
+        msg('provider.forbiddenArgument', { index: forbidden.index }),
+      );
+    let result;
+    try {
+      result = await safeRun(
+        runner,
+        adapter.program,
+        args,
+        {
+          cwd: repositoryRoot,
+          env: { ...env, CODEX_HOME: codexHome },
+          timeoutMs: 30_000,
+          stage: 'preflight',
+        },
+        adapter.program,
+      );
+    } catch (error) {
+      if (error?.code === 'TIMEOUT') throw fail('timeout');
+      if (error?.code === 'PROCESS_ERROR') throw fail('start');
+      throw error;
+    }
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    const prefix = `RINGI-SANDBOX-CHECK ${nonce} `;
+    const lines = String(result.stdout ?? '')
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('RINGI-SANDBOX-CHECK '));
+    let report;
+    if (lines.length === 1 && lines[0].startsWith(prefix)) {
+      try {
+        report = JSON.parse(lines[0].slice(prefix.length));
+      } catch {
+        report = undefined;
+      }
+    }
+    if (sandboxCheckPathPresent(outside) || report?.outside === 'written')
+      throw fail('outside-write');
+    if (sandboxCheckPathPresent(git) || report?.git === 'written')
+      throw fail('git-write');
+    if (connections > 0 || report?.network === 'connected') throw fail('network');
+    if (result.code !== 0) throw fail(`exit ${result.code}`);
+    if (
+      !report ||
+      !SANDBOX_DENIED_WRITE.has(report.outside) ||
+      !SANDBOX_DENIED_WRITE.has(report.git) ||
+      typeof report.network !== 'string'
+    )
+      throw fail('no-evidence');
+  } finally {
+    server.close();
+    // Both removals run and neither replaces the check's own error.
+    await Promise.allSettled([
+      rm(git, { force: true }),
+      rm(directory, { recursive: true, force: true }),
+    ]);
+  }
+}
+
 async function runCodexRound({
   runner,
   repositoryRoot,
@@ -7711,6 +7913,15 @@ async function runCodexRound({
     ],
     'implementer',
   );
+  await runSandboxCheck({
+    runner,
+    adapter,
+    taskMode: selectedTaskMode,
+    repositoryRoot,
+    tempRoot,
+    env,
+    round,
+  });
   const activity = createCodexActivityParser(onActivity);
   let result;
   try {
@@ -10528,6 +10739,7 @@ export const internal = {
   runClaudeReviewWithPolicy,
   runCodexRound,
   runChecks,
+  runSandboxCheck,
   safeAgentEnvironment,
   verifyInstalledDependencyState,
   validateClaudeReview,

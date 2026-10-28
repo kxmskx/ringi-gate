@@ -5,7 +5,7 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
-## Unreleased
+## 0.2.4 — 2026-10-28
 
 ### Added
 

@@ -433,23 +433,45 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
   ])
     assert.ok(text.includes(`\n      - ${path}\n`), path);
   assert.match(text, /^ {8}default: '0\.164\.0'$/m);
-  assert.match(text, /os: \[ubuntu-latest, ubuntu-24\.04-arm, macos-latest\]/);
+  // The probe must stop on the Linux runners and pass on macOS.
+  assert.ok(
+    text.includes(
+      [
+        '      matrix:',
+        '        include:',
+        '          - os: ubuntu-latest',
+        '            expect: stop',
+        '          - os: ubuntu-24.04-arm',
+        '            expect: stop',
+        '          - os: macos-latest',
+        '            expect: pass',
+        '    env:',
+      ].join('\n'),
+    ),
+    'matrix',
+  );
+  assert.equal([...text.matchAll(/expect: /g)].length, 3);
   assert.match(text, /^ {6}fail-fast: false$/m);
   assert.match(text, /^ {4}timeout-minutes: \d+$/m);
-  // Expressions only in the job name, the runner and the version variable.
+  assert.doesNotMatch(text, /continue-on-error/);
+  // Expressions only in the job name, the runner and the two variables.
   assert.deepEqual(
     text.split('\n').filter((line) => line.includes('${{')).map((line) => line.trim()),
     [
       'name: codex sandbox check (${{ matrix.os }})',
       'runs-on: ${{ matrix.os }}',
       "CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}",
+      'PROBE_EXPECT: ${{ matrix.expect }}',
     ],
   );
   assert.doesNotMatch(text, /latest"|@latest|codex@\$\{/);
   const install = text.indexOf('run: npm install -g "@openai/codex@$CODEX_VERSION"\n');
   assert.ok(install > 0, 'installation');
   assert.equal([...text.matchAll(/npm (?:install|i) /g)].length, 1);
-  assert.match(text, /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs\n$/);
+  assert.match(
+    text,
+    /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs --expect "\$PROBE_EXPECT"\n$/,
+  );
   // The namespace diagnostics run on Linux only, before the probe, read
   // only, and turn on the probe's diagnostics for the steps after them.
   const diagnostics = text.match(
@@ -462,22 +484,9 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
     diagnostics[1],
     /^ {10}status=0\n {10}bwrap --unshare-user --unshare-net --ro-bind \/ \/ true \|\| status=\$\?\n/m,
   );
-  // bubblewrap is installed on Linux only, before the diagnostics, in a step
-  // of exactly two commands; sudo and apt appear nowhere else.
-  const bubblewrap = text.match(
-    /\n {6}- name: Install bubblewrap\n {8}if: runner\.os == 'Linux'\n {8}run: \|\n((?: {10}.+\n)+)/,
-  );
-  assert.ok(bubblewrap, 'bubblewrap installation');
-  assert.ok(bubblewrap.index < diagnostics.index);
-  assert.deepEqual(
-    bubblewrap[1].split('\n'),
-    ['          sudo apt-get update', '          sudo apt-get install -y bubblewrap', ''],
-  );
-  const bubblewrapEnd = bubblewrap.index + bubblewrap[0].length;
-  assert.equal(text[bubblewrapEnd], '\n', 'the installation step ends after its commands');
-  const rest = text.slice(0, bubblewrap.index) + text.slice(bubblewrapEnd);
-  assert.doesNotMatch(rest, /sudo|apt/);
-  assert.doesNotMatch(text, /sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
+  // Nothing in the workflow runs with elevated rights, installs system
+  // packages or changes kernel or AppArmor settings.
+  assert.doesNotMatch(text, /sudo|apt|sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
   assert.equal([...text.matchAll(/GITHUB_ENV/g)].length, 1);
   // The version check runs before the installation and accepts only
   // major.minor.patch.

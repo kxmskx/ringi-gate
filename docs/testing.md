@@ -161,7 +161,9 @@ so installing the tarball fetches nothing.
   has no write permission, uses the same pinned actions as `test.yml`, and
   its version input reaches the steps only through the `CODEX_VERSION`
   variable; its version check, run against sample inputs, accepts only
-  `major.minor.patch` and runs before the installation.
+  `major.minor.patch` and runs before the installation; its matrix
+  expects `stop` on both Ubuntu runners and `pass` on macOS, without
+  `continue-on-error`, and the file has no `sudo`, `apt` or `sysctl`.
 
 The workflows themselves are not run by the tests.
 
@@ -176,14 +178,31 @@ the system temporary directory it runs the check in `implementation` and
 CLI version, `uname -a`, the result of each mode (`pass`, or the stop code
 and message) and the argv, exit code, stdout and stderr of the
 `codex sandbox` call. On Linux it also prints the kernel settings for
-unprivileged user namespaces and whether `bwrap` is on `PATH`. It exits
-with 0 only when both modes pass, and removes its temporary directory.
+unprivileged user namespaces and whether `bwrap` is on `PATH`. It removes
+its temporary directory.
+
+`--expect pass` (the default) and `--expect stop` set the expected result.
+With `pass` the probe exits with 0 only when both modes pass. With `stop`
+it exits with 0 only when both modes stop because the sandbox did not
+start: the core's single `codex sandbox` call exited with 1 (no signal, no
+timeout) without a result line, and the core stopped with
+`IMPLEMENTER_PREFLIGHT_FAILED` and the reason `exit 1`. The probe does not
+read stderr, so an exit 1 for another reason (for example an option a
+newer CLI refuses) counts as a stop too; the macOS runner, which expects
+`pass`, catches such an argv change. A pass in either
+mode, or a stop for any other reason (a written canary, a connection, a
+timeout, another exit code, a failed preparation), exits with 1. The
+summary prints the result of each mode and whether the expectation was
+met.
 
 Locally, with the Codex CLI installed:
 
 ```sh
 node scripts/probes/codex-sandbox-check.mjs
+node scripts/probes/codex-sandbox-check.mjs --expect stop
 ```
+
+On macOS the first passes and the second exits with 1.
 
 With `--diagnose` (or `RINGI_PROBE_DIAGNOSE=1` in the environment) the
 probe then runs `codex sandbox` directly, with the same environment and an
@@ -206,16 +225,21 @@ In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
 requests that change the core, the `codex` or contract module, the probes
 or the workflow, and by hand (`workflow_dispatch`) with another
 `major.minor.patch` version as input. The job gets no secrets and is not a
-required check. On Linux a step first installs the distribution's
-`bubblewrap` package with `sudo apt-get update` and
-`sudo apt-get install -y bubblewrap`, the only commands in the workflow
-that run with `sudo`. A read-only step then prints `uname -a`, the user
-namespace settings, the exit code of `unshare --user --map-root-user` (with
-and without a network namespace), whether `bwrap` is on `PATH`, its
-version, the exit code of
-`bwrap --unshare-user --unshare-net --ro-bind / / true` and whether the
-AppArmor `bwrap-userns-restrict` profile is present, and then turns on the
-probe's diagnostics.
+required check. Each matrix entry sets the expected result: `stop` on
+both Ubuntu runners and `pass` on macOS, passed to the probe as
+`--expect "$PROBE_EXPECT"`. On the GitHub-hosted Ubuntu 24.04 runners the
+Codex CLI sandbox does not start under the default AppArmor restriction
+of unprivileged user namespaces, so the core stops every round there
+([Linux probes](providers/probes/codex-implementer.md#linux)); the Linux
+jobs pass while that stop is the result, and fail when the sandbox starts
+or the core stops for another reason. Nothing in the workflow runs with
+`sudo`, installs system packages or changes kernel or AppArmor settings.
+On Linux a read-only step first prints `uname -a`, the user namespace
+settings, the exit code of `unshare --user --map-root-user` (with and
+without a network namespace), whether `bwrap` is on `PATH`, its version,
+the exit code of `bwrap --unshare-user --unshare-net --ro-bind / / true`
+and whether the AppArmor `bwrap-userns-restrict` profile is present, and
+then turns on the probe's diagnostics.
 
 ## What the core tests cover
 

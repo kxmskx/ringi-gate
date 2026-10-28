@@ -4,9 +4,14 @@
 // repository in the system temporary directory, for both task modes. Prints
 // the CLI version, uname -a, the result of each mode (pass, or the stop code
 // and message) and the raw result of the codex sandbox call the core made
-// (argv, exit code, stdout, stderr; no environment). Exit code 0 only when
-// both modes pass. Not part of npm test and not in the npm package
-// (scripts/probes/.npmignore); run by .github/workflows/codex-sandbox.yml.
+// (argv, exit code, stdout, stderr; no environment). Not part of npm test
+// and not in the npm package (scripts/probes/.npmignore); run by
+// .github/workflows/codex-sandbox.yml.
+//
+// --expect pass (the default): exit code 0 only when both modes pass.
+// --expect stop: exit code 0 only when both modes stop because the sandbox
+// did not start (see expectedStop); any pass, or a stop for another reason,
+// gives 1, so that a host whose sandbox starts shows up as a failure.
 //
 // With --diagnose or RINGI_PROBE_DIAGNOSE=1 the probe then runs codex
 // sandbox directly in a few diagnostic variants (see DIAGNOSTIC_VARIANTS).
@@ -21,10 +26,12 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 import { createProcessRunner, internal } from '../agent-review-loop-lib.mjs';
+import { msg } from '../messages/index.mjs';
 import codex from '../providers/codex.mjs';
 
 const execFileAsync = promisify(execFile);
 const MODES = ['implementation', 'analysis'];
+const EXPECTATIONS = ['pass', 'stop'];
 // Linux settings that decide whether an unprivileged process may create user
 // namespaces (used by sandboxes such as bubblewrap).
 const LINUX_SETTINGS = [
@@ -113,6 +120,27 @@ function printableArgs(args) {
   return args.map((value, index) => (args[index - 1] === '-e' ? '<check script>' : value));
 }
 
+// The stop of a sandbox that did not start: the core's single codex sandbox
+// call exited with code 1 (no signal, no timeout) without printing a result
+// line, and the core stopped with IMPLEMENTER_PREFLIGHT_FAILED and the reason
+// "exit 1". Any other stop (Git directory, listener, argv, a written canary,
+// a connection, a timeout, another exit code) does not match.
+function expectedStop(error, calls) {
+  if (error?.code !== 'IMPLEMENTER_PREFLIGHT_FAILED' || error.stage !== 'preflight') return false;
+  const reason = msg('preflight.sandboxUnconfirmed', { id: codex.id, round: 1, reason: 'exit 1' });
+  if (error.message !== reason || calls.length !== 1) return false;
+  const [{ error: runError, result }] = calls;
+  return (
+    !runError &&
+    result?.code === 1 &&
+    !result.signal &&
+    !result.timedOut &&
+    !String(result.stdout ?? '')
+      .split(/\r?\n/)
+      .some((line) => line.startsWith('RINGI-SANDBOX-CHECK '))
+  );
+}
+
 function printBlock(label, text) {
   console.log(`${label}:`);
   console.log(text === '' ? '  (empty)' : text.replace(/\n$/, '').replace(/^/gm, '  '));
@@ -136,6 +164,7 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
     },
   };
   let passed = false;
+  let stopError;
   console.log(`\n== mode: ${taskMode}`);
   try {
     await internal.runSandboxCheck({
@@ -150,6 +179,7 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
     passed = true;
     console.log('result: pass');
   } catch (error) {
+    stopError = error;
     console.log(`result: STOP ${error?.code ?? 'ERROR'}`);
     console.log(`message: ${error?.message ?? String(error)}`);
   }
@@ -165,7 +195,8 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
     printBlock('stderr', String(stderr ?? ''));
   }
   if (calls.length === 0) console.log('codex sandbox: not started');
-  return passed;
+  if (passed) return 'pass';
+  return expectedStop(stopError, calls) ? 'stop: sandbox did not start' : 'stop: other';
 }
 
 function present(path) {
@@ -256,7 +287,7 @@ async function diagnose(context) {
   }
 }
 
-async function main({ diagnostics }) {
+async function main({ diagnostics, expect }) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ringi-sandbox-probe-')));
   try {
     const repositoryRoot = join(base, 'repo');
@@ -301,27 +332,35 @@ async function main({ diagnostics }) {
     const results = {};
     for (const taskMode of MODES)
       results[taskMode] = await runMode({ taskMode, repositoryRoot, tempRoot, env });
+    const wanted = expect === 'pass' ? 'pass' : 'stop: sandbox did not start';
+    const met = MODES.every((taskMode) => results[taskMode] === wanted);
     console.log('\n== summary');
-    for (const taskMode of MODES)
-      console.log(`${taskMode}: ${results[taskMode] ? 'pass' : 'STOP'}`);
+    for (const taskMode of MODES) console.log(`${taskMode}: ${results[taskMode]}`);
+    console.log(`expected: ${wanted} (${met ? 'met' : 'not met'})`);
     if (diagnostics) await diagnose({ repositoryRoot, tempRoot, env });
-    return MODES.every((taskMode) => results[taskMode]);
+    return met;
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 }
 
+const USAGE = 'usage: codex-sandbox-check.mjs [--diagnose] [--expect <pass|stop>]';
 const options = process.argv.slice(2);
-if (options.some((option) => option !== '--diagnose')) {
-  console.error('usage: codex-sandbox-check.mjs [--diagnose]');
-  process.exit(2);
+let diagnostics = process.env.RINGI_PROBE_DIAGNOSE === '1';
+let expect;
+for (let index = 0; index < options.length; index += 1) {
+  if (options[index] === '--diagnose') diagnostics = true;
+  else if (options[index] === '--expect' && expect === undefined && EXPECTATIONS.includes(options[index + 1]))
+    expect = options[(index += 1)];
+  else {
+    console.error(USAGE);
+    process.exit(2);
+  }
 }
 
-main({
-  diagnostics: options.includes('--diagnose') || process.env.RINGI_PROBE_DIAGNOSE === '1',
-}).then(
-  (passed) => {
-    process.exitCode = passed ? 0 : 1;
+main({ diagnostics, expect: expect ?? 'pass' }).then(
+  (met) => {
+    process.exitCode = met ? 0 : 1;
   },
   (error) => {
     console.error(`probe failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -15,6 +15,7 @@ on:
       - scripts/agent-review-loop-lib.mjs
       - scripts/providers/codex.mjs
       - scripts/providers/contract.mjs
+      - scripts/messages/**
       - scripts/probes/**
       - .github/workflows/codex-sandbox.yml
 
@@ -28,11 +29,23 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      # The expected result of the probe on each runner. On the Ubuntu 24.04
+      # runners, with the default AppArmor restriction of unprivileged user
+      # namespaces, the Codex CLI sandbox does not start and the core stops
+      # the round (docs/providers/probes/codex-implementer.md, Linux); the
+      # job fails when that changes in either direction.
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        include:
+          - os: ubuntu-latest
+            expect: stop
+          - os: ubuntu-24.04-arm
+            expect: stop
+          - os: macos-latest
+            expect: pass
     env:
       # Read by the steps from the environment, never placed in a command.
       CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}
+      PROBE_EXPECT: ${{ matrix.expect }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,14 +69,6 @@ jobs:
         run: npm install -g "@openai/codex@$CODEX_VERSION"
 
       - run: codex --version
-
-      # Linux only: bubblewrap from the distribution packages, for the
-      # Codex CLI sandbox. The only step with elevated rights.
-      - name: Install bubblewrap
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
 
       # Linux only, read only: the user namespace settings of the runner.
       # Also turns on the probe's diagnostics (RINGI_PROBE_DIAGNOSE=1) for
@@ -90,4 +95,4 @@ jobs:
           echo "RINGI_PROBE_DIAGNOSE=1" >> "$GITHUB_ENV"
 
       - name: Sandbox check
-        run: node scripts/probes/codex-sandbox-check.mjs
+        run: node scripts/probes/codex-sandbox-check.mjs --expect "$PROBE_EXPECT"

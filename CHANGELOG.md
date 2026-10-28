@@ -27,8 +27,12 @@ is published by hand, without provenance; later versions are published by
   core's sandbox check with the real Codex CLI in both task modes in a
   synthetic repository and prints the raw `codex sandbox` result; the
   `.github/workflows/codex-sandbox.yml` workflow runs it on Linux (x64 and
-  arm64) and macOS with an exact `@openai/codex` version, without secrets.
-  The probe is not part of `npm test` and not in the npm package.
+  arm64) and macOS with an exact `@openai/codex` version, without secrets
+  and without `sudo`. `--expect <pass|stop>` sets the expected result; the
+  workflow expects `stop` on the Ubuntu runners (both modes stopped
+  because the sandbox did not start) and `pass` on macOS, so a change of
+  either result fails the job. The probe is not part of `npm test` and not
+  in the npm package.
 - `codex` argument grid: `--sandbox-state-json`,
   `--sandbox-state-readable-root`, `--allow-unix-socket`, `-P`,
   `--permission-profile`, `--include-managed-config`, `--enable` and
@@ -49,8 +53,17 @@ is published by hand, without provenance; later versions are published by
 
 ### Changed
 
-- `codex` implementer: the sandbox check was probed on Codex CLI 0.164.0
-  on macOS only, with no probe on Linux. On another host or CLI version
+- `codex` implementer on Linux: on the GitHub-hosted Ubuntu 24.04 runners
+  (x64 and arm64, default AppArmor restriction of unprivileged user
+  namespaces) the sandbox of Codex CLI 0.164.0 does not start, with the
+  bundled or the distribution's `bwrap` (`bwrap: loopback: Failed
+  RTM_NEWADDR: Operation not permitted`), so the sandbox check stops every
+  round with `IMPLEMENTER_PREFLIGHT_FAILED` before the implementer. No
+  declaration is checked on Linux; a Linux host where the sandbox starts
+  was not probed. The probe documentation, the stability table and the
+  module's limitations say so.
+- `codex` implementer: the sandbox check passed on Codex CLI 0.164.0 on
+  macOS only. On another host or CLI version
   where `codex sandbox` takes another form or reports other error codes,
   every round stops with `IMPLEMENTER_PREFLIGHT_FAILED` before the
   implementer (fail-closed), although the preflight accepts any CLI

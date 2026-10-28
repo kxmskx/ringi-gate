@@ -29,6 +29,17 @@ is published by hand, without provenance; later versions are published by
   `--disable` are forbidden in every `codex` argv, `exec` included, so a
   provider module that passes `codex exec --enable <feature>` is now
   refused.
+- `UNPROBED_VERSION` warning: provider roles may declare the optional
+  `probedVersions` (`major.minor.patch` texts), checked by the contract and
+  the conformance suite. When the CLI version read from the version
+  command (`codex-cli 0.160.0`, `2.1.285 (Claude Code)`) is not in the list
+  or cannot be read, the run report adds `UNPROBED_VERSION` to the role's
+  `warnings` (`implementer.warnings` and `agents.*.warnings` are new;
+  the code is added to the existing `reviewer.warnings`) and `ringi doctor` shows `warn` in
+  `implementer-cli` or `reviewer-cli` with the probed versions. Status,
+  stop codes and exit codes do not change; `schemaVersion` stays 1. Built-in
+  values: `codex` implementer `0.160.0`, `claude` implementer `2.1.285`,
+  `claude` reviewer `2.1.285` and `2.1.311`.
 
 ### Changed
 

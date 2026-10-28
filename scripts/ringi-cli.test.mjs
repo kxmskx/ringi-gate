@@ -42,7 +42,8 @@ const ringiBin = join(runnerRoot, 'bin', 'ringi.mjs');
 const PACKAGE_MANAGER = 'pnpm@11.20.0';
 const PNPM_VERSION = '11.20.0';
 const CODEX_VERSION = 'codex-cli 0.160.0';
-const CLAUDE_VERSION = '2.1.290 (Claude Code)';
+// Versions the built-in roles were probed on (no UNPROBED_VERSION warning).
+const CLAUDE_VERSION = '2.1.285 (Claude Code)';
 
 function which(name) {
   const found = spawnSync('which', ['-a', name], {
@@ -555,7 +556,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         assert.equal(table.stdout, formatDoctorTable(result));
         assert.match(table.stdout, /^STATUS  CHECK +DETAIL$/m);
         assert.match(table.stdout, /^ok +implementer-cli +codex: codex-cli 0\.160\.0$/m);
-        assert.match(table.stdout, /^ok +reviewer-cli +claude: 2\.1\.290 \(Claude Code\)$/m);
+        assert.match(table.stdout, /^ok +reviewer-cli +claude: 2\.1\.285 \(Claude Code\)$/m);
         assert.match(table.stdout, /^ok +runner-location +runner installed outside the repository$/m);
         assert.match(table.stdout, /ringi doctor: 15 ok, 0 warn, 0 fail\n$/);
         assert.match(
@@ -584,6 +585,39 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         assert.equal(git(project, ['status', '--porcelain', '--untracked-files=all']), '');
       } finally {
         await cleanup(project);
+      }
+    });
+    await t.test('unprobed CLI versions: implementer-cli and reviewer-cli warn, status ok, exit 0', async () => {
+      const project = await createProject({ files: healthyFiles() });
+      const unprobedBin = await createStubBin({
+        codex: 'codex-cli 0.164.0',
+        claude: '2.1.290 (Claude Code)',
+      });
+      try {
+        const extra = { PATH: `${unprobedBin}:/usr/bin:/bin` };
+        const { child, result, check } = doctor(project, extra);
+        assert.equal(child.status, 0, child.stdout);
+        assert.equal(result.status, 'ok');
+        assert.deepEqual(result.summary, { ok: ids.length - 2, warn: 2, fail: 0 });
+        assert.equal(
+          check('implementer-cli').detail,
+          'codex: codex-cli 0.164.0 (UNPROBED_VERSION: the implementer was probed on 0.160.0)',
+        );
+        assert.equal(
+          check('reviewer-cli').detail,
+          'claude: 2.1.290 (Claude Code) (UNPROBED_VERSION: the reviewer was probed on 2.1.285, 2.1.311)',
+        );
+        for (const id of ['implementer-cli', 'reviewer-cli']) {
+          assert.equal(check(id).status, 'warn');
+          assert.match(check(id).hint, /^The run accepts this (codex|claude) version, but /);
+          assert.equal(Object.hasOwn(check(id), 'code'), false);
+        }
+        const table = ringi(project, ['doctor'], env(extra));
+        assert.equal(table.status, 0, table.stderr);
+        assert.match(table.stdout, /^warn +implementer-cli +codex: codex-cli 0\.164\.0 \(UNPROBED_VERSION: /m);
+        assert.match(table.stdout, /ringi doctor: 13 ok, 2 warn, 0 fail\n$/);
+      } finally {
+        await cleanup(project, unprobedBin);
       }
     });
     await t.test('a missing profile is not reported as committed in JSON or the table; run keeps INVALID_CONFIGURATION', async () => {
@@ -780,8 +814,9 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         await cleanup(project);
       }
     });
-    // Any claude version is accepted in both roles; a platform other than
-    // macOS or Linux fails implementer-cli (in process).
+    // Any claude version is accepted in both roles (one outside the role's
+    // probedVersions, also an unreadable one, is a warning); a platform other
+    // than macOS or Linux fails implementer-cli (in process).
     const claudeDoctor = async (check) => {
       const files = healthyFiles();
       files['ringi.config.mjs'] = claudeImplementer(files['ringi.config.mjs']);
@@ -815,15 +850,32 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
     };
     await t.test('claude: any version passes implementer-cli and reviewer-cli (in process)', () =>
       claudeDoctor(async (doctorRun) => {
+        const statuses = (result) =>
+          ['implementer-cli', 'reviewer-cli'].map(
+            (id) => result.checks.find((entry) => entry.id === id).status,
+          );
         for (const version of ['2.1.200 (Claude Code)', '2.2.0 (Claude Code)', '3.0.0', '2.1.285-beta.1', 'unknown']) {
           const result = await doctorRun(version, 'darwin');
           assert.equal(result.status, 'ok', version);
+          assert.equal(result.summary.fail, 0, version);
           for (const id of ['implementer-cli', 'reviewer-cli'])
             assert.equal(
               result.checks.find((entry) => entry.id === id).detail.includes(version),
               true,
               `${id} ${version}`,
             );
+          // Not probed, or unreadable (pre-release, no version): warn.
+          assert.deepEqual(statuses(result), ['warn', 'warn'], version);
+        }
+        // Probed versions: 2.1.285 in both roles, 2.1.311 for the reviewer only.
+        for (const [version, expected] of [
+          ['2.1.285 (Claude Code)', ['ok', 'ok']],
+          ['2.1.285', ['ok', 'ok']],
+          ['2.1.311 (Claude Code)', ['warn', 'ok']],
+        ]) {
+          const result = await doctorRun(version, 'darwin');
+          assert.equal(result.status, 'ok', version);
+          assert.deepEqual(statuses(result), expected, version);
         }
       }));
     await t.test('claude: an unsupported platform fails implementer-cli (in process)', () =>

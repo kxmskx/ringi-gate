@@ -12,8 +12,9 @@ export const CLAUDE_EFFORTS = Object.freeze(['medium', 'high', 'xhigh']);
 // CLI (network denied, writes outside the working directory denied). In
 // print mode the CLI ignores settings that fail validation without an error,
 // so another version could drop them silently; any CLI version is accepted
-// all the same (also one that cannot be parsed), and the version still goes
-// to the environment report.
+// all the same (also one that cannot be parsed), the version still goes to
+// the environment report, and one outside probedVersions gets
+// UNPROBED_VERSION.
 // Platforms where the command sandbox of the CLI can start (macOS, Linux and
 // WSL); on any other platform the CLI would exit at startup anyway.
 const CLAUDE_SANDBOX_PLATFORMS = Object.freeze(['darwin', 'linux']);
@@ -232,6 +233,7 @@ export default defineProvider({
     ...implementer,
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
+    probedVersions: ['2.1.285'],
     limitations: [
       'Not for untrusted tasks: experimental implementer.',
       'Bash inside the CLI sandbox can write in .git; the core fingerprints the Git directory around every round and detects the change afterwards instead of preventing it.',
@@ -272,6 +274,7 @@ export default defineProvider({
     ...reviewer,
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
+    probedVersions: ['2.1.285', '2.1.311'],
     limitations: [
       'Preflight accepts any CLI version, on macOS or Linux only. The reviewer was probed on 2.1.285 and 2.1.311; another version may change flags unchecked.',
       'Admin-managed (policy) settings still apply.',

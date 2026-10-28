@@ -231,8 +231,14 @@ const ROLE_KEYS = Object.freeze({
     ...OPTIONAL_IMPLEMENTER_FUNCTIONS,
     ...OPTIONAL_IMPLEMENTER_FLAGS,
     'scratchDirectories',
+    'probedVersions',
   ]),
-  reviewer: new Set([...DECLARATION_KEYS, ...ROLE_FUNCTIONS.reviewer, 'preflight']),
+  reviewer: new Set([
+    ...DECLARATION_KEYS,
+    ...ROLE_FUNCTIONS.reviewer,
+    'preflight',
+    'probedVersions',
+  ]),
 });
 const GUARANTEE_KEYS = Object.freeze({
   enforced: new Set(['status', 'mechanism']),
@@ -245,6 +251,32 @@ const VERSION_ARGUMENT = /^-{0,2}[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 const EFFORT_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_TEXT_LENGTH = 500;
 const MAX_LIST_ITEMS = 32;
+// major.minor.patch without leading zeros or a pre-release or build suffix.
+const CLI_VERSION = /^(?:0|[1-9][0-9]{0,8})(?:\.(?:0|[1-9][0-9]{0,8})){2}$/;
+// The output of a version command: the version, optionally after one word
+// ('codex-cli 0.160.0') or before a parenthesized name ('2.1.285 (Claude
+// Code)'), on one line.
+const CLI_VERSION_OUTPUT =
+  /^(?:[A-Za-z][A-Za-z0-9._-]{0,31} )?([0-9]+\.[0-9]+\.[0-9]+)(?: \([A-Za-z0-9 ._-]{1,64}\))?$/;
+
+// The major.minor.patch version read from the output of a CLI's version
+// command, or undefined when the output has another form.
+export function readCliVersion(output) {
+  if (typeof output !== 'string') return undefined;
+  const version = CLI_VERSION_OUTPUT.exec(output.trim())?.[1];
+  return version !== undefined && CLI_VERSION.test(version) ? version : undefined;
+}
+
+// Whether a role was probed on the CLI version of this output. A role
+// without probedVersions has no list to compare with and counts as probed (no
+// warning); an output without a readable version counts as not probed. Only
+// a warning (UNPROBED_VERSION): preflight alone accepts or refuses a host.
+export function isProbedVersion(definition, output) {
+  const probed = definition?.probedVersions;
+  if (!probed) return true;
+  const version = readCliVersion(output);
+  return version !== undefined && probed.includes(version);
+}
 
 export class ProviderContractError extends Error {
   // kind: 'contract' (shape of the module) or 'role' (role rules).
@@ -458,6 +490,15 @@ function readRole(value, role, path) {
   // called before the first review.
   if (role === 'reviewer' && Object.hasOwn(fields, 'preflight'))
     definition.preflight = readFunction(fields.preflight, `${path}.preflight`);
+  // Optional for both roles: the CLI versions (major.minor.patch) the
+  // declarations were probed on; any other version gets UNPROBED_VERSION.
+  if (Object.hasOwn(fields, 'probedVersions'))
+    definition.probedVersions = readList(
+      fields.probedVersions,
+      `${path}.probedVersions`,
+      (version) => typeof version === 'string' && CLI_VERSION.test(version),
+      { min: 1 },
+    );
   return Object.freeze(definition);
 }
 

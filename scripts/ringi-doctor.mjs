@@ -387,6 +387,16 @@ export async function runDoctor({
     details.code === 'REVIEWER_PREFLIGHT_FAILED'
       ? `Use a ${program} version and platform the ${role} accepts; see docs/providers.md.`
       : `Install ${program} and put it on PATH; \`${program} --version\` must succeed.`;
+  // A version outside the role's probedVersions is a warning, as in the run
+  // report (UNPROBED_VERSION); the run still accepts it.
+  const unprobed = (role, value) => {
+    if (!value[role].warnings?.includes('UNPROBED_VERSION')) return;
+    const adapter = roles.value[role];
+    const entry = checks.at(-1);
+    entry.status = 'warn';
+    entry.detail = `${entry.detail} (UNPROBED_VERSION: the ${role} was probed on ${adapter[role].probedVersions.join(', ')})`;
+    entry.hint = `The run accepts this ${adapter.program} version, but the ${role}'s declarations were not probed on it; see docs/providers.md.`;
+  };
   const implementerCli = await attempt(
     'implementer-cli',
     () => report(false),
@@ -395,13 +405,15 @@ export async function runDoctor({
     cliHint(roles.value.implementer.program, 'implementer'),
   );
   if (implementerCli) {
-    await attempt(
+    unprobed('implementer', implementerCli.value);
+    const reviewerCli = await attempt(
       'reviewer-cli',
       () => report(true),
       (value) =>
         `${roles.value.reviewer.program}: ${String(value.reviewer.version).slice(0, 80)}`,
       cliHint(roles.value.reviewer.program, 'reviewer'),
     );
+    if (reviewerCli) unprobed('reviewer', reviewerCli.value);
   } else {
     notChecked('reviewer-cli', 'implementer-cli');
   }

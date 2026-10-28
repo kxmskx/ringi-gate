@@ -957,10 +957,10 @@ names, which stay as aliases with equal values (see
 
 | Neutral field | Alias |
 | --- | --- |
-| `implementer` (`provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`) | `sol` (`plannedModel`, `plannedEffort`, `effectiveModel`, `effectiveEffort`, `runs`) |
-| `reviewer` (`provider`, `profile`, `model` and `effort` of the first planned attempt, `effectiveModel`, `effectiveEffort`, `attemptCount`; `warnings: ['SAME_PROVIDER_REVIEW']` only when both roles use the same provider and a review is required) | summary of `review` |
-| `agents.implementer` (`provider`, `version`, `model`, `effort`) | `agents.codex`, `agents.codexModel`, `agents.codexReasoning` |
-| `agents.reviewer` (`provider`, `version`, `profile`, `plannedAttemptCount`, `fallbackAllowed`, `plannedAttempts`) | `agents.claude`, `agents.claudeReviewProfile`, `agents.claudeAttemptCount`, `agents.claudeFallbackAllowed`, `agents.claudeAttempts` |
+| `implementer` (`provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`; `warnings: ['UNPROBED_VERSION']` only when the implementer CLI's version is outside the module's `probedVersions` or cannot be read) | `sol` (`plannedModel`, `plannedEffort`, `effectiveModel`, `effectiveEffort`, `runs`) |
+| `reviewer` (`provider`, `profile`, `model` and `effort` of the first planned attempt, `effectiveModel`, `effectiveEffort`, `attemptCount`; `warnings` only when not empty: `SAME_PROVIDER_REVIEW` when both roles use the same provider and a review is required, then `UNPROBED_VERSION` as for `implementer`) | summary of `review` |
+| `agents.implementer` (`provider`, `version`, `model`, `effort`; `warnings` as in `implementer`, version warning only) | `agents.codex`, `agents.codexModel`, `agents.codexReasoning` |
+| `agents.reviewer` (`provider`, `version`, `profile`, `plannedAttemptCount`, `fallbackAllowed`, `plannedAttempts`; `warnings: ['UNPROBED_VERSION']` as for `implementer`) | `agents.claude`, `agents.claudeReviewProfile`, `agents.claudeAttemptCount`, `agents.claudeFallbackAllowed`, `agents.claudeAttempts` |
 | `rounds[].implementer` (`provider`, `outputField: 'codex'`, `executionField: 'solExecution'`), `rounds[].reviewer` (`provider`, `outputField: 'claude'` or `null` when no review ran, `executionField: 'reviewExecution'`) | names of the keys `rounds[].codex`, `rounds[].solExecution`, `rounds[].claude`, `rounds[].reviewExecution` |
 | `findings.rejectedByImplementer` | `findings.rejectedByCodex` |
 | `metadata` event: `implementer` (`provider`, `model`, `effort`), `reviewer` (`provider`, `profile`, `attempts`, `fallbackAllowed`) | `solModel`, `solEffort`, `reviewProfile`, `reviewAttempts`, `reviewFallbackAllowed` |
@@ -982,3 +982,10 @@ once in `report.json`, `round-N.json` and the `--json` output.
 Because `findings.rejectedByImplementer` and `findings.rejectedByCodex` hold
 the same entries, the finding categories are disjoint only within one of the
 two names. `schemaVersion` is unchanged.
+
+`warnings` of a role is optional and absent when empty. `UNPROBED_VERSION`
+(see [providers.md](providers.md#contract)) is set once the preflight has
+read the CLI versions, so a run stopped before that has none; it is a
+warning only and changes no status, stop code or exit code. The field adds
+to the format without changing an existing field, so `schemaVersion`
+stays 1.

@@ -206,11 +206,16 @@ In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
 requests that change the core, the `codex` or contract module, the probes
 or the workflow, and by hand (`workflow_dispatch`) with another
 `major.minor.patch` version as input. The job gets no secrets and is not a
-required check. On Linux a read-only step first prints `uname -a`, the user
+required check. On Linux a step first installs the distribution's
+`bubblewrap` package with `sudo apt-get update` and
+`sudo apt-get install -y bubblewrap`, the only commands in the workflow
+that run with `sudo`. A read-only step then prints `uname -a`, the user
 namespace settings, the exit code of `unshare --user --map-root-user` (with
-and without a network namespace), whether `bwrap` is on `PATH` and whether
-the AppArmor `bwrap-userns-restrict` profile is present, and then turns on
-the probe's diagnostics.
+and without a network namespace), whether `bwrap` is on `PATH`, its
+version, the exit code of
+`bwrap --unshare-user --unshare-net --ro-bind / / true` and whether the
+AppArmor `bwrap-userns-restrict` profile is present, and then turns on the
+probe's diagnostics.
 
 ## What the core tests cover
 

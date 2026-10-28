@@ -458,7 +458,26 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
   assert.ok(diagnostics, 'namespace diagnostics');
   assert.ok(diagnostics.index < text.indexOf('- name: Sandbox check'));
   assert.match(diagnostics[1], /^ {10}echo "RINGI_PROBE_DIAGNOSE=1" >> "\$GITHUB_ENV"\n$/m);
-  assert.doesNotMatch(text, /sudo|sysctl|apparmor_parser|aa-|systemctl|apt|> *\/proc|tee /);
+  assert.match(
+    diagnostics[1],
+    /^ {10}status=0\n {10}bwrap --unshare-user --unshare-net --ro-bind \/ \/ true \|\| status=\$\?\n/m,
+  );
+  // bubblewrap is installed on Linux only, before the diagnostics, in a step
+  // of exactly two commands; sudo and apt appear nowhere else.
+  const bubblewrap = text.match(
+    /\n {6}- name: Install bubblewrap\n {8}if: runner\.os == 'Linux'\n {8}run: \|\n((?: {10}.+\n)+)/,
+  );
+  assert.ok(bubblewrap, 'bubblewrap installation');
+  assert.ok(bubblewrap.index < diagnostics.index);
+  assert.deepEqual(
+    bubblewrap[1].split('\n'),
+    ['          sudo apt-get update', '          sudo apt-get install -y bubblewrap', ''],
+  );
+  const bubblewrapEnd = bubblewrap.index + bubblewrap[0].length;
+  assert.equal(text[bubblewrapEnd], '\n', 'the installation step ends after its commands');
+  const rest = text.slice(0, bubblewrap.index) + text.slice(bubblewrapEnd);
+  assert.doesNotMatch(rest, /sudo|apt/);
+  assert.doesNotMatch(text, /sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
   assert.equal([...text.matchAll(/GITHUB_ENV/g)].length, 1);
   // The version check runs before the installation and accepts only
   // major.minor.patch.

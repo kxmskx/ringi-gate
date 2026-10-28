@@ -57,6 +57,14 @@ jobs:
 
       - run: codex --version
 
+      # Linux only: bubblewrap from the distribution packages, for the
+      # Codex CLI sandbox. The only step with elevated rights.
+      - name: Install bubblewrap
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
       # Linux only, read only: the user namespace settings of the runner.
       # Also turns on the probe's diagnostics (RINGI_PROBE_DIAGNOSE=1) for
       # the steps after this one; they do not change the probe's exit code.
@@ -74,6 +82,10 @@ jobs:
           unshare --user --map-root-user --net ip link set lo up || status=$?
           echo "unshare --user --map-root-user --net ip link set lo up: exit $status"
           echo "bwrap: $(command -v bwrap || echo 'not found')"
+          echo "bwrap --version: $(bwrap --version 2>&1)"
+          status=0
+          bwrap --unshare-user --unshare-net --ro-bind / / true || status=$?
+          echo "bwrap --unshare-user --unshare-net --ro-bind / / true: exit $status"
           echo "AppArmor bwrap-userns-restrict profile: $(test -e /etc/apparmor.d/bwrap-userns-restrict && echo present || echo absent)"
           echo "RINGI_PROBE_DIAGNOSE=1" >> "$GITHUB_ENV"
 

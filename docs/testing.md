@@ -126,8 +126,9 @@ runs offline from the local Corepack cache. The package has no dependencies,
 so installing the tarball fetches nothing.
 
 - **Contents:** `npm pack --dry-run --json` lists exactly the files of the
-  `files` field in `package.json`: `bin/`, `scripts/` without tests and
-  without `scripts/fixtures/`, `examples/` without its test, `docs/`
+  `files` field in `package.json`: `bin/`, `scripts/` without tests,
+  without `scripts/fixtures/` and without `scripts/probes/` (left out by its
+  own `.npmignore`), `examples/` without its test, `docs/`
   (including `docs/development/`, which the default profile's task classes
   point to), `LICENSE`, `NOTICE`, `README.md`, `CHANGELOG.md`,
   `SECURITY.md` and `package.json`. No `*.test.mjs`, snapshots, dotfiles,
@@ -156,9 +157,41 @@ so installing the tarball fetches nothing.
   token by default, `id-token: write` only in the release job; no secrets
   and no `NODE_AUTH_TOKEN` in either workflow; the release job's npm
   version check, run
-  against sample versions, fails below 11.5.1.
+  against sample versions, fails below 11.5.1. The codex sandbox workflow
+  has no write permission, uses the same pinned actions as `test.yml`, and
+  its version input reaches the steps only through the `CODEX_VERSION`
+  variable; its version check, run against sample inputs, accepts only
+  `major.minor.patch` and runs before the installation.
 
 The workflows themselves are not run by the tests.
+
+## Codex sandbox probe
+
+`scripts/probes/codex-sandbox-check.mjs` runs the core's sandbox check
+(the `codex sandbox` call made before every `codex` round) with the real
+Codex CLI from `PATH`, without a model and without a login. It is not part
+of `npm test` and not in the npm package. In a synthetic Git repository in
+the system temporary directory it runs the check in `implementation` and
+`analysis` mode, with an empty `CODEX_HOME` as the core does, and prints the
+CLI version, `uname -a`, the result of each mode (`pass`, or the stop code
+and message) and the argv, exit code, stdout and stderr of the
+`codex sandbox` call. On Linux it also prints the kernel settings for
+unprivileged user namespaces and whether `bwrap` is on `PATH`. It exits
+with 0 only when both modes pass, and removes its temporary directory.
+
+Locally, with the Codex CLI installed:
+
+```sh
+node scripts/probes/codex-sandbox-check.mjs
+```
+
+In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
+`@openai/codex` from npm (0.164.0 by default) and runs the probe on
+`ubuntu-latest`, `ubuntu-24.04-arm` and `macos-latest`. It runs on pull
+requests that change the core, the `codex` or contract module, the probes
+or the workflow, and by hand (`workflow_dispatch`) with another
+`major.minor.patch` version as input. The job gets no secrets and is not a
+required check.
 
 ## What the core tests cover
 

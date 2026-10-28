@@ -23,6 +23,12 @@ is published by hand, without provenance; later versions are published by
   with `call: 'sandboxCheck'`, the only call where `codex` may set
   `sandbox_mode` (`read-only` or `workspace-write`) and the stricter
   `exclude_tmpdir_env_var` and `exclude_slash_tmp`.
+- Sandbox check probe: `scripts/probes/codex-sandbox-check.mjs` runs the
+  core's sandbox check with the real Codex CLI in both task modes in a
+  synthetic repository and prints the raw `codex sandbox` result; the
+  `.github/workflows/codex-sandbox.yml` workflow runs it on Linux (x64 and
+  arm64) and macOS with an exact `@openai/codex` version, without secrets.
+  The probe is not part of `npm test` and not in the npm package.
 - `codex` argument grid: `--sandbox-state-json`,
   `--sandbox-state-readable-root`, `--allow-unix-socket`, `-P`,
   `--permission-profile`, `--include-managed-config`, `--enable` and

@@ -65,6 +65,7 @@ import {
   ProviderContractError,
   copyProviderArgs,
   forbiddenArgument,
+  isProbedVersion,
   isValidModelId,
   isValidSessionId,
   isValidatedProviderModule,
@@ -8302,14 +8303,23 @@ async function environmentReport({
       },
     );
   };
+  // A version outside the role's probedVersions only adds UNPROBED_VERSION to
+  // the role's warnings; it never refuses the host.
+  const versionWarnings = (adapter, role, hostVersion) =>
+    isProbedVersion(adapter[role], hostVersion)
+      ? {}
+      : { warnings: ['UNPROBED_VERSION'] };
   const writer = roleProvider(implementer, 'implementer');
   const codex = await version(writer);
   assertPreflight(writer, 'implementer', codex);
+  const implementerWarnings = versionWarnings(writer, 'implementer', codex);
   let claude = null;
+  let reviewerWarnings = {};
   if (independentReviewRequired) {
     const review = roleProvider(reviewer, 'reviewer');
     claude = await version(review);
     assertPreflight(review, 'reviewer', claude);
+    reviewerWarnings = versionWarnings(review, 'reviewer', claude);
   }
   const policy = resolveReviewProfile(reviewProfile, reviewer);
   const plannedAttempts = (
@@ -8333,6 +8343,7 @@ async function environmentReport({
       version: codex,
       model: implementerModel,
       effort: implementerEffort,
+      ...implementerWarnings,
     },
     reviewer: {
       provider: reviewer.provider,
@@ -8341,6 +8352,7 @@ async function environmentReport({
       plannedAttemptCount: plannedAttempts.length,
       fallbackAllowed,
       plannedAttempts,
+      ...reviewerWarnings,
     },
   };
 }
@@ -9207,6 +9219,8 @@ async function runWorkflow(options) {
   let selectedSolEffort = null;
   let selectedTaskMode = null;
   let quality;
+  // The roles' warnings from the preflight's version check (UNPROBED_VERSION).
+  let agentVersionWarnings;
   // Until the profile is resolved, the core defaults describe the roles.
   const roles = () => ({
     implementer: selectedProfile?.implementer ?? DEFAULT_IMPLEMENTER,
@@ -9234,13 +9248,22 @@ async function runWorkflow(options) {
     const sameProvider =
       implementer.provider === reviewer.provider &&
       quality?.independentReviewRequired !== false;
+    // UNPROBED_VERSION from the preflight's version check, once it ran.
+    const reviewerWarnings = [
+      ...(sameProvider ? ['SAME_PROVIDER_REVIEW'] : []),
+      ...(agentVersionWarnings?.reviewer ?? []),
+    ];
+    const implementerWarnings = agentVersionWarnings?.implementer ?? [];
     return {
       sol,
       review,
-      implementer: buildImplementerAudit(implementer.provider, sol),
+      implementer: {
+        ...buildImplementerAudit(implementer.provider, sol),
+        ...(implementerWarnings.length > 0 ? { warnings: implementerWarnings } : {}),
+      },
       reviewer: {
         ...buildReviewerAudit(reviewer.provider, review),
-        ...(sameProvider ? { warnings: ['SAME_PROVIDER_REVIEW'] } : {}),
+        ...(reviewerWarnings.length > 0 ? { warnings: reviewerWarnings } : {}),
       },
     };
   };
@@ -9525,6 +9548,10 @@ async function runWorkflow(options) {
       implementer,
       reviewer,
     });
+    agentVersionWarnings = {
+      implementer: environment.implementer.warnings,
+      reviewer: environment.reviewer.warnings,
+    };
     const repositoryInstructions = `${await readFile(join(cwd, 'AGENTS.md'), 'utf8')}\n\n${await readFile(join(cwd, 'CLAUDE.md'), 'utf8')}`;
     tempRoot = await mkdtemp(
       join(tmpdir(), `${selectedProfile.tempPrefix}${runId}-`),

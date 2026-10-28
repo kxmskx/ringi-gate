@@ -153,8 +153,8 @@ depends on a failed one is `warn` with `not checked: … failed`.
 | `profile` | `ringi.config.mjs` exists, loads under the rules of [profile.md](profile.md#protection-of-ringiconfigmjs), passes the profile validation and the run's fingerprint check right after the load, and every module it imports is committed and equal to `HEAD` (otherwise `PROFILE_UNCOMMITTED`; their code has run by then) | `loadProjectProfile` (which uses `resolveRunnerProfile`), `assertProjectProfileUnchanged`, `readUncommittedProjectProfileFiles` |
 | `providers` | the profile's implementer and reviewer map to provider modules that serve those roles; a module that breaks the role rules fails here with `PROVIDER_ROLE_NOT_ALLOWED` | `resolveRunnerProfile`, `roleProvider` |
 | `repository-layout` | for an implementer whose Git directory is checked (Claude Code, modules from `providerModules`): no linked worktree, submodule or object alternates | `assertImplementerRepositoryLayout` |
-| `implementer-cli` | the implementer CLI answers `--version`, and its module's preflight accepts the version and platform (Codex CLI and Claude Code: any version, on macOS or Linux) | `environmentReport` |
-| `reviewer-cli` | the reviewer CLI answers `--version`, and its module's preflight, when it has one, accepts the version and platform (Claude Code: any version, on macOS or Linux) | `environmentReport` |
+| `implementer-cli` | the implementer CLI answers `--version`, and its module's preflight accepts the version and platform (Codex CLI and Claude Code: any version, on macOS or Linux); `warn` with `UNPROBED_VERSION` and the probed versions when the module lists `probedVersions` for the role and the version is not one of them or cannot be read (see [providers.md](providers.md#contract)) | `environmentReport` |
+| `reviewer-cli` | the reviewer CLI answers `--version`, and its module's preflight, when it has one, accepts the version and platform (Claude Code: any version, on macOS or Linux); `warn` with `UNPROBED_VERSION` as for `implementer-cli` | `environmentReport` |
 
 These are the preflight steps of a run, not all of them: a run also checks
 the task file, the secret scan, the dependency fingerprints and installed
@@ -165,7 +165,8 @@ guarantee that a run's preflight passes.
 Output: a table on standard output, or with `--json` an object
 `{ schemaVersion: 1, status: 'ok' | 'fail', summary: { ok, warn, fail },
 checks: [{ id, status, detail, hint, code?, message? }] }`. Exit code `0`
-when no check fails, `1` when one fails, `2` for an unknown option.
+when no check fails, `1` when one fails, `2` for an unknown option; a
+`warn` (such as `UNPROBED_VERSION`) keeps status `ok` and exit code `0`.
 
 Example on a synthetic repository with stand-in agent CLIs (from the tests):
 
@@ -186,7 +187,7 @@ ok      profile            ringi.config.mjs valid; 1 module(s), sha256 e3a2ab450
 ok      providers          implementer codex, reviewer claude
 ok      repository-layout  layout accepted for implementer codex
 ok      implementer-cli    codex: codex-cli 0.160.0
-ok      reviewer-cli       claude: 2.1.290 (Claude Code)
+ok      reviewer-cli       claude: 2.1.285 (Claude Code)
 
 ringi doctor: 15 ok, 0 warn, 0 fail
 ```

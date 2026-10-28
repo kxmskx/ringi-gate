@@ -1368,9 +1368,11 @@ test('runner surface contract: provider modules, contract and conformance named 
       'copyProviderArgs',
       'defineProvider',
       'forbiddenArgument',
+      'isProbedVersion',
       'isValidModelId',
       'isValidSessionId',
       'isValidatedProviderModule',
+      'readCliVersion',
       'roleRuleViolations',
       'validateProviderModule',
     ],
@@ -18662,6 +18664,193 @@ test('claude implementer run: neutral fields, sol*/codex* aliases, same-provider
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning in the report; status and stop codes unchanged', async () => {
+  const directory = await createRepository();
+  const versionRunner = (versions) =>
+    createMockRunner({
+      onRun: (program, args) =>
+        Object.hasOwn(versions, program) && args[0] === '--version'
+          ? result(`${versions[program]}\n`)
+          : undefined,
+    });
+  const clean = async () => {
+    await rm(join(directory, '.agent-review-loop', 'runs'), {
+      recursive: true,
+      force: true,
+    });
+    await rm(join(directory, 'implementation.txt'), { force: true });
+  };
+  try {
+    // Probed versions (the default mock runner): no warnings field.
+    const probed = await runFixture(directory);
+    assert.equal(probed.report.status, 'APPROVE');
+    assert.equal(Object.hasOwn(probed.report.implementer, 'warnings'), false);
+    assert.equal(Object.hasOwn(probed.report.reviewer, 'warnings'), false);
+    // Unprobed and unreadable versions: a warning per role, the same status.
+    for (const versions of [
+      { codex: 'codex-cli 0.164.0', claude: '2.1.290 (Claude Code)' },
+      { codex: 'codex-cli 0.160.0-alpha.2', claude: 'unknown' },
+    ]) {
+      await clean();
+      const { report } = await runFixture(directory, {
+        runner: versionRunner(versions),
+      });
+      assert.equal(report.status, 'APPROVE', JSON.stringify(versions));
+      assert.equal(report.schemaVersion, 1);
+      assert.deepEqual(report.implementer.warnings, ['UNPROBED_VERSION']);
+      assert.deepEqual(report.reviewer.warnings, ['UNPROBED_VERSION']);
+      const { warnings: _implementer, ...implementerAudit } = report.implementer;
+      assert.deepEqual(implementerAudit, probed.report.implementer);
+      await clean();
+      const { report: dryRun } = await runFixture(directory, {
+        runner: versionRunner(versions),
+        workflow: { dryRun: true },
+      });
+      assert.equal(dryRun.status, 'DRY_RUN_OK');
+      assert.deepEqual(dryRun.agents.implementer.warnings, ['UNPROBED_VERSION']);
+      assert.deepEqual(dryRun.agents.reviewer.warnings, ['UNPROBED_VERSION']);
+      assert.equal(dryRun.agents.codex, versions.codex);
+      assert.deepEqual(dryRun.implementer.warnings, ['UNPROBED_VERSION']);
+      assert.deepEqual(dryRun.reviewer.warnings, ['UNPROBED_VERSION']);
+    }
+    // A stopped run keeps its stop code and carries the warning too.
+    await clean();
+    let stopped;
+    await assert.rejects(
+      runFixture(directory, {
+        runner: versionRunner({ codex: 'codex-cli 0.164.0' }),
+        claudeReview: async () => requestChanges(1),
+        workflow: { maxRounds: 1 },
+      }),
+      (error) => {
+        stopped = error;
+        return error.code === 'MAX_ROUNDS';
+      },
+    );
+    assert.equal(stopped.report.status, 'STOPPED');
+    assert.equal(stopped.report.code, 'MAX_ROUNDS');
+    assert.deepEqual(stopped.report.implementer.warnings, ['UNPROBED_VERSION']);
+    assert.equal(Object.hasOwn(stopped.report.reviewer, 'warnings'), false);
+    // claude in both roles on 2.1.311: probed for the reviewer only; the
+    // same-provider warning comes first.
+    await clean();
+    const { report: claudeBoth } = await runFixture(directory, {
+      runner: claudeVersionRunner('2.1.311 (Claude Code)'),
+      workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
+    });
+    assert.equal(claudeBoth.status, 'APPROVE');
+    assert.deepEqual(claudeBoth.implementer.warnings, ['UNPROBED_VERSION']);
+    assert.deepEqual(claudeBoth.reviewer.warnings, ['SAME_PROVIDER_REVIEW']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('probedVersions: contract field, version reading and conformance', () => {
+  const {
+    ProviderContractError,
+    isProbedVersion,
+    readCliVersion,
+    validateProviderModule,
+  } = contractExports;
+  // Built-in values.
+  assert.deepEqual(codexModuleExports.default.implementer.probedVersions, ['0.160.0']);
+  assert.deepEqual(claudeModuleExports.default.implementer.probedVersions, ['2.1.285']);
+  assert.deepEqual(claudeModuleExports.default.reviewer.probedVersions, [
+    '2.1.285',
+    '2.1.311',
+  ]);
+  // The version read from a version command's output.
+  for (const [output, version] of [
+    ['codex-cli 0.160.0', '0.160.0'],
+    ['codex-cli 0.164.0\n', '0.164.0'],
+    ['2.1.311 (Claude Code)', '2.1.311'],
+    ['2.1.285', '2.1.285'],
+    ['codex-cli 0.160.0-alpha.2', undefined],
+    ['codex-cli 0.165.0+build.7', undefined],
+    ['codex-cli 0.160', undefined],
+    ['codex-cli 0.0160.0', undefined],
+    ['2.1.285-beta.1 (Claude Code)', undefined],
+    ['codex-cli 0.160.0\nextra', undefined],
+    ['codex cli 0.160.0', undefined],
+    ['unknown', undefined],
+    ['', undefined],
+    [undefined, undefined],
+  ])
+    assert.equal(readCliVersion(output), version, JSON.stringify(output));
+  const codexImplementer = codexModuleExports.default.implementer;
+  assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.160.0'), true);
+  assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.164.0'), false);
+  assert.equal(isProbedVersion(codexImplementer, 'not a version'), false);
+  // A role without the field: no list, no warning.
+  assert.equal(Object.hasOwn(exampleProvider.implementer, 'probedVersions'), false);
+  assert.equal(isProbedVersion(exampleProvider.implementer, 'unknown'), true);
+
+  // The field is valid on both roles and copied frozen.
+  const valid = validateProviderModule(
+    exampleProviderDefinition({
+      implementer: {
+        ...exampleProviderDefinition().implementer,
+        probedVersions: ['1.2.3', '1.10.0'],
+      },
+      reviewer: {
+        ...exampleProviderDefinition().reviewer,
+        probedVersions: ['0.0.1'],
+      },
+    }),
+  );
+  assert.deepEqual(valid.implementer.probedVersions, ['1.2.3', '1.10.0']);
+  assert.equal(Object.isFrozen(valid.implementer.probedVersions), true);
+  assert.deepEqual(valid.reviewer.probedVersions, ['0.0.1']);
+  for (const value of [
+    [],
+    [''],
+    ['1.2'],
+    ['v1.2.3'],
+    ['1.2.3-beta.1'],
+    ['01.2.3'],
+    ['1.2.3', '1.2.3'],
+    [1],
+    '1.2.3',
+    null,
+  ]) {
+    for (const role of ['implementer', 'reviewer'])
+      assert.throws(
+        () =>
+          validateProviderModule(
+            exampleProviderDefinition({
+              [role]: {
+                ...exampleProviderDefinition()[role],
+                probedVersions: value,
+              },
+            }),
+          ),
+        (error) =>
+          error instanceof ProviderContractError &&
+          error.kind === 'contract' &&
+          error.message.includes(`${role}.probedVersions`),
+        `${role} ${JSON.stringify(value)}`,
+      );
+  }
+
+  // Conformance: a module with the field gets two more checks and passes
+  // (the built-in modules are checked in the conformance test).
+  const { checkProviderConformance } = conformanceExports;
+  const withField = checkProviderConformance(
+    exampleProviderDefinition({
+      implementer: {
+        ...exampleProviderDefinition().implementer,
+        probedVersions: ['1.2.3'],
+      },
+    }),
+    exampleFixtures,
+  );
+  assert.deepEqual(withField.failures, []);
+  const without = checkProviderConformance(exampleProvider, exampleFixtures);
+  assert.equal(withField.checks, without.checks + 2);
+  assert.deepEqual(withField.warnings, []);
 });
 
 // Permission denials from the claude implementer envelope.

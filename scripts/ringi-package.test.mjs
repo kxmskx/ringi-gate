@@ -30,7 +30,8 @@ const runnerRoot = join(scriptDirectory, '..');
 const PACKAGE_MANAGER = 'pnpm@11.20.0';
 const PNPM_VERSION = '11.20.0';
 const CODEX_VERSION = 'codex-cli 0.160.0';
-const CLAUDE_VERSION = '2.1.290 (Claude Code)';
+// Versions the built-in roles were probed on (no UNPROBED_VERSION warning).
+const CLAUDE_VERSION = '2.1.285 (Claude Code)';
 
 function which(name) {
   const found = spawnSync('which', ['-a', name], {

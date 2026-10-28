@@ -136,7 +136,8 @@ because it rests on the model's report. Probes with the adapter's argv as it is
 The reviewer always runs as before: a new process on the read-only copy with
 `--no-session-persistence`, without any session ID of the writer. With the
 same provider in both roles the report's `reviewer` field carries
-`warnings: ['SAME_PROVIDER_REVIEW']`.
+`warnings: ['SAME_PROVIDER_REVIEW']`; a reviewer CLI version outside the
+module's `probedVersions` adds `UNPROBED_VERSION` there too.
 
 Checks the core adds around every round of the Claude Code writer (declared
 by the module as `gitDirectoryWritable` and `scratchDirectories`) and of any

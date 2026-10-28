@@ -24,10 +24,10 @@
 // the core), the few declarations visible in the argv (schema, output file,
 // argv by mode), argv as a plain array of strings without forbidden
 // arguments for every role, mode, effort and resume, the environment, the
-// output parsers on valid and malformed envelopes, the session ID reading
-// and the preflight. It cannot check that the CLI keeps its sandbox, network
-// or approval declarations: those rest on review of the module. Passing it
-// does not replace the core's own checks.
+// output parsers on valid and malformed envelopes, the session ID reading,
+// the preflight and the probedVersions. It cannot check that the CLI keeps
+// its sandbox, network or approval declarations: those rest on review of the
+// module. Passing it does not replace the core's own checks.
 import {
   GUARANTEES,
   PREFLIGHT_REASONS,
@@ -35,6 +35,7 @@ import {
   ROLE_REQUIREMENTS,
   copyProviderArgs,
   forbiddenArgument,
+  isProbedVersion,
   validateProviderModule,
 } from './contract.mjs';
 
@@ -180,6 +181,22 @@ export function checkProviderConformance(candidate, fixtures = {}) {
         `${name} is not enforced`,
       );
     }
+    // probedVersions (optional): every listed version, also as the output of
+    // a version command, reads as probed; an unreadable output does not.
+    for (const version of definition.probedVersions ?? []) {
+      check(
+        `${role}.probedVersions`,
+        isProbedVersion(definition, version) &&
+          isProbedVersion(definition, `${module.program} ${version}\n`),
+        `probed version ${JSON.stringify(version)} reads as not probed`,
+      );
+    }
+    if (definition.probedVersions)
+      check(
+        `${role}.probedVersions`,
+        !isProbedVersion(definition, 'not a version'),
+        'an unreadable version reads as probed',
+      );
 
     // argv: every mode, effort and (implementer) resume.
     const argvFor = (input) =>

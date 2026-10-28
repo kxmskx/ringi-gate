@@ -112,8 +112,8 @@ function sessionId(stdout) {
 
 // Platforms where the Codex CLI has a command sandbox: macOS and Linux. Any
 // CLI version is accepted (also one that cannot be parsed); the declarations
-// were probed on 0.160.0 only, and the version still goes to the
-// environment report.
+// were probed on 0.160.0 only (probedVersions), the version still goes to
+// the environment report, and another version gets UNPROBED_VERSION.
 const CODEX_SANDBOX_PLATFORMS = Object.freeze(['darwin', 'linux']);
 
 function preflight({ platform }) {
@@ -165,5 +165,6 @@ export default defineProvider({
     sessionId,
     preflight,
     sandboxCheckArgs,
+    probedVersions: ['0.160.0'],
   },
 });

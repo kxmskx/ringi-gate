@@ -450,6 +450,16 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
   assert.ok(install > 0, 'installation');
   assert.equal([...text.matchAll(/npm (?:install|i) /g)].length, 1);
   assert.match(text, /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs\n$/);
+  // The namespace diagnostics run on Linux only, before the probe, read
+  // only, and turn on the probe's diagnostics for the steps after them.
+  const diagnostics = text.match(
+    /\n {6}- name: Linux namespace diagnostics\n {8}if: runner\.os == 'Linux'\n {8}run: \|\n((?: {10}.+\n)+)/,
+  );
+  assert.ok(diagnostics, 'namespace diagnostics');
+  assert.ok(diagnostics.index < text.indexOf('- name: Sandbox check'));
+  assert.match(diagnostics[1], /^ {10}echo "RINGI_PROBE_DIAGNOSE=1" >> "\$GITHUB_ENV"\n$/m);
+  assert.doesNotMatch(text, /sudo|sysctl|apparmor_parser|aa-|systemctl|apt|> *\/proc|tee /);
+  assert.equal([...text.matchAll(/GITHUB_ENV/g)].length, 1);
   // The version check runs before the installation and accepts only
   // major.minor.patch.
   const check = text.match(

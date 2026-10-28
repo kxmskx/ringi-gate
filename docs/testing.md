@@ -185,13 +185,32 @@ Locally, with the Codex CLI installed:
 node scripts/probes/codex-sandbox-check.mjs
 ```
 
+With `--diagnose` (or `RINGI_PROBE_DIAGNOSE=1` in the environment) the
+probe then runs `codex sandbox` directly, with the same environment and an
+empty `CODEX_HOME`, in diagnostic variants: the module's argv unchanged in
+both modes, the same with `-c features.use_legacy_landlock=true`, and
+`implementation` mode with `sandbox_workspace_write.network_access=true`.
+For each it prints the exit code, stdout, stderr and the error code of the
+write outside the writable roots, the write to the Git directory and the
+local connection. The variants are diagnostics only: neither the module nor
+the core uses them, and they do not change the exit code, which still
+depends on the core's check alone.
+
+```sh
+node scripts/probes/codex-sandbox-check.mjs --diagnose
+```
+
 In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
 `@openai/codex` from npm (0.164.0 by default) and runs the probe on
 `ubuntu-latest`, `ubuntu-24.04-arm` and `macos-latest`. It runs on pull
 requests that change the core, the `codex` or contract module, the probes
 or the workflow, and by hand (`workflow_dispatch`) with another
 `major.minor.patch` version as input. The job gets no secrets and is not a
-required check.
+required check. On Linux a read-only step first prints `uname -a`, the user
+namespace settings, the exit code of `unshare --user --map-root-user` (with
+and without a network namespace), whether `bwrap` is on `PATH` and whether
+the AppArmor `bwrap-userns-restrict` profile is present, and then turns on
+the probe's diagnostics.
 
 ## What the core tests cover
 

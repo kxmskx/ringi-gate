@@ -57,5 +57,25 @@ jobs:
 
       - run: codex --version
 
+      # Linux only, read only: the user namespace settings of the runner.
+      # Also turns on the probe's diagnostics (RINGI_PROBE_DIAGNOSE=1) for
+      # the steps after this one; they do not change the probe's exit code.
+      - name: Linux namespace diagnostics
+        if: runner.os == 'Linux'
+        run: |
+          uname -a
+          for setting in kernel/apparmor_restrict_unprivileged_userns kernel/unprivileged_userns_clone; do
+            echo "$setting: $(cat "/proc/sys/$setting" 2>&1)"
+          done
+          status=0
+          unshare --user --map-root-user true || status=$?
+          echo "unshare --user --map-root-user true: exit $status"
+          status=0
+          unshare --user --map-root-user --net ip link set lo up || status=$?
+          echo "unshare --user --map-root-user --net ip link set lo up: exit $status"
+          echo "bwrap: $(command -v bwrap || echo 'not found')"
+          echo "AppArmor bwrap-userns-restrict profile: $(test -e /etc/apparmor.d/bwrap-userns-restrict && echo present || echo absent)"
+          echo "RINGI_PROBE_DIAGNOSE=1" >> "$GITHUB_ENV"
+
       - name: Sandbox check
         run: node scripts/probes/codex-sandbox-check.mjs

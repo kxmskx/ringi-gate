@@ -7,9 +7,16 @@
 // (argv, exit code, stdout, stderr; no environment). Exit code 0 only when
 // both modes pass. Not part of npm test and not in the npm package
 // (scripts/probes/.npmignore); run by .github/workflows/codex-sandbox.yml.
+//
+// With --diagnose or RINGI_PROBE_DIAGNOSE=1 the probe then runs codex
+// sandbox directly in a few diagnostic variants (see DIAGNOSTIC_VARIANTS).
+// Diagnostics only: the variants are not used by the module or the core,
+// and they do not change the exit code.
 import { execFile } from 'node:child_process';
-import { constants as fsConstants } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { constants as fsConstants, lstatSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -25,6 +32,56 @@ const LINUX_SETTINGS = [
   '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
   '/proc/sys/user/max_user_namespaces',
 ];
+const NETWORK_OFF = 'sandbox_workspace_write.network_access=false';
+
+// Diagnostic variants of codex sandbox, each from the module's argv for a
+// mode; null when the variant does not apply to that mode. They show why the
+// sandbox does or does not start on a host and are never used elsewhere.
+const DIAGNOSTIC_VARIANTS = [
+  // Reference: the module's argv unchanged, as the core runs it.
+  { name: 'module argv', modes: MODES, args: (args) => args },
+  // The landlock sandbox of the CLI instead of bubblewrap.
+  {
+    name: 'features.use_legacy_landlock=true',
+    modes: MODES,
+    args: ([subcommand, ...rest]) => [subcommand, '-c', 'features.use_legacy_landlock=true', ...rest],
+  },
+  // Network access on, so that the sandbox needs no network namespace of
+  // its own: shows whether the failure is limited to setting up the
+  // network in the namespace.
+  {
+    name: 'sandbox_workspace_write.network_access=true',
+    modes: ['implementation'],
+    args: (args) =>
+      args.includes(NETWORK_OFF)
+        ? args.map((value) => (value === NETWORK_OFF ? 'sandbox_workspace_write.network_access=true' : value))
+        : null,
+  },
+];
+
+// The canary command of the diagnostics, the same attempts as the core's
+// check: an exclusive write outside the writable roots and one in the Git
+// directory, then a connection to a listener on 127.0.0.1.
+const DIAGNOSTIC_SCRIPT = [
+  "const fs = require('node:fs');",
+  "const net = require('node:net');",
+  'const [outside, git, port] = process.argv.slice(1);',
+  'const write = (path) => {',
+  "  try { fs.writeFileSync(path, '', { flag: 'wx' }); return 'written'; }",
+  "  catch (error) { return String(error.code || 'error'); }",
+  '};',
+  'const result = { outside: write(outside), git: write(git) };',
+  'const socket = net.connect({ host: "127.0.0.1", port: Number(port) });',
+  'const finish = (network) => {',
+  '  socket.destroy();',
+  '  result.network = network;',
+  '  console.log(`RINGI-DIAGNOSE ${JSON.stringify(result)}`);',
+  '  process.exit(0);',
+  '};',
+  "socket.once('connect', () => finish('connected'));",
+  "socket.once('error', (error) => finish(String(error.code || 'error')));",
+  "socket.setTimeout(5000, () => finish('timeout'));",
+].join('\n');
 
 async function output(program, args, options = {}) {
   try {
@@ -111,7 +168,95 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
   return passed;
 }
 
-async function main() {
+function present(path) {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false }) ? 'yes' : 'no';
+  } catch (error) {
+    return `unknown (${error.code ?? error.message})`;
+  }
+}
+
+// One diagnostic variant in one mode: codex sandbox run directly, with the
+// same environment and an empty CODEX_HOME, then the exit code, the raw
+// output and whether each attempt was refused.
+async function runDiagnosticVariant({ variant, taskMode, repositoryRoot, tempRoot, env }) {
+  console.log(`\n-- diagnose: ${variant.name} (${taskMode})`);
+  const nonce = randomBytes(8).toString('hex');
+  const directory = join(tempRoot, `diagnose-${nonce}`);
+  const codexHome = join(directory, 'home');
+  const outside = join(directory, 'outside', 'canary');
+  const git = join(repositoryRoot, '.git', `ringi-diagnose-${nonce}`);
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await mkdir(join(directory, 'outside'), { mode: 0o700 });
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  try {
+    const port = await new Promise((resolvePromise, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolvePromise(server.address().port));
+    });
+    const command = [process.execPath, '-e', DIAGNOSTIC_SCRIPT, outside, git, String(port)];
+    const args = variant.args(codex.implementer.sandboxCheckArgs({ taskMode, command: [...command] }));
+    if (!args) {
+      console.log('not applicable');
+      return;
+    }
+    console.log(`argv: ${JSON.stringify([codex.program, ...printableArgs(args)])}`);
+    let result;
+    try {
+      result = await createProcessRunner().run(codex.program, args, {
+        cwd: repositoryRoot,
+        env: { ...env, CODEX_HOME: codexHome },
+        timeoutMs: 30_000,
+        stage: 'preflight',
+      });
+    } catch (error) {
+      console.log(`run error: ${error?.code ?? ''} ${error?.message ?? String(error)}`);
+      return;
+    }
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    const { code, signal, timedOut, stdout, stderr } = result;
+    console.log(`exit code: ${code}${signal ? ` (signal ${signal})` : ''}${timedOut ? ' (timed out)' : ''}`);
+    printBlock('stdout', String(stdout ?? ''));
+    printBlock('stderr', String(stderr ?? ''));
+    const line = String(stdout ?? '')
+      .split(/\r?\n/)
+      .find((text) => text.startsWith('RINGI-DIAGNOSE '));
+    let report = {};
+    try {
+      report = line ? JSON.parse(line.slice('RINGI-DIAGNOSE '.length)) : {};
+    } catch {
+      // Printed above as raw output.
+    }
+    console.log(`outside write: ${report.outside ?? 'no result'} (file left: ${present(outside)})`);
+    console.log(`git write: ${report.git ?? 'no result'} (file left: ${present(git)})`);
+    console.log(`local connection: ${report.network ?? 'no result'} (connections received: ${connections})`);
+  } finally {
+    server.close();
+    await Promise.allSettled([
+      rm(git, { force: true }),
+      rm(directory, { recursive: true, force: true }),
+    ]);
+  }
+}
+
+async function diagnose(context) {
+  console.log('\n== diagnostics (do not change the exit code)');
+  for (const variant of DIAGNOSTIC_VARIANTS) {
+    for (const taskMode of variant.modes) {
+      try {
+        await runDiagnosticVariant({ ...context, variant, taskMode });
+      } catch (error) {
+        console.log(`diagnose error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+}
+
+async function main({ diagnostics }) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ringi-sandbox-probe-')));
   try {
     const repositoryRoot = join(base, 'repo');
@@ -159,13 +304,22 @@ async function main() {
     console.log('\n== summary');
     for (const taskMode of MODES)
       console.log(`${taskMode}: ${results[taskMode] ? 'pass' : 'STOP'}`);
+    if (diagnostics) await diagnose({ repositoryRoot, tempRoot, env });
     return MODES.every((taskMode) => results[taskMode]);
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 }
 
-main().then(
+const options = process.argv.slice(2);
+if (options.some((option) => option !== '--diagnose')) {
+  console.error('usage: codex-sandbox-check.mjs [--diagnose]');
+  process.exit(2);
+}
+
+main({
+  diagnostics: options.includes('--diagnose') || process.env.RINGI_PROBE_DIAGNOSE === '1',
+}).then(
   (passed) => {
     process.exitCode = passed ? 0 : 1;
   },

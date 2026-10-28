@@ -428,11 +428,6 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
   const bin = await createStubBin({ codex: CODEX_VERSION, claude: CLAUDE_VERSION });
   const binWithoutAgents = await createStubBin();
   const binWithoutClaude = await createStubBin({ codex: CODEX_VERSION });
-  const binOldClaude = await createStubBin({ claude: '2.1.200 (Claude Code)' });
-  const binOldReviewer = await createStubBin({
-    codex: CODEX_VERSION,
-    claude: '2.1.200 (Claude Code)',
-  });
   const env = (extra = {}) => ({
     PATH: `${bin}:/usr/bin:/bin`,
     HOME: process.env.HOME,
@@ -539,20 +534,6 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
       env: { PATH: `${binWithoutAgents}:/usr/bin:/bin` },
       failed: ['implementer-cli'],
       code: 'PROCESS_ERROR',
-    },
-    {
-      name: 'implementer-cli version (claude implementer)',
-      claude: true,
-      env: { PATH: `${binOldClaude}:/usr/bin:/bin` },
-      failed: ['implementer-cli'],
-      code: 'IMPLEMENTER_PREFLIGHT_FAILED',
-    },
-    {
-      name: 'reviewer-cli version (claude reviewer)',
-      env: { PATH: `${binOldReviewer}:/usr/bin:/bin` },
-      failed: ['reviewer-cli'],
-      code: 'REVIEWER_PREFLIGHT_FAILED',
-      hint: /^Use a claude version and platform the reviewer accepts;/,
     },
     {
       name: 'reviewer-cli missing',
@@ -799,8 +780,66 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         await cleanup(project);
       }
     });
+    // Any claude version is accepted in both roles; a platform other than
+    // macOS or Linux fails implementer-cli (in process).
+    const claudeDoctor = async (check) => {
+      const files = healthyFiles();
+      files['ringi.config.mjs'] = claudeImplementer(files['ringi.config.mjs']);
+      const project = await createProject({ files });
+      const doctorRun = (claude, platform) =>
+        runDoctor({
+          cwd: project,
+          environment: { COREPACK_HOME: corepack },
+          platform,
+          runner: {
+            async run(program, args, options = {}) {
+              if (program === 'git') {
+                const child = spawnSync(realGit, args, {
+                  cwd: options.cwd,
+                  env: options.env ?? gitEnvironment,
+                  encoding: 'utf8',
+                });
+                return { code: child.status, signal: null, stdout: child.stdout, stderr: child.stderr, timedOut: false };
+              }
+              const versions = { codex: CODEX_VERSION, claude };
+              return { code: 0, signal: null, stdout: `${versions[program]}\n`, stderr: '', timedOut: false };
+            },
+            isCancelled: () => false,
+          },
+        });
+      try {
+        await check(doctorRun);
+      } finally {
+        await cleanup(project);
+      }
+    };
+    await t.test('claude: any version passes implementer-cli and reviewer-cli (in process)', () =>
+      claudeDoctor(async (doctorRun) => {
+        for (const version of ['2.1.200 (Claude Code)', '2.2.0 (Claude Code)', '3.0.0', '2.1.285-beta.1', 'unknown']) {
+          const result = await doctorRun(version, 'darwin');
+          assert.equal(result.status, 'ok', version);
+          for (const id of ['implementer-cli', 'reviewer-cli'])
+            assert.equal(
+              result.checks.find((entry) => entry.id === id).detail.includes(version),
+              true,
+              `${id} ${version}`,
+            );
+        }
+      }));
+    await t.test('claude: an unsupported platform fails implementer-cli (in process)', () =>
+      claudeDoctor(async (doctorRun) => {
+        const refused = await doctorRun(CLAUDE_VERSION, 'freebsd');
+        assert.equal(refused.status, 'fail');
+        assert.deepEqual(
+          refused.checks.filter(({ status }) => status === 'fail').map(({ id }) => id),
+          ['implementer-cli'],
+        );
+        const check = refused.checks.find(({ id }) => id === 'implementer-cli');
+        assert.equal(check.code, 'IMPLEMENTER_PREFLIGHT_FAILED');
+        assert.match(check.hint, /^Use a claude version and platform the implementer accepts;/);
+      }));
   } finally {
-    await cleanup(corepack, emptyCorepack, bin, binWithoutAgents, binWithoutClaude, binOldClaude);
+    await cleanup(corepack, emptyCorepack, bin, binWithoutAgents, binWithoutClaude);
   }
 });
 

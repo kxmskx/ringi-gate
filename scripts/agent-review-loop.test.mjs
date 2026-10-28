@@ -18222,76 +18222,128 @@ test('reviewer and codex preflight: CLI version and platform of both roles, STOP
   const claudeModule = claudeModuleExports.default;
   const codexModule = codexModuleExports.default;
   // The claude reviewer accepts the same hosts as the claude implementer.
-  for (const version of [CLAUDE_IMPLEMENTER_VERSION, '2.1.1000', '2.2.0', '2.1.284', '2.1.285-rc.1', '2.01.285', ''])
+  for (const version of [CLAUDE_IMPLEMENTER_VERSION, '2.1.1000', '2.2.0', '3.0.0', '2.1.284', '2.1.285-rc.1', '2.01.285', 'unknown', ''])
     for (const platform of ['darwin', 'linux', 'win32'])
       assert.equal(
         claudeModule.reviewer.preflight({ version, platform }),
         claudeModule.implementer.preflight({ version, platform }),
         `${version} ${platform}`,
       );
-  // codex: >=0.160.0 <0.161.0 on macOS or Linux.
-  for (const version of [CODEX_CLI_VERSION, 'codex-cli 0.160.12', '0.160.0'])
-    for (const platform of ['darwin', 'linux'])
-      assert.equal(codexModule.implementer.preflight({ version, platform }), undefined, version);
-  for (const version of [
+  // codex: any CLI version (older, newer, unparsable or with a suffix) on
+  // macOS or Linux.
+  const anyCodexVersion = [
+    CODEX_CLI_VERSION,
+    'codex-cli 0.160.12',
+    '0.160.0',
     'codex-cli 0.159.0',
+    'codex-cli 0.1.0',
     'codex-cli 0.161.0',
+    'codex-cli 0.164.0',
     'codex-cli 1.0.0',
+    'codex-cli 10.2.3',
     'codex-cli 0.160.0-alpha.2',
+    'codex-cli 0.165.0+build.7',
     'codex-cli 0.160',
     'codex-cli 0.0160.0',
     'codex 0.160.0',
     ' codex-cli 0.160.0',
+    'unknown',
     '',
-  ])
-    assert.equal(
-      codexModule.implementer.preflight({ version, platform: 'darwin' }),
-      'UNSUPPORTED_VERSION',
-      version,
-    );
-  for (const platform of ['win32', 'freebsd', undefined])
-    assert.equal(
-      codexModule.implementer.preflight({ version: CODEX_CLI_VERSION, platform }),
-      'UNSUPPORTED_PLATFORM',
-      String(platform),
-    );
+  ];
+  for (const version of anyCodexVersion)
+    for (const platform of ['darwin', 'linux'])
+      assert.equal(
+        codexModule.implementer.preflight({ version, platform }),
+        undefined,
+        `${version} ${platform}`,
+      );
+  for (const version of [CODEX_CLI_VERSION, 'codex-cli 0.164.0', 'codex-cli 1.0.0', ''])
+    for (const platform of ['win32', 'freebsd', 'openbsd', 'aix', 'sunos', undefined])
+      assert.equal(
+        codexModule.implementer.preflight({ version, platform }),
+        'UNSUPPORTED_PLATFORM',
+        `${version} ${String(platform)}`,
+      );
 
   const directory = await createRepository();
   try {
-    for (const [program, version, role, code] of [
-      ['claude', '2.1.284 (Claude Code)', /reviewer/, 'REVIEWER_PREFLIGHT_FAILED'],
-      ['claude', '2.2.0 (Claude Code)', /reviewer/, 'REVIEWER_PREFLIGHT_FAILED'],
-      ['codex', 'codex-cli 0.159.0', /implementer/, 'IMPLEMENTER_PREFLIGHT_FAILED'],
-      ['codex', 'codex-cli 0.161.0', /implementer/, 'IMPLEMENTER_PREFLIGHT_FAILED'],
-    ]) {
-      let rounds = 0;
+    // Any claude reviewer version passes the preflight and goes to the report.
+    for (const version of ['2.1.284 (Claude Code)', '2.2.0 (Claude Code)', '3.0.0', '2.1.312-rc.1', 'unknown']) {
       const runner = createMockRunner({
         onRun: (name, args) =>
-          name === program && args[0] === '--version' ? result(`${version}\n`) : undefined,
+          name === 'claude' && args[0] === '--version' ? result(`${version}\n`) : undefined,
       });
+      const { report: accepted } = await runFixture(directory, { runner });
+      assert.equal(accepted.status, 'APPROVE', version);
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+      await rm(join(directory, 'implementation.txt'), { force: true });
+      const { report: dryRun } = await runFixture(directory, {
+        runner,
+        workflow: { dryRun: true },
+      });
+      assert.equal(dryRun.agents.claude, version, version);
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+    }
+    // The claude reviewer refuses a platform other than macOS or Linux, even
+    // after an implementer whose preflight accepts it: REVIEWER_PREFLIGHT_FAILED.
+    const reviewerHost = internal.resolveRunnerProfile({
+      ...EXAMPLE_PROVIDER_PROFILE,
+      providerModules: [withProviderImplementer({ preflight: () => undefined })],
+      reviewer: internal.resolveRunnerProfile(TEST_PROFILE).reviewer,
+    });
+    for (const platform of ['win32', 'freebsd']) {
+      const runner = exampleProviderRunner();
       await assert.rejects(
-        runFixture(directory, {
+        internal.environmentReport({
           runner,
-          codexRound: async () => {
-            rounds += 1;
-            throw new Error('must not execute');
-          },
+          cwd: directory,
+          reviewProfile: reviewerHost.reviewer.defaultProfile,
+          implementerModel: reviewerHost.implementer.model,
+          implementerEffort: reviewerHost.implementer.effort,
+          implementer: reviewerHost.implementer,
+          reviewer: reviewerHost.reviewer,
+          platform,
         }),
         (error) =>
-          error.code === code &&
+          error.code === 'REVIEWER_PREFLIGHT_FAILED' &&
           error.stage === 'preflight' &&
-          role.test(error.message) &&
-          error.report?.status === 'STOPPED',
-        version,
+          /reviewer/.test(error.message) &&
+          error.message.includes(platform),
+        platform,
       );
-      assert.equal(rounds, 0, version);
-      assert.equal(
-        runner.calls.some(
-          ({ program: name, args }) => name === 'claude' && args[0] !== '--version',
-        ),
-        false,
-        version,
+      assert.deepEqual(
+        runner.calls
+          .filter(({ program }) => program === 'claude')
+          .map(({ args }) => args),
+        [['--version']],
+        platform,
       );
+    }
+    // Any codex version passes the preflight and goes to the report.
+    for (const version of ['codex-cli 0.159.0', 'codex-cli 0.164.0', 'codex-cli 1.0.0-beta.1', 'unknown']) {
+      const runner = createMockRunner({
+        onRun: (name, args) =>
+          name === 'codex' && args[0] === '--version' ? result(`${version}\n`) : undefined,
+      });
+      const { report: accepted } = await runFixture(directory, { runner });
+      assert.equal(accepted.status, 'APPROVE', version);
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+      await rm(join(directory, 'implementation.txt'), { force: true });
+      const { report: dryRun } = await runFixture(directory, {
+        runner,
+        workflow: { dryRun: true },
+      });
+      assert.equal(dryRun.agents.implementer.version, version, version);
+      assert.equal(dryRun.agents.codex, version, version);
       await rm(join(directory, '.agent-review-loop', 'runs'), {
         recursive: true,
         force: true,
@@ -18307,21 +18359,13 @@ test('reviewer and codex preflight: CLI version and platform of both roles, STOP
 
 test('claude implementer preflight: CLI version and sandbox platform, STOP before the implementer process', async () => {
   const { claude, codex } = providerExports.PROVIDERS;
-  // Range >=2.1.285 <2.2.0; a newer version requires a deliberate bump.
+  // Any CLI version (older, newer, unparsable or with a suffix) on macOS or
+  // Linux.
   for (const version of [
     CLAUDE_IMPLEMENTER_VERSION,
     '2.1.286 (Claude Code)',
     '2.1.1000 (Claude Code)',
     '2.1.99999',
-  ]) {
-    for (const platform of ['darwin', 'linux'])
-      assert.equal(
-        claude.implementer.preflight({ version, platform }),
-        undefined,
-        version,
-      );
-  }
-  for (const version of [
     '2.2.0 (Claude Code)',
     '2.2.1',
     '2.10.0',
@@ -18345,58 +18389,85 @@ test('claude implementer preflight: CLI version and sandbox platform, STOP befor
     '2.1.285rc1',
     '2.1.285_1',
   ])
-    assert.equal(
-      claude.implementer.preflight({ version, platform: 'darwin' }),
-      'UNSUPPORTED_VERSION',
-      version,
-    );
-  for (const platform of ['win32', 'freebsd', 'openbsd', 'aix', 'sunos', undefined])
-    assert.equal(
-      claude.implementer.preflight({ version: CLAUDE_IMPLEMENTER_VERSION, platform }),
-      'UNSUPPORTED_PLATFORM',
-      String(platform),
-    );
+    for (const platform of ['darwin', 'linux'])
+      assert.equal(
+        claude.implementer.preflight({ version, platform }),
+        undefined,
+        `${version} ${platform}`,
+      );
+  for (const version of [CLAUDE_IMPLEMENTER_VERSION, '2.2.0 (Claude Code)', '3.0.0', ''])
+    for (const platform of ['win32', 'freebsd', 'openbsd', 'aix', 'sunos', undefined])
+      assert.equal(
+        claude.implementer.preflight({ version, platform }),
+        'UNSUPPORTED_PLATFORM',
+        `${version} ${String(platform)}`,
+      );
   // codex has no adapter preflight: default behavior unchanged.
   assert.equal(codex.implementer.preflight, undefined);
 
   const directory = await createRepository();
   try {
+    // Any version passes the preflight, and the run ends normally with the
+    // version in the report.
     for (const version of [
       '2.1.284 (Claude Code)',
       '2.2.0 (Claude Code)',
+      '3.0.0',
+      '2.1.286-beta.1 (Claude Code)',
       'unknown',
-      '',
     ]) {
-      let implementerCalls = 0;
       const runner = claudeVersionRunner(version);
+      const { report: accepted } = await runFixture(directory, {
+        runner,
+        workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
+      });
+      assert.equal(accepted.status, 'APPROVE', version);
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+      await rm(join(directory, 'implementation.txt'), { force: true });
+      const { report: dryRun } = await runFixture(directory, {
+        runner,
+        workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE, dryRun: true },
+      });
+      assert.equal(dryRun.agents.implementer.version, version, version);
+      await rm(join(directory, '.agent-review-loop', 'runs'), {
+        recursive: true,
+        force: true,
+      });
+    }
+    // A platform other than macOS or Linux: STOP before the implementer
+    // process (IMPLEMENTER_PREFLIGHT_FAILED), only --version was called.
+    const claudeHost = internal.resolveRunnerProfile(CLAUDE_IMPLEMENTER_PROFILE);
+    for (const platform of ['win32', 'freebsd']) {
+      const runner = claudeVersionRunner();
       await assert.rejects(
-        runFixture(directory, {
+        internal.environmentReport({
           runner,
-          codexRound: async () => {
-            implementerCalls += 1;
-            throw new Error('must not execute');
-          },
-          workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
+          cwd: directory,
+          reviewProfile: claudeHost.reviewer.defaultProfile,
+          implementerModel: claudeHost.implementer.model,
+          implementerEffort: claudeHost.implementer.effort,
+          implementer: claudeHost.implementer,
+          reviewer: claudeHost.reviewer,
+          platform,
         }),
         (error) =>
           error.code === 'IMPLEMENTER_PREFLIGHT_FAILED' &&
           error.stage === 'preflight' &&
-          error.report?.status === 'STOPPED',
-        version,
+          error.message.includes(platform),
+        platform,
       );
-      assert.equal(implementerCalls, 0);
       assert.deepEqual(
         runner.calls
           .filter(({ program }) => program === 'claude')
           .map(({ args }) => args),
         [['--version']],
+        platform,
       );
     }
     // Supported version: the run passes.
-    await rm(join(directory, '.agent-review-loop', 'runs'), {
-      recursive: true,
-      force: true,
-    });
     const { report } = await runFixture(directory, {
       runner: claudeVersionRunner(),
       workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
@@ -20792,12 +20863,15 @@ const CODEX_CONFORMANCE_FIXTURES = deepFreeze({
     accepted: [
       { version: CODEX_CLI_VERSION, platform: 'darwin' },
       { version: '0.160.9', platform: 'linux' },
+      { version: 'codex-cli 0.159.9', platform: 'darwin' },
+      { version: 'codex-cli 0.164.0', platform: 'linux' },
+      { version: 'codex-cli 1.0.0', platform: 'darwin' },
+      { version: 'codex-cli 0.160.1-alpha.1', platform: 'darwin' },
+      { version: 'unknown', platform: 'linux' },
     ],
     refused: [
-      { version: 'codex-cli 0.159.9', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
-      { version: 'codex-cli 0.161.0', platform: 'linux', reason: 'UNSUPPORTED_VERSION' },
-      { version: 'codex-cli 0.160.1-alpha.1', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
       { version: CODEX_CLI_VERSION, platform: 'win32', reason: 'UNSUPPORTED_PLATFORM' },
+      { version: 'codex-cli 0.164.0', platform: 'freebsd', reason: 'UNSUPPORTED_PLATFORM' },
     ],
   },
 });
@@ -20805,11 +20879,15 @@ const CLAUDE_PREFLIGHT_FIXTURES = deepFreeze({
   accepted: [
     { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'darwin' },
     { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'linux' },
+    { version: '2.2.0 (Claude Code)', platform: 'linux' },
+    { version: '2.1.284', platform: 'darwin' },
+    { version: '3.0.0', platform: 'darwin' },
+    { version: '2.1.285-beta.1', platform: 'linux' },
+    { version: 'unknown', platform: 'darwin' },
   ],
   refused: [
-    { version: '2.2.0 (Claude Code)', platform: 'linux', reason: 'UNSUPPORTED_VERSION' },
-    { version: '2.1.284', platform: 'darwin', reason: 'UNSUPPORTED_VERSION' },
     { version: CLAUDE_IMPLEMENTER_VERSION, platform: 'win32', reason: 'UNSUPPORTED_PLATFORM' },
+    { version: '3.0.0', platform: 'freebsd', reason: 'UNSUPPORTED_PLATFORM' },
   ],
 });
 const CLAUDE_CONFORMANCE_FIXTURES = deepFreeze({
@@ -20900,12 +20978,12 @@ test('provider conformance suite: codex, claude and the example provider pass wi
     [
       { ...claudeModule, reviewer: { ...claudeModule.reviewer, preflight: () => undefined } },
       CLAUDE_CONFORMANCE_FIXTURES.reviewer,
-      ['reviewer.preflight', 'reviewer.preflight', 'reviewer.preflight'],
+      ['reviewer.preflight', 'reviewer.preflight'],
     ],
     [
       { ...claudeModule, reviewer: { ...claudeModule.reviewer, preflight: () => 'NO' } },
       CLAUDE_CONFORMANCE_FIXTURES.reviewer,
-      Array(7).fill('reviewer.preflight'),
+      Array(11).fill('reviewer.preflight'),
     ],
   ]) {
     const outcome = checkProviderConformance(module, {

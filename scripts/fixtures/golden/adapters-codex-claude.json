@@ -113,18 +113,34 @@
             "$undefined": true
           },
           "UNSUPPORTED_PLATFORM",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION",
-          "UNSUPPORTED_VERSION"
+          {
+            "$undefined": true
+          },
+          {
+            "$undefined": true
+          },
+          "UNSUPPORTED_PLATFORM",
+          {
+            "$undefined": true
+          },
+          {
+            "$undefined": true
+          },
+          "UNSUPPORTED_PLATFORM",
+          {
+            "$undefined": true
+          },
+          {
+            "$undefined": true
+          },
+          "UNSUPPORTED_PLATFORM",
+          {
+            "$undefined": true
+          },
+          {
+            "$undefined": true
+          },
+          "UNSUPPORTED_PLATFORM"
         ]
       },
       "subtrees": {}

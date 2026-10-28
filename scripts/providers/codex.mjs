@@ -90,31 +90,13 @@ function sessionId(stdout) {
   return undefined;
 }
 
-// Codex CLI versions and platforms the declarations are checked against:
-// 0.160.0 up to, but not including, 0.161.0 (a 0.x minor release may change
-// flags or sandbox behaviour), on macOS or Linux, where the CLI has a command
-// sandbox. A newer version needs a deliberate bump after new probes.
-const CODEX_MIN_VERSION = Object.freeze([0, 160, 0]);
-const CODEX_VERSION_LIMIT = Object.freeze([0, 161, 0]);
+// Platforms where the Codex CLI has a command sandbox: macOS and Linux. Any
+// CLI version is accepted (also one that cannot be parsed); the declarations
+// were probed on 0.160.0 only, and the version still goes to the
+// environment report.
 const CODEX_SANDBOX_PLATFORMS = Object.freeze(['darwin', 'linux']);
 
-// -1, 0 or 1 for the version of `codex --version` ("codex-cli 0.160.0")
-// against a triple; undefined when the text is not such a version followed
-// by whitespace or the end (a pre-release or build suffix is refused).
-function compareVersion(text, triple) {
-  const match = /^(?:codex-cli )?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?=\s|$)/.exec(text);
-  if (!match) return undefined;
-  for (let index = 0; index < triple.length; index += 1) {
-    const part = Number(match[index + 1]);
-    if (part !== triple[index]) return part > triple[index] ? 1 : -1;
-  }
-  return 0;
-}
-
-function preflight({ version, platform }) {
-  const low = compareVersion(version, CODEX_MIN_VERSION);
-  if (low === undefined || low < 0 || compareVersion(version, CODEX_VERSION_LIMIT) >= 0)
-    return 'UNSUPPORTED_VERSION';
+function preflight({ platform }) {
   if (!CODEX_SANDBOX_PLATFORMS.includes(platform)) return 'UNSUPPORTED_PLATFORM';
   return undefined;
 }
@@ -133,7 +115,7 @@ export default defineProvider({
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
     limitations: [
-      'The CLI has no documented setting that makes it fail when its sandbox cannot start, and the runner does not check it; preflight accepts only versions from 0.160.0 up to, but not including, 0.161.0, on macOS or Linux.',
+      'The CLI has no documented setting that makes it fail when its sandbox cannot start, and the runner does not check it; preflight accepts any CLI version, on macOS or Linux only. The declarations were probed on 0.160.0; another version may change flags or sandbox behaviour unchecked.',
       'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex (not checked by this runner).',
       'Codex system (admin) configuration still applies.',
       "Commands run in a non-login shell, and the core sets ZDOTDIR to an empty private directory, so zsh skips the user's .zshenv; it still reads /etc/zshenv, where a PATH change puts the real command before the guard (shown with a .zshenv on 0.160.0), and what it exports reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command.",

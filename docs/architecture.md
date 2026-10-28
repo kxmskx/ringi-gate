@@ -124,7 +124,7 @@ because it rests on the model's report. Probes with the adapter's argv as it is
 | No approval prompts (`-a never`) | `--permission-mode dontAsk` (analysis) or `acceptEdits` (implementation) with `--permission-prompts none`: anything that would prompt is denied. Never `--dangerously-skip-permissions` or `bypassPermissions`. |
 | Sandbox by task mode | analysis: `--tools Read,Glob,Grep` (no edit or command tool). implementation: `--tools Read,Glob,Grep,Edit,Write,Bash`. File tools: `--restricted` confines them to the working directory (the repository root), and their writes to settings, Git and tool-configuration files are left to a person, so they are denied. Bash: any command is auto-allowed inside the sandbox (`autoAllowBashIfSandboxed`), which limits writes to the working directory **including `.git`** and the paths the sandbox itself allows, such as temporary directories; the core therefore checks the Git directory after every round (below). No `--add-dir` and no `--allowedTools`. |
 | No network for commands (`network_access=false`) | `--settings` with `sandbox.enabled: true`, `sandbox.network.allowedDomains: []`, `sandbox.network.strictAllowlist: true` (hosts outside the empty list are denied without a prompt), `sandbox.allowUnsandboxedCommands: false` (no command runs outside the sandbox) and `sandbox.autoAllowBashIfSandboxed: true`. `--disallowedTools WebFetch,WebSearch`. |
-| Unavailable sandbox stops the run | `sandbox.failIfUnavailable: true`: the CLI exits at startup instead of running commands unsandboxed; the runner stops with `PROCESS_FAILED` (stage `implementer`). Preflight accepts only macOS and Linux and Claude Code versions from 2.1.285 up to, but not including, 2.2.0, without a pre-release or build suffix (`IMPLEMENTER_PREFLIGHT_FAILED`); see the limits below. |
+| Unavailable sandbox stops the run | `sandbox.failIfUnavailable: true`: the CLI exits at startup instead of running commands unsandboxed; the runner stops with `PROCESS_FAILED` (stage `implementer`). Preflight accepts only macOS and Linux (`IMPLEMENTER_PREFLIGHT_FAILED`) and any Claude Code version; see the limits below. |
 | No user configuration (`--ignore-user-config --strict-config`) | `--safe-mode` (CLAUDE.md, skills, plugins, hooks, MCP servers, custom commands and agents disabled), `--restricted` (user, project and local settings files ignored), `--strict-mcp-config` (no MCP server without `--mcp-config`, which is not passed), `--disable-slash-commands`. |
 | Guards first on `PATH` (`codex` also `-c allow_login_shell=false`, so that login profiles do not reorder `PATH`; the core's empty private `ZDOTDIR` keeps the user's `.zshenv` out; `/etc/zshenv` still applies) | The same `processEnvironment` and environment as `codex`: guard directory first on `PATH`, the same empty `ZDOTDIR`. |
 | Isolated environment without credentials | The same isolated offline environment as `codex`: no key or token in the environment, and `CLAUDE_CONFIG_DIR` is removed as for `codex` (the CLI uses its default configuration directory and stored login). This covers environment variables only: commands can read files under the user's home, as with `codex`. |
@@ -337,9 +337,9 @@ Limits that the CLI does not let the runner close (known limits):
 - In print mode Claude Code ignores settings that fail validation without an
   error. The probes confirmed that 2.1.285 applies the sandbox settings,
   also under `--safe-mode`; another version could rename a key and turn the
-  sandbox off without a signal. Preflight therefore accepts only versions
-  from 2.1.285 up to, but not including, 2.2.0; widening the range is a
-  deliberate change after new probes. If the sandbox settings were ignored,
+  sandbox off without a signal. Preflight accepts any CLI version all the
+  same, so this is a known limitation, not a refusal: a version other than
+  the probed one runs unchecked. If the sandbox settings were ignored,
   the sandbox would be off and Bash would no longer be auto-allowed:
   commands that would prompt are denied by `--permission-prompts none`, but
   commands that Claude Code itself treats as read-only, or as file-system

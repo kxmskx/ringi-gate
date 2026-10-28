@@ -42,7 +42,7 @@ Everything below "Planned" is a plan, not a feature. The
   (`scripts/providers/contract.mjs`): roles with task modes, command and
   environment building, result and session reading, host preflight
   (required for the implementer, optional for the reviewer; the built-in
-  `codex` and `claude` modules restrict CLI versions and platforms), and a
+  `codex` and `claude` modules restrict only platforms), and a
   security declaration (`enforced` with its mechanism, or `not-supported`)
   for each safety guarantee, with `stable`/`experimental` stability and
   known limits. Role rules in the core refuse an `implementer` whose

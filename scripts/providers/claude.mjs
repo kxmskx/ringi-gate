@@ -11,10 +11,9 @@ export const CLAUDE_EFFORTS = Object.freeze(['medium', 'high', 'xhigh']);
 // checked against the help of 2.1.285 and confirmed by probes of the real
 // CLI (network denied, writes outside the working directory denied). In
 // print mode the CLI ignores settings that fail validation without an error,
-// so only versions from 2.1.285 up to, but not including, 2.2.0 are
-// accepted; a newer version needs a deliberate bump after new probes.
-const CLAUDE_IMPLEMENTER_MIN_VERSION = Object.freeze([2, 1, 285]);
-const CLAUDE_IMPLEMENTER_VERSION_LIMIT = Object.freeze([2, 2, 0]);
+// so another version could drop them silently; any CLI version is accepted
+// all the same (also one that cannot be parsed), and the version still goes
+// to the environment report.
 // Platforms where the command sandbox of the CLI can start (macOS, Linux and
 // WSL); on any other platform the CLI would exit at startup anyway.
 const CLAUDE_SANDBOX_PLATFORMS = Object.freeze(['darwin', 'linux']);
@@ -50,36 +49,9 @@ function claudeEnvelope(stdout) {
   }
 }
 
-// -1, 0 or 1 for a major.minor.patch version against a triple; undefined
-// when the text does not start with such a version followed by whitespace
-// or the end (a pre-release or build suffix such as -beta.1 is refused).
-function compareVersion(text, triple) {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?=\s|$)/.exec(text);
-  if (!match) return undefined;
-  for (let index = 0; index < triple.length; index += 1) {
-    const part = Number(match[index + 1]);
-    if (part !== triple[index]) return part > triple[index] ? 1 : -1;
-  }
-  return 0;
-}
-
-function versionInRange(text, minimum, limit) {
-  const low = compareVersion(text, minimum);
-  return low !== undefined && low >= 0 && compareVersion(text, limit) < 0;
-}
-
-// The same host check for both roles: the implementer's sandbox settings
-// were probed on these CLI versions and platforms; the reviewer uses the
-// same range until its own argv is probed.
-function preflight({ version, platform }) {
-  if (
-    !versionInRange(
-      version,
-      CLAUDE_IMPLEMENTER_MIN_VERSION,
-      CLAUDE_IMPLEMENTER_VERSION_LIMIT,
-    )
-  )
-    return 'UNSUPPORTED_VERSION';
+// The same host check for both roles: only the platform is checked, any CLI
+// version is accepted.
+function preflight({ platform }) {
   if (!CLAUDE_SANDBOX_PLATFORMS.includes(platform))
     return 'UNSUPPORTED_PLATFORM';
   return undefined;
@@ -265,7 +237,7 @@ export default defineProvider({
       'Bash inside the CLI sandbox can write in .git; the core fingerprints the Git directory around every round and detects the change afterwards instead of preventing it.',
       'Background processes started by Bash run in another process group and can outlive the CLI.',
       "Bash commands in zsh read /etc/zshenv, which the runner does not control, and $ZDOTDIR/.zshenv, where the core points ZDOTDIR to an empty read-only directory; a command that changes its mode could add a .zshenv for later commands of the run. In probes of 2.1.285 a .zshenv exported variables to commands but left the guard directory first on PATH.",
-      'In print mode the CLI ignores invalid settings without an error; preflight therefore accepts only versions from 2.1.285 up to, but not including, 2.2.0.',
+      'In print mode the CLI ignores invalid settings without an error, so a version that no longer accepts the sandbox settings passed with --settings would drop them silently; preflight accepts any CLI version, on macOS or Linux only. The settings were probed on 2.1.285; another version runs unchecked.',
       'Admin-managed (policy) settings still apply.',
     ],
     security: {
@@ -301,6 +273,7 @@ export default defineProvider({
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
     limitations: [
+      'Preflight accepts any CLI version, on macOS or Linux only. The reviewer was probed on 2.1.285 and 2.1.311; another version may change flags unchecked.',
       'Admin-managed (policy) settings still apply.',
     ],
     security: {

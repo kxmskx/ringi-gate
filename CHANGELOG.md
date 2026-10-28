@@ -5,6 +5,26 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Changed
+
+- `codex` implementer and `claude` implementer and reviewer: the
+  preflight accepts any CLI version, including one with a pre-release or
+  build suffix and one that cannot be parsed; it no longer stops the run
+  for a Codex CLI version outside 0.160.0 up to, but not including,
+  0.161.0, or a Claude Code version outside 2.1.285 up to, but not
+  including, 2.2.0. A platform other than macOS or Linux still stops the
+  run with `IMPLEMENTER_PREFLIGHT_FAILED` or `REVIEWER_PREFLIGHT_FAILED`,
+  and the version still goes to the environment report. The declarations
+  were probed on Codex CLI 0.160.0 and Claude Code 2.1.285 and 2.1.311
+  only, so another version may change flags or sandbox behaviour
+  unchecked; in print mode Claude Code ignores sandbox settings it does
+  not accept without an error, which is now a known limitation of the
+  `claude` implementer instead of a refusal. The roles stay
+  `experimental`; in the stability table of `docs/providers.md`,
+  criterion 5 is not met for any built-in role, by choice.
+
 ## 0.2.2 — 2026-10-27
 
 ### Fixed

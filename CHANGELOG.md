@@ -5,7 +5,7 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
-## Unreleased
+## 0.2.3 — 2026-10-28
 
 ### Changed
 
@@ -25,7 +25,13 @@ is published by hand, without provenance; later versions are published by
   `experimental`; in the stability table of `docs/providers.md`,
   criterion 5 is not met for any built-in role, by choice.
 
-## 0.2.2 — 2026-10-27
+- `claude` reviewer (the default reviewer): because of `--restricted`,
+  the reviewer no longer applies the user's Claude Code settings files.
+  An `apiKeyHelper`, an `env` block (for example `ANTHROPIC_BASE_URL`, a
+  proxy, Bedrock or Vertex settings) and `permissions.deny` rules there
+  stop applying to the reviewer, as they already did for the `claude`
+  implementer. The stored login keeps working; admin-managed (policy)
+  settings still apply.
 
 ### Fixed
 
@@ -44,16 +50,6 @@ is published by hand, without provenance; later versions are published by
   directory. Admin-managed (policy) settings still apply. The reviewer now
   declares `noUserConfiguration` as `enforced`; the role stays
   `experimental`. See `docs/providers/probes/claude-reviewer.md`.
-
-### Changed
-
-- `claude` reviewer (the default reviewer): because of `--restricted`,
-  the reviewer no longer applies the user's Claude Code settings files.
-  An `apiKeyHelper`, an `env` block (for example `ANTHROPIC_BASE_URL`, a
-  proxy, Bedrock or Vertex settings) and `permissions.deny` rules there
-  stop applying to the reviewer, as they already did for the `claude`
-  implementer. The stored login keeps working; admin-managed (policy)
-  settings still apply.
 
 ## 0.2.1 — 2026-10-27
 

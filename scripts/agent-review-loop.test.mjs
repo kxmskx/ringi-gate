@@ -12,6 +12,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   rename,
   rm,
   symlink,
@@ -30,7 +31,7 @@ import {
 import { registerHooks } from 'node:module';
 import { connect as netConnect } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import nodeTest, { after } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import ts from 'typescript';
@@ -1105,6 +1106,7 @@ test('runner surface contract: internal keys', () => {
       'cleanupOwnedTemp',
       'codexPrompt',
       'codexSchema',
+      'copyManifestToSnapshot',
       'copyPinnedCorepackCache',
       'createAgentCommandGuards',
       'createAnalysisIntegrityReport',
@@ -6939,6 +6941,318 @@ test('a symlink escape in the repository state blocks the snapshot', async () =>
     await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
     await rm(directory, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+// Linked parent directories and link chains: the snapshot never reads or
+// copies a repository path through a symbolic link. Every outside file is a
+// synthetic canary in its own mkdtemp directory.
+// A link chain the lexical check accepts: q/r/p -> .. resolves to q, so
+// q/r/p/../../<outside> leaves the repository although the text stays in it.
+// The repository and the outside directory are siblings in tmpdir.
+async function linkThroughChain(directory, outside, path) {
+  await mkdir(join(directory, 'q', 'r'), { recursive: true });
+  await symlink('..', join(directory, 'q', 'r', 'p'));
+  await symlink(
+    `q/r/p/../../${basename(outside)}`,
+    join(directory, path),
+  );
+}
+
+async function snapshotWithLinks(directory, runId, prepare, check) {
+  const outside = await mkdtemp(join(tmpdir(), 'example-link-outside-'));
+  const tempRoot = await mkdtemp(
+    join(tmpdir(), `${TEST_PROFILE.tempPrefix}${runId}-`),
+  );
+  try {
+    await writeFile(join(outside, 'canary.txt'), 'kanarek spoza repo\n');
+    await prepare(outside);
+    const result = await createReviewSnapshot({
+      runner: createMockRunner(),
+      repositoryRoot: directory,
+      tempRoot,
+      task: { path: 'task.md', markdown: taskMarkdown },
+      repositoryInstructions: 'Instrukcje.',
+      gateReport: syntheticGateReport(),
+      profile: TEST_PROFILE,
+    }).then(
+      (snapshot) => ({ snapshot }),
+      (error) => ({ error }),
+    );
+    if (check && result.snapshot) await check(result.snapshot);
+    const outsideEntries = (await readdir(outside)).sort();
+    const canary = await readFile(join(outside, 'canary.txt'), 'utf8');
+    return { ...result, outsideEntries, canary };
+  } finally {
+    await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
+    await rm(outside, { recursive: true, force: true });
+  }
+}
+
+test('a tracked directory replaced by a symbolic link stops the snapshot with SYMLINK_ESCAPE', async () => {
+  const directory = await createRepository();
+  try {
+    await mkdir(join(directory, 'linked'));
+    await writeFile(join(directory, 'linked', 'canary.txt'), 'w repo\n');
+    command(directory, 'git', ['add', 'linked/canary.txt']);
+    command(directory, 'git', ['commit', '--quiet', '-m', 'test: linked']);
+    const result = await snapshotWithLinks(
+      directory,
+      'linked-parent-test',
+      async (outside) => {
+        await rm(join(directory, 'linked'), { recursive: true });
+        await linkThroughChain(directory, outside, 'linked');
+      },
+    );
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.error?.code, 'SYMLINK_ESCAPE');
+    assert.deepEqual(result.outsideEntries, ['canary.txt']);
+    assert.equal(result.canary, 'kanarek spoza repo\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a symbolic link chain that resolves outside the repository stops the snapshot with SYMLINK_ESCAPE', async () => {
+  const directory = await createRepository();
+  try {
+    const result = await snapshotWithLinks(
+      directory,
+      'link-chain-test',
+      async (outside) => {
+        await linkThroughChain(directory, outside, 'a');
+      },
+    );
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.error?.code, 'SYMLINK_ESCAPE');
+    assert.deepEqual(result.outsideEntries, ['canary.txt']);
+    assert.equal(result.canary, 'kanarek spoza repo\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the repository manifest refuses a path under a linked parent directory', async () => {
+  const directory = await createRepository();
+  const outside = await mkdtemp(join(tmpdir(), 'example-link-outside-'));
+  try {
+    await mkdir(join(directory, 'linked'));
+    await writeFile(join(directory, 'linked', 'canary.txt'), 'w repo\n');
+    command(directory, 'git', ['add', 'linked/canary.txt']);
+    command(directory, 'git', ['commit', '--quiet', '-m', 'test: linked']);
+    await writeFile(join(outside, 'canary.txt'), 'kanarek spoza repo\n');
+    await rm(join(directory, 'linked'), { recursive: true });
+    await linkThroughChain(directory, outside, 'linked');
+    await assert.rejects(
+      internal.readRepositoryManifest({
+        runner: createMockRunner(),
+        cwd: directory,
+        stage: 'snapshot',
+      }),
+      (error) => error.code === 'SYMLINK_ESCAPE',
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('symbolic links inside the repository are copied into the snapshot after the files', async () => {
+  const directory = await createRepository();
+  try {
+    await mkdir(join(directory, 'docs'));
+    await writeFile(join(directory, 'docs', 'guide.md'), 'przewodnik\n');
+    await symlink('docs', join(directory, 'docs-link'));
+    await symlink('docs/guide.md', join(directory, 'guide-link.md'));
+    let checked = false;
+    const result = await snapshotWithLinks(
+      directory,
+      'inside-links-test',
+      async () => {},
+      async ({ root }) => {
+        assert.equal(await readlink(join(root, 'docs-link')), 'docs');
+        assert.equal(
+          await readlink(join(root, 'guide-link.md')),
+          'docs/guide.md',
+        );
+        assert.equal(
+          await readFile(join(root, 'docs', 'guide.md'), 'utf8'),
+          'przewodnik\n',
+        );
+        checked = true;
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(checked, true);
+    assert.deepEqual(result.outsideEntries, ['canary.txt']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a dangling link through a link chain stops the manifest with SYMLINK_ESCAPE', async () => {
+  const directory = await createRepository();
+  try {
+    await mkdir(join(directory, 'q', 'r'), { recursive: true });
+    await symlink('..', join(directory, 'q', 'r', 'p'));
+    // The target does not exist, so realpath of the link fails; the chain
+    // still leaves the repository.
+    await symlink(
+      'q/r/p/../../example-missing-outside/file.txt',
+      join(directory, 'a'),
+    );
+    await assert.rejects(
+      internal.readRepositoryManifest({
+        runner: createMockRunner(),
+        cwd: directory,
+        stage: 'snapshot',
+      }),
+      (error) => error.code === 'SYMLINK_ESCAPE',
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an excluded linked parent of a tracked file stops the manifest, inside or outside the repository', async () => {
+  for (const variant of ['inside', 'outside']) {
+    const directory = await createRepository();
+    const outside = await mkdtemp(join(tmpdir(), 'example-link-outside-'));
+    try {
+      await mkdir(join(directory, 'linked'));
+      await mkdir(join(directory, 'docs'));
+      await writeFile(join(directory, 'linked', 'canary.txt'), 'w repo\n');
+      await writeFile(join(directory, 'docs', 'canary.txt'), 'docs\n');
+      await writeFile(join(outside, 'canary.txt'), 'kanarek spoza repo\n');
+      command(directory, 'git', ['add', 'linked/canary.txt', 'docs']);
+      command(directory, 'git', ['commit', '--quiet', '-m', 'test: linked']);
+      // Git does not list the excluded link itself, so only the check of
+      // the tracked file's parent directories sees it.
+      await writeFile(
+        join(directory, '.git', 'info', 'exclude'),
+        'linked\n',
+      );
+      await rm(join(directory, 'linked'), { recursive: true });
+      if (variant === 'inside') {
+        await symlink('docs', join(directory, 'linked'));
+      } else {
+        await linkThroughChain(directory, outside, 'linked');
+      }
+      await assert.rejects(
+        internal.readRepositoryManifest({
+          runner: createMockRunner(),
+          cwd: directory,
+          stage: 'snapshot',
+        }),
+        (error) =>
+          error.code === 'SYMLINK_ESCAPE' && error.message.includes('"linked"'),
+        variant,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('copying a manifest never writes through a link or into a file parent', async () => {
+  const source = await mkdtemp(join(tmpdir(), 'example-copy-source-'));
+  const target = await mkdtemp(join(tmpdir(), 'example-copy-target-'));
+  const outside = await mkdtemp(join(tmpdir(), 'example-link-outside-'));
+  try {
+    await mkdir(join(source, 'z'));
+    await writeFile(join(source, 'z', 'f'), 'plik\n');
+    // A link z listed before z/f: the file is copied first and the link
+    // can no longer redirect it.
+    await assert.rejects(
+      internal.copyManifestToSnapshot({
+        manifest: {
+          entries: [
+            { path: 'z', type: 'symlink', target: `../${basename(outside)}` },
+            { path: 'z/f', type: 'file', executable: false },
+          ],
+        },
+        sourceRoot: source,
+        targetRoot: target,
+        runner: createMockRunner(),
+      }),
+      // The link is created after z/f, onto the directory z the copy made.
+      (error) => error.code === 'EEXIST',
+    );
+    assert.deepEqual(await readdir(outside), []);
+    // A file z listed before z/f: z is not a directory, so z/f stops.
+    const second = await mkdtemp(join(tmpdir(), 'example-copy-target-'));
+    try {
+      await writeFile(join(source, 'y'), 'plik\n');
+      await assert.rejects(
+        internal.copyManifestToSnapshot({
+          manifest: {
+            entries: [
+              { path: 'y', type: 'file', executable: false },
+              { path: 'y/f', type: 'file', executable: false },
+            ],
+          },
+          sourceRoot: source,
+          targetRoot: second,
+          runner: createMockRunner(),
+        }),
+        (error) => error.code === 'SYMLINK_ESCAPE',
+      );
+    } finally {
+      await rm(second, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(source, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('a loop of links and a link through a dangling link stop the manifest, a plain dangling link does not', async () => {
+  const cases = {
+    async loop(directory) {
+      await symlink('b', join(directory, 'a'));
+      await symlink('a', join(directory, 'b'));
+    },
+    async throughDangling(directory) {
+      await symlink('missing', join(directory, 'd'));
+      await symlink('d/x', join(directory, 'a'));
+    },
+    async climbAfterMissing(directory) {
+      await symlink('missing/../../outside.txt', join(directory, 'a'));
+    },
+  };
+  for (const [name, prepare] of Object.entries(cases)) {
+    const directory = await createRepository();
+    try {
+      await prepare(directory);
+      await assert.rejects(
+        internal.readRepositoryManifest({
+          runner: createMockRunner(),
+          cwd: directory,
+          stage: 'snapshot',
+        }),
+        (error) => error.code === 'SYMLINK_ESCAPE',
+        name,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  const directory = await createRepository();
+  try {
+    await symlink('missing.txt', join(directory, 'dangling'));
+    const manifest = await internal.readRepositoryManifest({
+      runner: createMockRunner(),
+      cwd: directory,
+      stage: 'snapshot',
+    });
+    assert.equal(
+      manifest.entries.find((entry) => entry.path === 'dangling')?.type,
+      'symlink',
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -23810,8 +24124,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // checkpoint.ledger, ledger.writeFailed, ledger.incomplete; review lanes:
   // log.reviewerLaneRound, reviewer.laneFailed, stage.reviewLaneAttempt;
   // context packages: reviewer.laneCoverage, dashboard.laneContext; the
-  // reserved review context: repo.reviewContextReserved.
-  assert.equal(keys.length, 392);
+  // reserved review context: repo.reviewContextReserved; linked parent
+  // directories: repo.linkParent.
+  assert.equal(keys.length, 393);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);

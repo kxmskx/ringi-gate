@@ -339,6 +339,8 @@ export default Object.freeze({
   'repo.pathEscape': 'Ścieżka repozytorium wychodzi poza root.',
   'repo.linkAbsolute': 'Dowiązanie {path} ma cel absolutny.',
   'repo.linkEscape': 'Dowiązanie {path} wychodzi poza repozytorium.',
+  'repo.linkParent':
+    'Ścieżka {path} przechodzi przez dowiązanie {link}. Dowiązaniem może być tylko ostatni element ścieżki.',
   'repo.reviewContextReserved':
     'Ścieżka {path} używa nazwy .review-context, zarezerwowanej dla kontekstu review w snapshotcie.',
   'repo.unsupportedEntry': 'Nieobsługiwany typ wpisu {path}.',

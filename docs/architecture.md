@@ -414,6 +414,14 @@ flowchart TD
    when the repository paths are listed, before any snapshot, and the
    directory and its files are created only as new entries, never through
    a symbolic link.
+   No repository path is read or copied through a symbolic link: a parent
+   directory of a manifest entry that is a symbolic link stops the run with
+   `SYMLINK_ESCAPE`, and a symbolic link must stay inside the repository
+   both by its text and by its target resolved through every link on its
+   way (a loop or a dangling link in the chain stops the run). The snapshot
+   creates directories one segment at a time and refuses one that is not a
+   real directory, copies files with `COPYFILE_EXCL` and creates symbolic
+   links only after every file.
 6. **Independent review.** The reviewer returns a structured verdict with
    findings (`BLOCKER`, `HIGH`, `MEDIUM`, `LOW`). The runner computes the
    result itself: any finding of any severity means another writer round.

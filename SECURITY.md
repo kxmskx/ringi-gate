@@ -97,6 +97,24 @@ on.
   new entries (no `recursive`, `O_CREAT | O_EXCL` with `O_NOFOLLOW`), so an
   existing entry or a symbolic link stops the run instead of being written
   through.
+- Repository paths are never read or copied through a symbolic link. A
+  manifest entry with a parent directory that is a symbolic link stops the
+  run with `SYMLINK_ESCAPE`, also when the link points inside the
+  repository. A symbolic link in the repository must point inside it both
+  lexically and by its target resolved segment by segment through the links
+  on its way (`realpath` of each existing link, the missing rest
+  lexically); a link whose chain cannot be resolved (a loop, or a dangling
+  link on the way) stops the run too. The snapshot creates directories one
+  segment at a time and refuses one that is not a real directory, copies
+  files with `COPYFILE_EXCL` and creates symbolic links only after every
+  file, so no write follows a link out of the snapshot. Untracked paths
+  come from Git, which does not list paths beyond a symbolic link.
+  `AGENTS.md` and `CLAUDE.md` pass the same check before they are read
+  (an in-repository link such as `CLAUDE.md -> AGENTS.md` still works).
+  The checks inspect a path and then read or copy it; a process that swaps
+  a path between the two steps is outside this model, which is why the
+  writer has finished before every snapshot and the snapshot and working
+  tree are compared after each stage.
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
 - Checkpoints are opt-in. With `--checkpoint` or `--resume`, state carried

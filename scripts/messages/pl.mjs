@@ -319,6 +319,8 @@ export default Object.freeze({
   'reviewer.reviewFailed': 'Reviewer niezakończył review poprawnie',
   'reviewer.fallbackFailed': 'Fallback reviewera nie zakończył review poprawnie.',
   'reviewer.laneFailed': 'Tor review {lane}: {message}',
+  'reviewer.laneCoverage':
+    'Ścieżki torów review nie pokrywają zmienionych plików ({count}), więc żaden reviewer nie wystartował: {files}. Dodaj pliki do toru albo dodaj tor bez ścieżek.',
 
   'finding.identityCollision': 'Wykryto kolizję stabilnej tożsamości {findingId}.',
   'finding.identityDuplicate': 'Review zawiera niejednoznacznie zduplikowaną tożsamość {findingId}.',
@@ -468,6 +470,7 @@ export default Object.freeze({
   'dashboard.appendAssurance': 'POZOSTAŁA PEWNOŚĆ  {assurance}',
   'dashboard.appendReview': 'REVIEW  {profile} · próby {attempts} · fallback dozwolony {allowed}',
   'dashboard.appendRound': 'RUNDA {round}/{max}',
+  'dashboard.laneContext': 'prompt {bytes} B · pliki diffu {files}',
   'dashboard.task': 'Zadanie {path} · tryb {mode}',
   'dashboard.diagnostics': 'DIAGNOSTYKA',
   'dashboard.choices': '{list} albo {last}',

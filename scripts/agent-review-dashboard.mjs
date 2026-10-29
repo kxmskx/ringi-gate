@@ -835,8 +835,18 @@ function appendEventLines(state, event, nowMs) {
     const duration = formatDuration(event.durationMs ?? 0);
     const tests =
       event.testCount === undefined ? '' : ` · ${event.testCount} tests`;
+    // A review lane's attempt: the size of the lane's prompt and the number
+    // of changed files whose diff it carries.
+    const context =
+      boundedCount(event.contextBytes, Number.MAX_SAFE_INTEGER) === undefined
+        ? ''
+        : ` · ${t(locale, 'dashboard.laneContext', {
+            bytes: event.contextBytes,
+            files:
+              boundedCount(event.diffFiles, Number.MAX_SAFE_INTEGER) ?? '—',
+          })}`;
     return [
-      `${event.badge}  ${event.status} ${event.label} · ${duration}${tests}`,
+      `${event.badge}  ${event.status} ${event.label} · ${duration}${tests}${context}`,
     ];
   }
   if (event.type === 'heartbeat') {

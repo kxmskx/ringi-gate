@@ -296,7 +296,12 @@ names it, and `reviewer.lanes` lists every lane with its status. A
 resumable stop (for example `CLAUDE_PROCESS_FAILED` or `TIMEOUT`) resumes
 like any other: the resumed run runs every lane again. With
 `--review-only`, any finding of any lane is `HUMAN_DECISION_REQUIRED`, with
-the merged findings and their `lanes` in the report.
+the merged findings and their `lanes` in the report. With
+[context packages](profile.md#context-packages-paths), a changed file that
+belongs to no lane stops the run with `INVALID_CONFIGURATION` before any
+reviewer starts, in every mode. Without an interactive terminal, the line
+that ends a lane's attempt shows the size of the lane's prompt and its
+number of diff files (`prompt 4178 B · diff files 1`).
 
 ### Checkpoints and resume
 

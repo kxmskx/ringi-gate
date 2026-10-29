@@ -440,6 +440,21 @@ one reviewer per lane instead of one reviewer:
 - **Checks.** The snapshot and the working tree are checked before the
   stage, before and after every attempt of every lane (one check at a time)
   and after the stage; the checks of a single review after it follow.
+- **Context packages.** For a lane with `paths`, the snapshot builder
+  writes the part of the full diff for its files to
+  `.review-context/lane-<id>.diff` before the snapshot is made read-only
+  and hashed, so the existing snapshot checks cover it. The lane's prompt
+  names that file, its SHA-256 and every changed file, with no diff
+  content; the stage checks that the file holds exactly the part it builds
+  from the full diff. A lane without `paths` gets the prompt it always got. The package
+  saves context and is not isolation: every lane still runs on the same
+  complete snapshot and may read the full diff and any file. After the first
+  check and before any reviewer starts, every changed file of the full diff
+  (both sides of a rename, a deleted file too) must belong to at least one
+  lane; otherwise the run stops with `INVALID_CONFIGURATION` naming the
+  uncovered files. This runs in every review stage with lanes, so also in a
+  review-only run and after a resume. Each lane's entry in the report and
+  in the ledger carries `contextBytes` (its prompt size) and `diffFiles`.
 - **Completeness.** The stage waits for every lane and expects one valid
   result per lane. A lane whose reviewer failed, timed out or returned no
   valid result stops the run with that lane's own stop code (for example

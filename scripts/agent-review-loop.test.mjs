@@ -1117,6 +1117,7 @@ test('runner surface contract: internal keys', () => {
       'createPackageManagerGuards',
       'createRunId',
       'createTrustedGateReport',
+      'diffFileSections',
       'environmentReport',
       'establishSecretBaseline',
       'findingFingerprint',
@@ -1127,6 +1128,7 @@ test('runner surface contract: internal keys', () => {
       'listRepositoryPaths',
       'manifestHash',
       'mergeLaneFindings',
+      'normalizeReviewLanePaths',
       'parsePinnedPnpmSpecification',
       'profileLocale',
       'readAnalysisMutationFingerprint',
@@ -1142,6 +1144,8 @@ test('runner surface contract: internal keys', () => {
       'resolveRunnerProfile',
       'resolveSolEffort',
       'resolveTaskMode',
+      'reviewLanePackages',
+      'reviewerPrompt',
       'roleProvider',
       'runChecks',
       'runClaudeReview',
@@ -23609,8 +23613,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // cli.reviewOnlyImplementer; checkpoints and resume: 21 checkpoint.*
   // keys, cli.checkpointOptions, cli.resumeOnce; the run ledger:
   // checkpoint.ledger, ledger.writeFailed, ledger.incomplete; review lanes:
-  // log.reviewerLaneRound, reviewer.laneFailed, stage.reviewLaneAttempt.
-  assert.equal(keys.length, 389);
+  // log.reviewerLaneRound, reviewer.laneFailed, stage.reviewLaneAttempt;
+  // context packages: reviewer.laneCoverage, dashboard.laneContext.
+  assert.equal(keys.length, 391);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -27265,6 +27270,470 @@ test('review lanes: without reviewLanes the single reviewer, its report and its 
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// Context packages (reviewLanes[].paths): the prompt of a lane with paths
+// carries only its part of the diff and the names of every changed file;
+// every lane still reads the whole snapshot.
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+// The prompt of a lane without paths before context packages existed.
+const PINNED_LANE_PROMPT_SHA256 = Object.freeze({
+  en: '6d99dc4ab0a6373c9065fab982e13b2f47922276120c8bc68bb5796cef53e948',
+  pl: '7419bd4702369c20762ddf13923832e31f40a22a5c0bc009e142fd5ccb32d34a',
+});
+const PACKAGE_PROMPT_OPTIONS = Object.freeze({
+  task: { path: 'task.md', markdown: '# Task\n\nFix the parser.\n' },
+  taskMode: 'implementation',
+  instructionsPath: '.review-context/instructions-and-task.md',
+  diffPath: '.review-context/full.diff',
+  gatesPath: '.review-context/trusted-gates.json',
+});
+const PACKAGE_DIFF = Object.freeze([
+  'diff --git a/src/app.js b/src/app.js\nindex 1111111..2222222 100644\n--- a/src/app.js\n+++ b/src/app.js\n@@ -1 +1 @@\n-old\n+new\n',
+  'diff --git a/docs/old.md b/docs/old.md\ndeleted file mode 100644\nindex 3333333..0000000\n--- a/docs/old.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n',
+  'diff --git a/lib/x.js b/src/x.js\nsimilarity index 90%\nrename from lib/x.js\nrename to src/x.js\nindex 4444444..5555555 100644\n--- a/lib/x.js\n+++ b/src/x.js\n@@ -1 +1 @@\n-a\n+b\n',
+  'diff --git "a/caf\\303\\251 \\"q\\".txt" "b/caf\\303\\251 \\"q\\".txt"\nnew file mode 100644\nindex 0000000..6666666\n--- /dev/null\n+++ "b/caf\\303\\251 \\"q\\".txt"\n@@ -0,0 +1 @@\n+x\n',
+  'diff --git a/img.png b/img.png\nnew file mode 100644\nindex 0000000..7777777\nGIT binary patch\nliteral 1\nIcmZo*00001\n\nliteral 0\nHcmV?d00001\n\n',
+  'diff --git name with space.txt name with space.txt\nold mode 100644\nnew mode 100755\n',
+]);
+
+test('context packages: paths are directory prefixes or exact paths, normalized by segments; anything else is INVALID_CONFIGURATION', () => {
+  const lanes = (paths) => [{ id: 'code', focus: 'logic errors', paths }];
+  const resolved = internal.resolveRunnerProfile({
+    ...TEST_PROFILE,
+    reviewLanes: lanes(['./src//', 'docs/guide.md', 'Src/', 'src']),
+  });
+  assert.deepEqual(resolved.reviewLanes[0].paths, ['src/', 'docs/guide.md', 'Src/', 'src']);
+  assert.equal(Object.isFrozen(resolved.reviewLanes[0].paths), true);
+  assert.deepEqual(internal.resolveRunnerProfile(resolved).reviewLanes, resolved.reviewLanes);
+  const many = Array.from({ length: 32 }, (_, index) => `dir-${index}/`);
+  assert.equal(
+    internal.resolveRunnerProfile({ ...TEST_PROFILE, reviewLanes: lanes(many) }).reviewLanes[0].paths.length,
+    32,
+  );
+  const invalid = [
+    [],
+    [...many, 'one-more/'],
+    'src/',
+    [7],
+    [null],
+    [''],
+    ['/'],
+    ['./'],
+    ['.'],
+    ['/abs/path'],
+    ['../up'],
+    ['src/../x'],
+    ['src/*.js'],
+    ['src/?'],
+    ['src/[ab]'],
+    ['{a,b}/'],
+    ['src\\win'],
+    ['tab\there'],
+    ['line\nbreak'],
+    ['next\u0085line'],
+    ['c1\u009f/'],
+    ['src/', './src/'],
+    ['src/a.js', 'src//a.js'],
+  ];
+  for (const paths of invalid) {
+    assert.throws(
+      () => internal.resolveRunnerProfile({ ...TEST_PROFILE, reviewLanes: lanes(paths) }),
+      (error) => error.code === 'INVALID_CONFIGURATION',
+      JSON.stringify(paths),
+    );
+  }
+});
+
+test('context packages: diff sections name both sides of a rename and a deleted file; a lane gets only its sections; coverage is per changed file', () => {
+  const diff = PACKAGE_DIFF.join('');
+  const sections = internal.diffFileSections(diff);
+  assert.deepEqual(sections.map(({ paths }) => paths), [
+    ['src/app.js'],
+    ['docs/old.md'],
+    ['lib/x.js', 'src/x.js'],
+    ['café "q".txt'],
+    ['img.png'],
+    ['name with space.txt'],
+  ]);
+  assert.equal(sections.map(({ text }) => text).join(''), diff);
+  assert.deepEqual(internal.diffFileSections(''), []);
+  assert.equal(internal.diffFileSections('diff --git a/one b/two\n@@ -1 +1 @@\n')[0].paths, undefined);
+  assert.equal(internal.diffFileSections('text before a header\n')[0].paths, undefined);
+  // Mnemonic prefixes, ' b/' inside a name, a copy (its target) and a
+  // rename read from its rename from/to lines.
+  assert.deepEqual(
+    [
+      'diff --git c/src/a.js w/src/a.js\n--- c/src/a.js\n+++ w/src/a.js\n@@ -1 +1 @@\n-1\n+2\n',
+      'diff --git a/x b/y.txt b/x b/y.txt\n--- a/x b/y.txt\n+++ b/x b/y.txt\n@@ -1 +1 @@\n-1\n+2\n',
+      'diff --git a/lib/a.js b/lib/c.js\nsimilarity index 100%\ncopy from lib/a.js\ncopy to lib/c.js\n',
+      'diff --git a/old name.md b/new b/name.md\nsimilarity index 100%\nrename from old name.md\nrename to new b/name.md\n',
+    ].map((text) => internal.diffFileSections(text)[0].paths),
+    [['src/a.js'], ['x b/y.txt'], ['lib/c.js'], ['old name.md', 'new b/name.md']],
+  );
+  const lanes = [
+    { id: 'code', focus: 'logic', paths: ['src/'] },
+    { id: 'docs', focus: 'docs', paths: ['docs/old.md', 'img.png'] },
+  ];
+  const built = internal.reviewLanePackages(lanes, diff);
+  assert.deepEqual(built.files, [
+    'café "q".txt',
+    'docs/old.md',
+    'img.png',
+    'lib/x.js',
+    'name with space.txt',
+    'src/app.js',
+    'src/x.js',
+  ]);
+  const code = built.packages.get('code');
+  assert.equal(code.diff, PACKAGE_DIFF[0] + PACKAGE_DIFF[2]);
+  assert.equal(code.diffHash, sha256(code.diff));
+  assert.equal(code.diffPath, '.review-context/lane-code.diff');
+  assert.deepEqual(code.files, built.files);
+  assert.deepEqual(code.laneFiles, ['lib/x.js', 'src/app.js', 'src/x.js']);
+  assert.equal(built.packages.get('docs').diff, PACKAGE_DIFF[1] + PACKAGE_DIFF[4]);
+  // The old side of the rename is a changed file of its own.
+  assert.deepEqual(built.uncovered, ['café "q".txt', 'lib/x.js', 'name with space.txt']);
+  assert.deepEqual(
+    internal.reviewLanePackages([...lanes, { id: 'all', focus: 'all' }], diff).uncovered,
+    [],
+  );
+  assert.equal(
+    internal.reviewLanePackages([...lanes, { id: 'all', focus: 'all' }], diff).packages.has('all'),
+    false,
+  );
+  // Case-sensitive, and a prefix only at a segment boundary.
+  assert.deepEqual(
+    internal.reviewLanePackages([{ id: 'a', focus: 'a', paths: ['SRC/', 'src/app'] }], PACKAGE_DIFF[0]).uncovered,
+    ['src/app.js'],
+  );
+  // A section whose paths cannot be read goes to every lane.
+  const unreadable = 'diff --git a/one b/two\n@@ -1 +1 @@\n-1\n+2\n';
+  const withUnreadable = internal.reviewLanePackages(lanes, unreadable + PACKAGE_DIFF[0]);
+  assert.equal(withUnreadable.packages.get('docs').diff, unreadable);
+  assert.equal(withUnreadable.packages.get('code').diff, unreadable + PACKAGE_DIFF[0]);
+  assert.deepEqual(withUnreadable.uncovered, []);
+});
+
+test('context packages: a lane prompt without a package is byte for byte the one before packages; a package adds the names and the file of the lane part, never the diff', async () => {
+  const lane = { id: 'security', focus: 'auth and secrets' };
+  const diff = 'diff --git a/src/a.js b/src/a.js\n+x';
+  const lanePackage = {
+    paths: ['src/'],
+    files: ['docs/a.md', 'odd\nname', 'line\u{2028}sep\u{2029}par\u{85}nel', 'src/a.js'],
+    laneFiles: ['src/a.js'],
+    diffPath: '.review-context/lane-security.diff',
+    diffHash: sha256(diff),
+  };
+  for (const [locale, label] of [['en', 'CONTEXT PACKAGE OF LANE security'], ['pl', 'PACZKA KONTEKSTU TORU security']]) {
+    const lanePrompt = promptExports.buildClaudePrompt({ locale, ...PACKAGE_PROMPT_OPTIONS, lane });
+    assert.equal(sha256(lanePrompt), PINNED_LANE_PROMPT_SHA256[locale], locale);
+    const withPackage = promptExports.buildClaudePrompt({
+      locale,
+      ...PACKAGE_PROMPT_OPTIONS,
+      lane,
+      lanePackage,
+    });
+    assert.ok(withPackage.startsWith(`${lanePrompt}\n\n${label}: `), locale);
+    const added = withPackage.slice(lanePrompt.length);
+    assert.ok(added.includes('(src/)'), locale);
+    assert.ok(added.includes(`.review-context/lane-security.diff (`), locale);
+    assert.ok(added.includes(`SHA-256 ${sha256(diff)})`), locale);
+    assert.ok(added.includes('.review-context/full.diff'), locale);
+    assert.ok(
+      added.endsWith(
+        '\n- "docs/a.md"\n- "odd\\nname"\n- "line\\u2028sep\\u2029par\\u0085nel"\n- "src/a.js"',
+      ),
+      locale,
+    );
+    assert.equal(added.includes(diff), false, locale);
+    assert.equal(/[\u{85}\u{2028}\u{2029}]/u.test(added), false, locale);
+    assert.equal(
+      promptExports.buildClaudePrompt({ locale, ...PACKAGE_PROMPT_OPTIONS, lanePackage }),
+      promptExports.buildClaudePrompt({ locale, ...PACKAGE_PROMPT_OPTIONS }),
+    );
+  }
+  const directory = await mkdtemp(join(tmpdir(), 'ringi-lane-package-'));
+  const inputs = [];
+  const runner = {
+    async run(program, args, runOptions) {
+      inputs.push(runOptions.input);
+      return result(JSON.stringify({ structured_output: approveReview().review }));
+    },
+    isCancelled() {
+      return false;
+    },
+  };
+  const snapshot = { root: directory, instructionsPath: 'AGENTS.md', diffPath: 'full.diff', gatesPath: 'gates.json' };
+  try {
+    const review = (fields) =>
+      internal.runClaudeReview({
+        runner,
+        task: PACKAGE_PROMPT_OPTIONS.task,
+        snapshot,
+        timeoutMs: 1_000,
+        lane,
+        ...fields,
+      });
+    await review({ lanePackage });
+    assert.equal(inputs.length, 1);
+    assert.equal(
+      inputs[0],
+      internal.reviewerPrompt({
+        task: PACKAGE_PROMPT_OPTIONS.task,
+        taskMode: 'implementation',
+        snapshot,
+        lane,
+        lanePackage,
+      }),
+    );
+    assert.ok(inputs[0].includes(`SHA-256 ${sha256(diff)}`));
+    for (const fields of [
+      { lanePackage: { ...lanePackage, diffHash: 'f'.repeat(63) } },
+      { lanePackage: { ...lanePackage, diffPath: '.review-context/full.diff' } },
+      { lanePackage, lane: { id: 'other', focus: 'auth and secrets' } },
+      { lanePackage: { ...lanePackage, diff } },
+      { lanePackage: { ...lanePackage, paths: ['src/*'] } },
+      { lanePackage: { ...lanePackage, files: [1] } },
+      { lanePackage, lane: undefined },
+      { lanePackage, taskMode: 'analysis' },
+    ]) {
+      await assert.rejects(review(fields), (error) => error.code === 'INVALID_CONFIGURATION');
+    }
+    assert.equal(inputs.length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('context packages: a lane with paths gets its part of the diff and every name, a lane without paths the full diff; both are measured in the report, the ledger and the terminal', async () => {
+  const directory = await createRepository();
+  const seen = new Map();
+  const events = [];
+  try {
+    await writeFile(join(directory, 'baseline.txt'), 'baseline changed\n');
+    await mkdir(join(directory, 'src'));
+    await writeFile(join(directory, 'src', 'app.js'), 'export const app = 1;\n');
+    const lanes = [
+      { id: 'code', focus: 'logic errors', paths: ['src/'] },
+      { id: 'rest', focus: 'everything else' },
+    ];
+    const { report } = await runReviewOnlyFixture(directory, {
+      createSnapshot: createReviewSnapshot,
+      claudeReview: async (options) => {
+        const laneFile = join(options.snapshot.root, '.review-context', `lane-${options.lane.id}.diff`);
+        const laneStat = await lstat(laneFile).catch(() => undefined);
+        seen.set(options.lane.id, {
+          options,
+          prompt: internal.reviewerPrompt(options),
+          fullDiff: await readFile(join(options.snapshot.root, options.snapshot.diffPath), 'utf8'),
+          laneDiff: laneStat && (await readFile(laneFile, 'utf8')),
+          laneMode: laneStat && laneStat.mode & 0o777,
+        });
+        return approveReview();
+      },
+      workflow: {
+        profile: { ...TEST_PROFILE, reviewLanes: lanes },
+        onEvent: (event) => events.push(event),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.schemaVersion, 1);
+    const code = seen.get('code');
+    const rest = seen.get('rest');
+    assert.equal(code.options.snapshot, rest.options.snapshot);
+    assert.equal(code.fullDiff, rest.fullDiff);
+    assert.match(code.fullDiff, /\+baseline changed/);
+    assert.deepEqual(code.options.lanePackage.files, ['baseline.txt', 'src/app.js']);
+    assert.deepEqual(code.options.lanePackage.laneFiles, ['src/app.js']);
+    // The lane part is a read-only file of the snapshot, counted in its
+    // hash; the prompt names it and its SHA-256 but carries no diff.
+    const { laneDiff, laneMode } = code;
+    assert.match(laneDiff, /\+export const app = 1;/);
+    assert.doesNotMatch(laneDiff, /\+baseline changed/);
+    assert.equal(laneMode, 0o400);
+    assert.equal(rest.laneDiff, undefined);
+    assert.equal(code.options.lanePackage.diffPath, '.review-context/lane-code.diff');
+    assert.equal(code.options.lanePackage.diffHash, sha256(laneDiff));
+    assert.equal(Object.hasOwn(code.options.lanePackage, 'diff'), false);
+    assert.match(
+      code.prompt,
+      new RegExp(`\\.review-context/lane-code\\.diff \\([^)]*: 1, SHA-256 ${sha256(laneDiff)}\\)`),
+    );
+    assert.doesNotMatch(code.prompt, /\+export const app = 1;|\+baseline changed/);
+    assert.ok(code.prompt.endsWith('\n- "baseline.txt"\n- "src/app.js"'));
+    assert.equal(Object.hasOwn(rest.options, 'lanePackage'), false);
+    assert.doesNotMatch(rest.prompt, /lane-code\.diff|CONTEXT PACKAGE|PACZKA KONTEKSTU/);
+    assert.deepEqual(
+      report.reviewer.lanes.map(({ id, contextBytes, diffFiles }) => [id, contextBytes, diffFiles]),
+      [
+        ['code', Buffer.byteLength(code.prompt), 1],
+        ['rest', Buffer.byteLength(rest.prompt), 2],
+      ],
+    );
+    for (const entry of report.reviewer.lanes) {
+      assert.equal(Number.isSafeInteger(entry.durationMs), true);
+      assert.equal(Object.hasOwn(entry, 'costUsd'), false);
+      assert.equal(Object.hasOwn(entry, 'inputTokens'), false);
+    }
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    assert.deepEqual(
+      entries.filter(({ type }) => type === 'review-lane').map(({ data }) => data),
+      report.reviewer.lanes,
+    );
+    const laneEnds = events.filter(({ type, lane }) => type === 'stage:end' && lane);
+    assert.deepEqual(
+      laneEnds.map(({ lane, contextBytes, diffFiles }) => [lane, contextBytes, diffFiles]),
+      report.reviewer.lanes.map(({ id, contextBytes, diffFiles }) => [id, contextBytes, diffFiles]),
+    );
+    const output = createMemoryOutput({ isTTY: false, columns: 200 });
+    const dashboard = createTerminalDashboard({ output, taskPath: 'task.md', environment: {} });
+    assert.equal(dashboard.mode, 'append');
+    dashboard.start();
+    for (const event of events.filter(({ lane }) => lane)) dashboard.event(event);
+    dashboard.dispose();
+    // One line per lane (one attempt each), with the lane's measurements.
+    const lines = output.value().split('\n').filter((line) => / PASS .* · prompt /.test(line));
+    assert.deepEqual(
+      lines.map((line) => {
+        const [, bytes, files] = line.match(/ · prompt (\d+) B · (?:diff files|pliki diffu) (\d+)$/);
+        return [Number(bytes), Number(files)];
+      }),
+      report.reviewer.lanes.map(({ contextBytes, diffFiles }) => [contextBytes, diffFiles]),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('context packages: a renamed file counts on both sides and a deleted file counts; an uncovered file stops review only before any reviewer', async () => {
+  const cases = [
+    [['moved/'], 'baseline.txt', 'moved/baseline.txt'],
+    [['baseline.txt'], 'moved/baseline.txt', 'baseline.txt'],
+    [['moved/', 'baseline.txt']],
+  ];
+  for (const [paths, uncovered, covered] of cases) {
+    const directory = await createRepository();
+    try {
+      await mkdir(join(directory, 'moved'));
+      await rename(join(directory, 'baseline.txt'), join(directory, 'moved', 'baseline.txt'));
+      const profile = {
+        ...TEST_PROFILE,
+        reviewLanes: [{ id: 'moves', focus: 'moved files', paths }],
+      };
+      if (uncovered === undefined) {
+        const { report, claudeCalls } = await runReviewOnlyFixture(directory, {
+          createSnapshot: createReviewSnapshot,
+          workflow: { profile },
+        });
+        assert.equal(report.status, 'APPROVE');
+        assert.equal(claudeCalls, 1);
+        assert.equal(report.reviewer.lanes[0].diffFiles, 2);
+        continue;
+      }
+      const { claudeCalls } = await rejectsReviewOnly(
+        directory,
+        { createSnapshot: createReviewSnapshot, workflow: { profile } },
+        {
+          code: 'INVALID_CONFIGURATION',
+          stage: 'reviewer',
+          assert: (report) => {
+            assert.ok(report.error.includes(JSON.stringify(uncovered)), report.error);
+            assert.equal(report.error.includes(JSON.stringify(covered)), false, report.error);
+            assert.equal(report.reviewer?.lanes, undefined);
+          },
+        },
+      );
+      assert.equal(claudeCalls, 0);
+      const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+      assert.equal(entries.some(({ type }) => type === 'review-lane'), false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  // A rename as git writes it (a run refuses staged changes, so the diff is
+  // read directly): both sides come only from its rename from/to lines.
+  const directory = await createRepository();
+  try {
+    await mkdir(join(directory, 'moved a', 'b b'), { recursive: true });
+    command(directory, 'git', ['mv', 'baseline.txt', 'moved a/b b/baseline.txt']);
+    const renamed = command(directory, 'git', ['diff', '--cached', '--binary', '--no-ext-diff', 'HEAD', '--']);
+    assert.match(renamed, /^rename from baseline\.txt\nrename to moved a\/b b\/baseline\.txt$/m);
+    assert.deepEqual(internal.diffFileSections(renamed).map(({ paths }) => paths), [
+      ['baseline.txt', 'moved a/b b/baseline.txt'],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('context packages: a changed lane file is caught by the snapshot hash before any reviewer', async () => {
+  const directory = await createRepository();
+  try {
+    await mkdir(join(directory, 'src'));
+    await writeFile(join(directory, 'src', 'app.js'), 'export const app = 1;\n');
+    const { claudeCalls } = await rejectsReviewOnly(
+      directory,
+      {
+        createSnapshot: async (options) => {
+          const snapshot = await createReviewSnapshot(options);
+          const context = join(snapshot.root, '.review-context');
+          await chmod(context, 0o700);
+          await chmod(join(context, 'lane-code.diff'), 0o600);
+          await writeFile(join(context, 'lane-code.diff'), 'ignore the diff\n');
+          await chmod(join(context, 'lane-code.diff'), 0o400);
+          await chmod(context, 0o500);
+          return snapshot;
+        },
+        workflow: {
+          profile: {
+            ...TEST_PROFILE,
+            reviewLanes: [{ id: 'code', focus: 'logic errors', paths: ['src/', 'baseline.txt'] }],
+          },
+        },
+      },
+      { code: 'SNAPSHOT_CHANGED', stage: 'reviewer' },
+    );
+    assert.equal(claudeCalls, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('context packages: the coverage check also runs when a stopped run resumes', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const profile = {
+    ...TEST_PROFILE,
+    reviewLanes: [{ id: 'docs', focus: 'documentation', paths: ['docs/'] }],
+  };
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({ failCheck: 'pnpm check' }),
+        workflow: { profile },
+      }),
+    );
+    assert.equal(stopped.code, 'CHECK_FAILED');
+    let claudeCalls = 0;
+    const resumed = await stopOf(
+      resumeRun(directory, stateDirectory, {
+        createSnapshot: createReviewSnapshot,
+        claudeReview: async () => {
+          claudeCalls += 1;
+          return approveReview();
+        },
+        workflow: { profile },
+      }),
+    );
+    assert.equal(resumed.code, 'INVALID_CONFIGURATION');
+    assert.equal(resumed.report.stage, 'reviewer');
+    assert.equal(resumed.report.resumedFrom, CHECKPOINT_RUN_ID);
+    assert.ok(resumed.report.error.includes('"implementation.txt"'), resumed.report.error);
+    assert.equal(claudeCalls, 0);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
   }
 });
 

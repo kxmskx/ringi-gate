@@ -9,6 +9,22 @@ is published by hand, without provenance; later versions are published by
 
 ### Added
 
+- Context packages of review lanes: optional `paths` in a lane (1 to 32
+  directory prefixes ending with `/` or exact file paths, compared by
+  normalized POSIX segments and case-sensitively; globs, absolute paths,
+  `..`, empty entries and duplicates are `INVALID_CONFIGURATION`). A lane
+  with `paths` starts from its own part of the full diff, a read-only file of
+  the snapshot (`.review-context/lane-<id>.diff`) covered by the snapshot
+  hash; its prompt names that file, its SHA-256 and every changed file, but
+  carries no diff content. A lane without `paths` gets the
+  same prompt as before, byte for byte. Every lane still runs on the same
+  complete read-only snapshot: a package saves context and is not
+  isolation. Before any reviewer starts, every changed file (both sides of
+  a rename, a deleted file too) must belong to a lane, otherwise the run
+  stops with `INVALID_CONFIGURATION` naming the uncovered files, also in a
+  review-only run and after a resume. `reviewer.lanes[]` and the ledger's
+  `review-lane` event add `contextBytes` and `diffFiles`, and the terminal
+  line of a lane's attempt shows them. `schemaVersion` stays 1.
 - Review lanes: optional `reviewLanes` in the profile (1 to 4 lanes
   `{ id, focus, profile? }`, validated fail-closed with
   `INVALID_CONFIGURATION`). Each review round runs one reviewer process per

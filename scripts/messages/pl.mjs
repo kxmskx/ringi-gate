@@ -49,6 +49,38 @@ export default Object.freeze({
     'Klasa zadania {taskClass} pomija niezależne review; przebieg review-only wymaga klasy z review.',
   'run.resume':
     'Usuń przyczynę, sprawdź working tree i uruchom zadanie ponownie. Workflow nie cofa zmian wykonawcy.',
+  'checkpoint.options':
+    'Checkpointy i wznowienie wymagają przebiegu z wykonawcą: nie w przebiegu próbnym ani review-only.',
+  'checkpoint.taskMode': 'Checkpointy i wznowienie działają tylko w trybie implementation.',
+  'checkpoint.runId': 'Identyfikator przebiegu do wznowienia nie jest identyfikatorem tego runnera.',
+  'checkpoint.noStateDirectory':
+    'Klucz checkpointów wymaga XDG_STATE_HOME albo HOME jako ścieżki bezwzględnej.',
+  'checkpoint.stateDirectoryUnsafe':
+    'Katalog klucza checkpointów musi być katalogiem bieżącego użytkownika bez dostępu dla innych (tryb 0700), nie dowiązaniem symbolicznym.',
+  'checkpoint.keyMissing': 'Klucz checkpointów nie istnieje: żadnego checkpointu nie można zweryfikować.',
+  'checkpoint.keyUnsafe':
+    'Klucz checkpointów musi być zwykłym plikiem bieżącego użytkownika z trybem 0600 i 32 bajtami, nie dowiązaniem symbolicznym.',
+  'checkpoint.keyWriteFailed': 'Nie udało się utworzyć klucza checkpointów: {detail}',
+  'checkpoint.writeFailed': 'Nie udało się zapisać checkpointu: {detail}',
+  'checkpoint.profileUnhashable': 'Nie można wyznaczyć odcisku profilu dla checkpointu.',
+  'checkpoint.missing': 'Przebieg {runId} nie ma checkpointu do wznowienia.',
+  'checkpoint.structure': 'Checkpoint przebiegu {runId} jest nieczytelny albo uszkodzony; nie jest zaufany.',
+  'checkpoint.signature': 'Checkpoint przebiegu {runId} nie ma poprawnego podpisu; nie jest zaufany.',
+  'checkpoint.revoked':
+    'Przebieg {runId} zatrzymał się kodem, którego nie można wznowić. Decyduje człowiek; uruchom nowy przebieg.',
+  'checkpoint.notResumable':
+    'Przebieg {runId} zatrzymał się kodem {code}, którego nie można wznowić. Decyduje człowiek; uruchom nowy przebieg.',
+  'checkpoint.mismatch':
+    'Checkpoint przebiegu {runId} nie zgadza się z bieżącym stanem: {field}; przebiegu nie można wznowić.',
+  'checkpoint.completed': 'Przebieg {runId} nie ma otwartej fazy; nie ma czego wznawiać.',
+  'checkpoint.roundLimit':
+    'Przebieg {runId} wykorzystał wszystkie rundy ({maxRounds}); wznowienie nie zeruje limitu rund.',
+  'checkpoint.resumeHint':
+    'Usuń przyczynę i kontynuuj poleceniem ringi run <task> --resume {runId}. Working tree musi pozostać takie, jak zapisał checkpoint.',
+  'checkpoint.stopRecordFailed':
+    'Zapis stopu w checkpoincie lub unieważnienie nie powiodły się ({detail}); checkpointy tego przebiegu usunięto i nie można go wznowić.',
+  'checkpoint.neutralizeFailed':
+    'Zapis stopu w checkpoincie lub unieważnienie nie powiodły się ({detail}), a checkpointu przebiegu {runIds} nie udało się usunąć: nie wznawiaj go.',
   'cleanup.failed': 'Cleanup nie powiódł się: {detail}',
   'cleanup.unknownResource': 'Odmowa cleanupu nieznanego zasobu.',
 
@@ -447,6 +479,9 @@ export default Object.freeze({
   'cli.oneTaskPath': 'Wymagana jest dokładnie jedna ścieżka zadania.',
   'cli.reviewOnlyTaskMode': 'Opcja --review-only działa tylko z --task-mode implementation.',
   'cli.reviewOnlyImplementer': 'Opcji {option} nie można podać z --review-only: żaden wykonawca nie startuje.',
+  'cli.checkpointOptions':
+    'Opcje --checkpoint i --resume wymagają przebiegu z wykonawcą w --task-mode implementation: nie z --dry-run ani --review-only.',
+  'cli.resumeOnce': 'Opcję --resume można podać tylko raz.',
   'cli.usage':
     'Użycie: pnpm agents:run -- ścieżka/do/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':

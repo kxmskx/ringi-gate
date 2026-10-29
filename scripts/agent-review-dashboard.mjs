@@ -946,6 +946,7 @@ export function parseAgentArguments(argumentsList, profile) {
   let implementerEffortOption;
   let taskMode = DEFAULT_TASK_MODE;
   let taskModeProvided = false;
+  let resume;
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (argument === '--') continue;
@@ -1057,8 +1058,23 @@ export function parseAgentArguments(argumentsList, profile) {
       implementerEffortOption = effortOption;
       continue;
     }
+    if (argument === '--resume' || argument.startsWith('--resume=')) {
+      if (resume !== undefined) {
+        return { error: t(locale, 'cli.resumeOnce') };
+      }
+      const value =
+        argument === '--resume'
+          ? argumentsList[(index += 1)]
+          : argument.slice('--resume='.length);
+      if (typeof value !== 'string' || value === '') {
+        return { error: t(locale, 'cli.missingValue', { option: '--resume' }) };
+      }
+      resume = value;
+      continue;
+    }
     if (
       [
+        '--checkpoint',
         '--dry-run',
         '--review-only',
         '--verbose',
@@ -1090,10 +1106,20 @@ export function parseAgentArguments(argumentsList, profile) {
       error: t(locale, 'cli.reviewOnlyImplementer', { option: writerOption }),
     };
   }
+  // Checkpoints need a run with a writer in the implementation mode.
+  const checkpoint = flags.has('--checkpoint');
+  if (
+    (checkpoint || resume !== undefined) &&
+    (reviewOnly || flags.has('--dry-run') || taskMode !== 'implementation')
+  ) {
+    return { error: t(locale, 'cli.checkpointOptions') };
+  }
   return {
     taskPath: taskPaths[0],
     taskMode,
     ...(reviewOnly ? { reviewOnly: true } : {}),
+    ...(checkpoint ? { checkpoint: true } : {}),
+    ...(resume !== undefined ? { resume } : {}),
     reviewProfile,
     implementerModel,
     implementerEffort,

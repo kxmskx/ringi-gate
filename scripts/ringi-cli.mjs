@@ -84,6 +84,8 @@ Options:
   --dry-run                     Run the preflight and print the plan; start no agent
   --task-mode implementation|analysis
   --review-only                 Review the uncommitted changes; start no writer
+  --checkpoint                  Save a signed checkpoint after every phase
+  --resume <runId>              Continue a checkpointed run after its last phase
   --review-profile <name>       A review profile of the profile's reviewer
   --implementer-model <id>      The implementer's model
   --implementer-effort <effort> The implementer's effort (profile allowlist)
@@ -245,7 +247,7 @@ async function runCommand(args) {
     : undefined;
   const [criticalOpusAttempt] = criticalOpus?.attempts ?? [];
   const usage = [
-    `Usage: ringi run path/to/task.md [--task-mode ${TASK_MODE_USAGE}] [--implementer-model <id>] [--implementer-effort ${implementer.allowedEfforts.join('|')}] [--review-profile ${Object.keys(reviewer.profiles).join('|')}] [--review-only] [--dry-run] [--verbose] [--no-animation] [--json]`,
+    `Usage: ringi run path/to/task.md [--task-mode ${TASK_MODE_USAGE}] [--implementer-model <id>] [--implementer-effort ${implementer.allowedEfforts.join('|')}] [--review-profile ${Object.keys(reviewer.profiles).join('|')}] [--review-only] [--checkpoint] [--resume <runId>] [--dry-run] [--verbose] [--no-animation] [--json]`,
     ...(criticalOpus
       ? [
           `critical-opus: model ${criticalOpusAttempt.model}; effort ${criticalOpusAttempt.effort}; attempts ${criticalOpus.attempts.length}; fallback ${criticalOpus.fallbackAllowed ? 'allowed' : 'none'}.`,
@@ -322,6 +324,8 @@ async function runCommand(args) {
       implementerEffort: parsed.implementerEffort,
       reviewProfile: parsed.reviewProfile,
       reviewOnly: parsed.reviewOnly,
+      checkpoint: parsed.checkpoint,
+      resume: parsed.resume,
       dryRun: parsed.dryRun,
       verbose: parsed.verbose,
       onEvent: parsed.dryRun ? undefined : presentEvent,

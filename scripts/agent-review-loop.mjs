@@ -88,6 +88,8 @@ if (parsed.error) {
       implementerEffort: parsed.implementerEffort,
       reviewProfile: parsed.reviewProfile,
       reviewOnly: parsed.reviewOnly,
+      checkpoint: parsed.checkpoint,
+      resume: parsed.resume,
       dryRun: parsed.dryRun,
       verbose: parsed.verbose,
       onEvent: parsed.dryRun ? undefined : presentEvent,

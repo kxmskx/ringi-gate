@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import {
   chmod,
   copyFile,
@@ -18,12 +18,19 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { existsSync, realpathSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { registerHooks } from 'node:module';
 import { connect as netConnect } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import nodeTest from 'node:test';
+import nodeTest, { after } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import ts from 'typescript';
 import * as messages from './messages/index.mjs';
@@ -95,6 +102,35 @@ import {
   stringWidth,
   stripAnsi,
 } from './agent-review-dashboard.mjs';
+
+// No test writes in the user's state directory: the checkpoint key of every
+// run in this process resolves to a temporary XDG_STATE_HOME, set before any
+// test starts. The guard test at the end compares the user's directories.
+const USER_STATE_DIRECTORIES = [
+  loopExports.resolveCheckpointStateDirectory(process.env),
+  ...(process.env.HOME
+    ? [join(process.env.HOME, '.local', 'state', 'ringi')]
+    : []),
+].filter((path) => path !== undefined);
+// Each entry under a directory with its kind, size and mtime; null when the
+// directory does not exist.
+function stateDirectoryListing(path) {
+  if (!existsSync(path)) return null;
+  return readdirSync(path, { recursive: true })
+    .map(String)
+    .sort()
+    .map((entry) => {
+      const metadata = lstatSync(join(path, entry));
+      return [entry, metadata.mode, metadata.size, metadata.mtimeMs];
+    });
+}
+const USER_STATE_DIRECTORIES_LISTING = USER_STATE_DIRECTORIES.map(
+  stateDirectoryListing,
+);
+const TEST_STATE_HOME = mkdtempSync(join(tmpdir(), 'ringi-test-state-'));
+process.env.XDG_STATE_HOME = TEST_STATE_HOME;
+// After the guard test; the temporary directory is never a user directory.
+after(() => rmSync(TEST_STATE_HOME, { recursive: true, force: true }));
 
 // Assertions in this file check the runner's Polish messages. Every test runs
 // in the 'pl' locale (code outside a run, e.g. parsers called directly), and
@@ -1136,6 +1172,8 @@ test('runner surface contract: lib named exports', () => {
       'MAX_ACTIVITY_BYTES',
       'MAX_ACTIVITY_ITEMS',
       'MAX_CODEX_ACTIVITY_LINE_BYTES',
+      // The only stops after which a checkpointed run may be resumed.
+      'RESUMABLE_STOP_CODES',
       'REVIEW_PROFILES',
       'SOL_EFFORTS',
       'TASK_CLASSES',
@@ -1146,6 +1184,7 @@ test('runner surface contract: lib named exports', () => {
       'createReviewSnapshot',
       'createStreamingRedactor',
       'internal',
+      'isResumableStop',
       'isSuspiciousSecretPath',
       'isValidCodexModel',
       // Profile loaded from ringi.config.mjs.
@@ -1156,6 +1195,8 @@ test('runner surface contract: lib named exports', () => {
       'normalizeActivityPath',
       'parseClaudeOutput',
       'redactSensitive',
+      // The directory of the checkpoint key.
+      'resolveCheckpointStateDirectory',
       'resolveCodexModel',
       'resolveReviewProfile',
       'resolveSolEffort',
@@ -23510,7 +23551,13 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // A used key is a literal 'namespace.name' with a catalog namespace in the
   // runner code; every such literal exists in the catalog and every key is used.
   // Literals of that shape which are not keys (file and option names):
-  const notKeys = new Set(['config.worktree', 'docker.sock', 'report.json']);
+  const notKeys = new Set([
+    'config.worktree',
+    'docker.sock',
+    'report.json',
+    'checkpoint.json',
+    'checkpoint.key',
+  ]);
   const namespaces = new Set(keys.map((key) => key.split('.')[0]));
   const used = new Set();
   for (const name of [
@@ -23533,8 +23580,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // preflight.reviewerRefused; review only: run.reviewOnlyFindings,
   // run.reviewOnlyTaskMode, run.reviewOnlyNoChanges, run.reviewOnlyClass,
   // plan.reviewOnlyInput, plan.reviewOnlyFindings, cli.reviewOnlyTaskMode,
-  // cli.reviewOnlyImplementer.
-  assert.equal(keys.length, 360);
+  // cli.reviewOnlyImplementer; checkpoints and resume: 21 checkpoint.*
+  // keys, cli.checkpointOptions, cli.resumeOnce.
+  assert.equal(keys.length, 383);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -25305,5 +25353,853 @@ test('review only: the CLI parser accepts --review-only and refuses the analysis
       argumentsList.join(' '),
     );
   }
+});
+
+// Checkpoints and resume. Every test passes its own state directory; the
+// file-wide XDG_STATE_HOME covers the default.
+const CHECKPOINT_RUN_ID = '2026-08-08T12-00-00-000Z--1234abcd';
+const RESUMED_RUN_ID = '2026-08-08T12-00-00-000Z--5678abcd';
+
+async function createStateDirectory() {
+  return join(await mkdtemp(join(tmpdir(), 'ringi-test-checkpoint-')), 'ringi');
+}
+
+function checkpointRun(directory, stateDirectory, overrides = {}) {
+  return runFixture(directory, {
+    ...overrides,
+    workflow: { checkpoint: true, stateDirectory, ...overrides.workflow },
+  });
+}
+
+function resumeRun(directory, stateDirectory, overrides = {}) {
+  return runFixture(directory, {
+    ...overrides,
+    workflow: {
+      resume: CHECKPOINT_RUN_ID,
+      stateDirectory,
+      randomId: '5678abcd',
+      ...overrides.workflow,
+    },
+  });
+}
+
+function stopOf(run) {
+  return run.then(
+    () => assert.fail('the run should stop'),
+    (error) => error,
+  );
+}
+
+function checkpointPath(directory, runId = CHECKPOINT_RUN_ID) {
+  return join(directory, '.agent-review-loop', 'runs', runId, 'checkpoint.json');
+}
+
+function ranGate(runner, name) {
+  return runner.calls.some(
+    ({ program, args }) =>
+      program === 'pnpm' && `pnpm ${args.join(' ')}` === executedCheck(name),
+  );
+}
+
+// A stop after the gates: the reviewer has no capacity in any attempt.
+function stopAtReview(directory, stateDirectory, overrides = {}) {
+  return stopOf(
+    checkpointRun(directory, stateDirectory, {
+      claudeReview: async () => {
+        throw syntheticClaudeFailure('overloaded_error');
+      },
+      ...overrides,
+    }),
+  );
+}
+
+async function removeCheckpointFixture(directory, stateDirectory) {
+  await rm(directory, { recursive: true, force: true });
+  await rm(dirname(stateDirectory), { recursive: true, force: true });
+}
+
+test('checkpoint: a run without checkpoint or resume writes no checkpoint and no key, and its report has no new fields', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const { report } = await runFixture(directory, {
+      workflow: { stateDirectory },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(existsSync(stateDirectory), false);
+    assert.equal(existsSync(checkpointPath(directory)), false);
+    assert.equal('checkpoint' in report, false);
+    assert.equal('resumedFrom' in report, false);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('resume after a failed gate (flaky) runs the gates again without the writer', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({ failCheck: 'pnpm check' }),
+      }),
+    );
+    assert.equal(stopped.code, 'CHECK_FAILED');
+    assert.deepEqual(stopped.report.checkpoint, {
+      path: `.agent-review-loop/runs/${CHECKPOINT_RUN_ID}/checkpoint.json`,
+      signature: 'hmac-sha256',
+      phase: 'implementer',
+      round: 1,
+      resumable: true,
+    });
+    assert.match(stopped.report.resume, /--resume 2026-08-08T12-00-00-000Z--1234abcd/);
+    assert.equal((await lstat(stateDirectory)).mode & 0o777, 0o700);
+    const key = await lstat(join(stateDirectory, 'checkpoint.key'));
+    assert.equal(key.mode & 0o777, 0o600);
+    assert.equal(key.size, 32);
+    const checkpointFile = JSON.parse(await readFile(checkpointPath(directory), 'utf8'));
+    assert.deepEqual(Object.keys(checkpointFile), ['format', 'version', 'payload', 'signature']);
+    assert.equal(JSON.parse(checkpointFile.payload).stop.code, 'CHECK_FAILED');
+
+    const runner = createMockRunner();
+    const { report, codexCalls, claudeCalls } = await resumeRun(
+      directory,
+      stateDirectory,
+      { runner },
+    );
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.resumedFrom, CHECKPOINT_RUN_ID);
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(codexCalls, 0);
+    assert.equal(claudeCalls, 1);
+    assert.deepEqual(report.rounds.map(({ round }) => round), [1]);
+    assert.equal(ranGate(runner, 'pnpm check'), true);
+    assert.deepEqual(report.checkpoint, {
+      path: `.agent-review-loop/runs/${RESUMED_RUN_ID}/checkpoint.json`,
+      signature: 'hmac-sha256',
+      phase: 'review',
+      round: 1,
+    });
+    assert.deepEqual(
+      JSON.parse(
+        JSON.parse(await readFile(checkpointPath(directory, RESUMED_RUN_ID), 'utf8'))
+          .payload,
+      ).lineage,
+      [CHECKPOINT_RUN_ID, RESUMED_RUN_ID],
+    );
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('resume after INTERRUPTED in the gates continues from the writer phase', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({ interruptCheck: 'pnpm check' }),
+      }),
+    );
+    assert.equal(stopped.code, 'INTERRUPTED');
+    assert.equal(stopped.report.checkpoint.resumable, true);
+    const { report, codexCalls } = await resumeRun(directory, stateDirectory);
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(codexCalls, 0);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('resume after a reviewer without capacity runs the gates of the same round again without the writer', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopAtReview(directory, stateDirectory);
+    assert.equal(stopped.code, 'CLAUDE_PROCESS_FAILED');
+    assert.equal(stopped.report.checkpoint.phase, 'checks');
+    assert.equal(stopped.report.checkpoint.resumable, true);
+    const payload = JSON.parse(
+      JSON.parse(await readFile(checkpointPath(directory), 'utf8')).payload,
+    );
+    assert.equal('gates' in payload, false);
+    const runner = createMockRunner();
+    const { report, codexCalls, claudeCalls } = await resumeRun(
+      directory,
+      stateDirectory,
+      { runner },
+    );
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(codexCalls, 0);
+    assert.equal(claudeCalls, 1);
+    assert.equal(ranGate(runner, 'pnpm check'), true);
+    assert.deepEqual(report.rounds.map(({ round }) => round), [1]);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+// A checkpoint signed with the right key by code that read it: whatever it
+// claims, the gates and the review run again and decide the result.
+async function forgeCheckpoint(directory, stateDirectory, change) {
+  const key = await readFile(join(stateDirectory, 'checkpoint.key'));
+  const file = JSON.parse(await readFile(checkpointPath(directory), 'utf8'));
+  const payload = JSON.parse(file.payload);
+  const forged = JSON.stringify(change(payload));
+  await writeFile(
+    checkpointPath(directory),
+    JSON.stringify({
+      ...file,
+      payload: forged,
+      signature: createHmac('sha256', key).update(forged).digest('hex'),
+    }),
+  );
+}
+
+test('a forged checkpoint signed with the right key cannot approve: the gates and the review run again', async (t) => {
+  const forgedRun = async (claims, overrides) => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    try {
+      await stopAtReview(directory, stateDirectory, {
+        workflow: { maxRounds: overrides.workflow?.maxRounds },
+      });
+      await forgeCheckpoint(directory, stateDirectory, (payload) => ({
+        ...payload,
+        stop: null,
+        gates: {
+          round: payload.round,
+          state: '0'.repeat(64),
+          report: { gates: [{ name: 'pnpm check', status: 'PASS', exitCode: 0 }] },
+        },
+        findings: { ...payload.findings, latest: [], pending: [] },
+        ...claims,
+      }));
+      const runner = overrides.runner ?? createMockRunner();
+      const outcome = await resumeRun(directory, stateDirectory, {
+        ...overrides,
+        runner,
+      }).then(
+        (value) => value,
+        (error) => ({ error }),
+      );
+      return { ...outcome, runner };
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  };
+  await t.test('a failing gate stops the run', async () => {
+    let claudeCalls = 0;
+    const { error, runner } = await forgedRun(
+      { phase: 'checks' },
+      {
+        runner: createMockRunner({ failCheck: 'pnpm check' }),
+        claudeReview: async () => {
+          claudeCalls += 1;
+          return approveReview();
+        },
+      },
+    );
+    assert.equal(error?.code, 'CHECK_FAILED');
+    assert.equal(ranGate(runner, 'pnpm check'), true);
+    assert.equal(claudeCalls, 0);
+  });
+  await t.test('passing gates and a fresh review with findings do not approve', async () => {
+    const { error, runner } = await forgedRun(
+      { phase: 'checks' },
+      {
+        claudeReview: async () => requestChanges(1),
+        workflow: { maxRounds: 1 },
+      },
+    );
+    assert.equal(error?.code, 'MAX_ROUNDS');
+    assert.equal(error.report.status, 'STOPPED');
+    assert.equal(ranGate(runner, 'pnpm check'), true);
+  });
+  await t.test('approval only after passing gates and a fresh review without findings', async () => {
+    const { report, error, runner, claudeCalls } = await forgedRun(
+      { phase: 'checks' },
+      {},
+    );
+    assert.equal(error, undefined);
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(claudeCalls, 1);
+    assert.equal(ranGate(runner, 'pnpm check'), true);
+  });
+  await t.test('a review phase without pending findings is refused', async () => {
+    const { error, runner } = await forgedRun({ phase: 'review' }, {});
+    assert.equal(error?.code, 'HUMAN_DECISION_REQUIRED');
+    assert.equal(error.report.status, 'STOPPED');
+    assert.equal(ranGate(runner, 'pnpm check'), false);
+  });
+});
+
+// A signed checkpoint forged after a stop at the review; the resume stops
+// in the preflight without a gate, with a report.
+async function forgedResumeStop(change, maxRounds = 3) {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    await stopAtReview(directory, stateDirectory, { workflow: { maxRounds } });
+    await forgeCheckpoint(directory, stateDirectory, change);
+    const runner = createMockRunner();
+    const error = await stopOf(
+      resumeRun(directory, stateDirectory, { runner, workflow: { maxRounds } }),
+    );
+    assert.equal(error.report.status, 'STOPPED');
+    assert.equal(ranGate(runner, 'pnpm check'), false);
+    return error;
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+}
+
+test('resume refuses a signed checkpoint of any phase past the round limit', async (t) => {
+  for (const phase of ['implementer', 'checks']) {
+    await t.test(phase, async () => {
+      const error = await forgedResumeStop((payload) => ({
+        ...payload,
+        stop: null,
+        phase,
+        round: 4,
+      }));
+      assert.equal(error.code, 'HUMAN_DECISION_REQUIRED');
+      assert.match(error.message, /3/);
+    });
+  }
+});
+
+test('resume validates the signed writer report and findings again', async (t) => {
+  const cases = [
+    ['a writer report without its fields', () => ({
+      codexReport: { status: 'COMPLETED' },
+    })],
+    ['no writer report', () => ({ codexReport: null })],
+    ['findings that are not an object', () => ({ findings: null })],
+    ['a pending finding without an id', (payload) => ({
+      findings: { ...payload.findings, pending: [{ severity: 'HIGH' }] },
+    })],
+    ['an invalid writer response', (payload) => ({
+      findings: { ...payload.findings, responses: [{ findingId: 'x' }] },
+    })],
+    ['identities that are not pairs', (payload) => ({
+      findings: { ...payload.findings, identities: ['x'] },
+    })],
+  ];
+  for (const [name, change] of cases) {
+    await t.test(name, async () => {
+      const error = await forgedResumeStop((payload) => ({
+        ...payload,
+        stop: null,
+        ...change(payload),
+      }));
+      assert.equal(error.code, 'INTEGRITY_CHECK_FAILED');
+    });
+  }
+});
+
+test('an invalid writer report after a Git directory change is not resumable', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: claudeVersionRunner(),
+        codexRound: async ({ round, findings }) => {
+          if (round === 1) {
+            await writeFile(join(directory, 'implementation.txt'), 'runda 1\n');
+            return completedCodex(round, {}, findings);
+          }
+          await writeFile(join(directory, '.git', 'info', 'exclude'), 'x\n', {
+            flag: 'a',
+          });
+          return { ...completedCodex(round), report: { status: 'COMPLETED' } };
+        },
+        claudeReview: async ({ round }) => requestChanges(round ?? 1),
+        workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE, maxRounds: 3 },
+      }),
+    );
+    assert.equal(stopped.code, 'INVALID_AGENT_OUTPUT');
+    assert.ok(
+      stopped.report.integrityViolations.some(
+        ({ code, stage }) =>
+          code === 'UNEXPECTED_GIT_MUTATION' && stage === 'post-implementer',
+      ),
+    );
+    assert.equal(stopped.report.checkpoint.resumable, false);
+    assert.doesNotMatch(stopped.report.resume, /--resume/);
+    const refused = await stopOf(
+      resumeRun(directory, stateDirectory, {
+        runner: claudeVersionRunner(),
+        workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE, maxRounds: 3 },
+      }),
+    );
+    assert.equal(refused.code, 'HUMAN_DECISION_REQUIRED');
+    assert.match(refused.message, /nie można wznowić/);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('a stop that cannot be recorded fails closed: the lineage is revoked and the checkpoint removed', async (t) => {
+  await t.test('the stop record fails: the run is revoked', async () => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    let saved;
+    try {
+      // The reviewer fails after the checkpoint of the gates; the stop
+      // record cannot replace checkpoint.json (a directory now).
+      const stopped = await stopAtReview(directory, stateDirectory, {
+        claudeReview: async () => {
+          if (saved === undefined) {
+            saved = await readFile(checkpointPath(directory));
+            await rm(checkpointPath(directory));
+            await mkdir(join(checkpointPath(directory), 'blocked'), {
+              recursive: true,
+            });
+          }
+          throw syntheticClaudeFailure('overloaded_error');
+        },
+      });
+      assert.equal(stopped.code, 'CLAUDE_PROCESS_FAILED');
+      assert.equal(stopped.report.checkpoint.resumable, false);
+      assert.equal(stopped.report.checkpoint.path, null);
+      assert.doesNotMatch(stopped.report.resume, /--resume/);
+      assert.match(stopped.report.warnings.join('\n'), /nie wznawiaj/);
+      assert.equal(
+        existsSync(join(stateDirectory, 'stopped', CHECKPOINT_RUN_ID)),
+        true,
+      );
+      // The last checkpoint before the stop, put back: still refused.
+      await rm(checkpointPath(directory), { recursive: true });
+      await writeFile(checkpointPath(directory), saved);
+      const error = await stopOf(resumeRun(directory, stateDirectory));
+      assert.equal(error.code, 'HUMAN_DECISION_REQUIRED');
+      assert.match(error.message, /nie można wznowić/);
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  });
+  await t.test('the revocation fails: the checkpoint is removed', async () => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    try {
+      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+      await writeFile(join(stateDirectory, 'stopped'), '');
+      const stopped = await stopOf(
+        checkpointRun(directory, stateDirectory, {
+          claudeReview: async ({ round }) => requestChanges(round),
+          workflow: { maxRounds: 1 },
+        }),
+      );
+      assert.equal(stopped.code, 'MAX_ROUNDS');
+      assert.equal(stopped.report.checkpoint.resumable, false);
+      assert.match(stopped.report.warnings.join('\n'), /usunięto/);
+      assert.equal(existsSync(checkpointPath(directory)), false);
+      const error = await stopOf(
+        resumeRun(directory, stateDirectory, { workflow: { maxRounds: 1 } }),
+      );
+      assert.equal(error.code, 'INVALID_CONFIGURATION');
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  });
+});
+
+test('resume keeps the ids of findings whose text the checkpoint redacted', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const secretFinding = (round) =>
+    requestChanges(round, { anchor: 'API_KEY=placeholder-value' });
+  try {
+    let gateRuns = 0;
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({
+          onRun: (program, args) => {
+            if (
+              program !== 'pnpm' ||
+              `pnpm ${args.join(' ')}` !== executedCheck('pnpm check')
+            )
+              return undefined;
+            gateRuns += 1;
+            return gateRuns === 2
+              ? result('', 130, 'Ctrl+C', { signal: 'SIGINT' })
+              : undefined;
+          },
+        }),
+        claudeReview: async ({ round }) => secretFinding(round ?? 1),
+        workflow: { maxRounds: 3 },
+      }),
+    );
+    assert.equal(stopped.code, 'INTERRUPTED');
+    const firstId = stopped.report.rounds[0].claude.findings[0].findingId;
+    const payload = JSON.parse(
+      JSON.parse(await readFile(checkpointPath(directory), 'utf8')).payload,
+    );
+    assert.doesNotMatch(JSON.stringify(payload), /placeholder-value/);
+    const error = await stopOf(
+      resumeRun(directory, stateDirectory, {
+        claudeReview: async () => secretFinding(2),
+        workflow: { maxRounds: 3 },
+      }),
+    );
+    assert.notEqual(error.code, 'FINDING_ID_COLLISION');
+    assert.equal(error.report.rounds[0].claude.findings[0].findingId, firstId);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('resume refuses a checkpoint that is not signed with the key, or without a safe key', async (t) => {
+  const refused = async (prepare, code, pattern) => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    try {
+      await stopAtReview(directory, stateDirectory);
+      await prepare({ directory, stateDirectory });
+      let claudeCalls = 0;
+      const error = await stopOf(
+        resumeRun(directory, stateDirectory, {
+          claudeReview: async () => {
+            claudeCalls += 1;
+            return approveReview();
+          },
+        }),
+      );
+      assert.equal(error.code, code);
+      assert.equal(error.stage, 'preflight');
+      assert.match(error.message, pattern);
+      assert.equal(claudeCalls, 0);
+      assert.equal('resumedFrom' in error.report, false);
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  };
+  await t.test('a changed payload', () =>
+    refused(
+      async ({ directory }) => {
+        const file = JSON.parse(await readFile(checkpointPath(directory), 'utf8'));
+        const payload = JSON.parse(file.payload);
+        payload.round = 2;
+        file.payload = JSON.stringify(payload);
+        await writeFile(checkpointPath(directory), JSON.stringify(file));
+      },
+      'INTEGRITY_CHECK_FAILED',
+      /podpisu/,
+    ),
+  );
+  await t.test('a signature of another key', () =>
+    refused(
+      async ({ stateDirectory }) => {
+        await chmod(join(stateDirectory, 'checkpoint.key'), 0o600);
+        await writeFile(join(stateDirectory, 'checkpoint.key'), randomBytes(32));
+      },
+      'INTEGRITY_CHECK_FAILED',
+      /podpisu/,
+    ),
+  );
+  await t.test('a missing key', () =>
+    refused(
+      ({ stateDirectory }) => rm(join(stateDirectory, 'checkpoint.key')),
+      'INTEGRITY_CHECK_FAILED',
+      /nie istnieje/,
+    ),
+  );
+  await t.test('a key readable by others', () =>
+    refused(
+      ({ stateDirectory }) => chmod(join(stateDirectory, 'checkpoint.key'), 0o644),
+      'INTEGRITY_CHECK_FAILED',
+      /0600/,
+    ),
+  );
+  await t.test('a key behind a symbolic link', () =>
+    refused(
+      async ({ stateDirectory }) => {
+        const key = join(stateDirectory, 'checkpoint.key');
+        await rename(key, `${key}.real`);
+        await symlink(`${key}.real`, key);
+      },
+      'INTEGRITY_CHECK_FAILED',
+      /0600/,
+    ),
+  );
+  await t.test('a key directory open to others', () =>
+    refused(
+      ({ stateDirectory }) => chmod(stateDirectory, 0o755),
+      'INTEGRITY_CHECK_FAILED',
+      /0700/,
+    ),
+  );
+  await t.test('a run without a checkpoint', () =>
+    refused(
+      ({ directory }) => rm(checkpointPath(directory)),
+      'INVALID_CONFIGURATION',
+      /nie ma checkpointu/,
+    ),
+  );
+});
+
+test('resume refuses another HEAD, task, profile, runner or working tree', async (t) => {
+  const refused = async (prepare, pattern, workflow = {}) => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    try {
+      await stopAtReview(directory, stateDirectory);
+      const extra = (await prepare?.(directory)) ?? {};
+      const error = await stopOf(
+        resumeRun(directory, stateDirectory, {
+          workflow: { ...workflow, ...extra },
+        }),
+      );
+      assert.equal(error.code, 'HUMAN_DECISION_REQUIRED');
+      assert.equal(error.stage, 'preflight');
+      assert.match(error.message, pattern);
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  };
+  await t.test('HEAD', () =>
+    refused(async (directory) => {
+      await writeFile(join(directory, 'extra.txt'), 'extra\n');
+      command(directory, 'git', ['add', 'extra.txt']);
+      command(directory, 'git', ['commit', '--quiet', '-m', 'test: extra']);
+    }, /HEAD/),
+  );
+  await t.test('task', () =>
+    refused(
+      (directory) =>
+        writeFile(join(directory, 'task.md'), `${taskMarkdown}\nZmiana.\n`),
+      /task/,
+    ),
+  );
+  await t.test('profile', () =>
+    refused(undefined, /profile/, {
+      profile: deepFreeze({ ...TEST_PROFILE, title: 'OTHER // AGENT WORKFLOW' }),
+    }),
+  );
+  await t.test('runner', () =>
+    refused(async () => {
+      const { root } = await createRunnerCopy();
+      await writeFile(
+        join(root, 'scripts', 'messages', 'pl.mjs'),
+        `${await readFile(join(root, 'scripts', 'messages', 'pl.mjs'), 'utf8')}\n// copy\n`,
+      );
+      return { runnerFingerprint: internal.readRunnerFingerprint(root) };
+    }, /runner/),
+  );
+  await t.test('working tree', () =>
+    refused(
+      (directory) => writeFile(join(directory, 'implementation.txt'), 'inna\n'),
+      /working tree/,
+    ),
+  );
+});
+
+test('a stop that is not resumable is recorded and revoked; resume refuses it', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        claudeReview: async ({ round }) => requestChanges(round),
+        workflow: { maxRounds: 1 },
+      }),
+    );
+    assert.equal(stopped.code, 'MAX_ROUNDS');
+    assert.equal(stopped.report.checkpoint.resumable, false);
+    assert.doesNotMatch(stopped.report.resume, /--resume/);
+    const marker = join(stateDirectory, 'stopped', CHECKPOINT_RUN_ID);
+    assert.equal(existsSync(marker), true);
+    const revoked = await stopOf(
+      resumeRun(directory, stateDirectory, { workflow: { maxRounds: 1 } }),
+    );
+    assert.equal(revoked.code, 'HUMAN_DECISION_REQUIRED');
+    assert.match(revoked.message, /nie można wznowić/);
+    // Without the marker the signed stop record refuses it too.
+    await rm(marker);
+    const recorded = await stopOf(
+      resumeRun(directory, stateDirectory, { workflow: { maxRounds: 1 } }),
+    );
+    assert.equal(recorded.code, 'HUMAN_DECISION_REQUIRED');
+    assert.match(recorded.message, /MAX_ROUNDS/);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('resumable stops are an allowlist: every other stop code of the runner, and any stop with integrity violations, is not resumable', async () => {
+  const { RESUMABLE_STOP_CODES, isResumableStop } = loopExports;
+  assert.equal(Object.isFrozen(RESUMABLE_STOP_CODES), true);
+  assert.deepEqual(RESUMABLE_STOP_CODES, [
+    'CHECK_FAILED',
+    'TIMEOUT',
+    'INTERRUPTED',
+    'PROCESS_ERROR',
+    'PROCESS_FAILED',
+    'CLAUDE_PROCESS_FAILED',
+    'CLAUDE_FALLBACK_FAILED',
+    'OUTPUT_LIMIT_EXCEEDED',
+    'INVALID_AGENT_OUTPUT',
+  ]);
+  const codes = collectRunnerSurfaceLiterals(
+    await readFile(new URL('./agent-review-loop-lib.mjs', import.meta.url), 'utf8'),
+    'code',
+  );
+  for (const code of RESUMABLE_STOP_CODES) assert.ok(codes.includes(code), code);
+  for (const code of [...codes, 'SOME_FUTURE_CODE', undefined]) {
+    assert.equal(
+      isResumableStop(new AgentWorkflowError('Stop.', { code })),
+      RESUMABLE_STOP_CODES.includes(code),
+      String(code),
+    );
+  }
+  for (const code of RESUMABLE_STOP_CODES) {
+    const error = new AgentWorkflowError('Stop.', { code });
+    error.integrityViolations = [{ code: 'WORKING_TREE_CHANGED' }];
+    assert.equal(isResumableStop(error), false, code);
+  }
+});
+
+test('resume counts the rounds of every run: the round limit is not reset', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    let gateRuns = 0;
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({
+          onRun: (program, args) => {
+            if (
+              program !== 'pnpm' ||
+              `pnpm ${args.join(' ')}` !== executedCheck('pnpm check')
+            )
+              return undefined;
+            gateRuns += 1;
+            return gateRuns === 2
+              ? result('', 130, 'Ctrl+C', { signal: 'SIGINT' })
+              : undefined;
+          },
+        }),
+        claudeReview: async ({ round }) => requestChanges(round ?? 1),
+        workflow: { maxRounds: 2 },
+      }),
+    );
+    assert.equal(stopped.code, 'INTERRUPTED');
+    assert.deepEqual(stopped.report.checkpoint, {
+      path: `.agent-review-loop/runs/${CHECKPOINT_RUN_ID}/checkpoint.json`,
+      signature: 'hmac-sha256',
+      phase: 'implementer',
+      round: 2,
+      resumable: true,
+    });
+    const error = await stopOf(
+      resumeRun(directory, stateDirectory, {
+        claudeReview: async () => requestChanges(2),
+        workflow: { maxRounds: 2 },
+      }),
+    );
+    assert.equal(error.code, 'MAX_ROUNDS');
+    assert.equal(error.report.resumedFrom, CHECKPOINT_RUN_ID);
+    assert.deepEqual(error.report.rounds.map(({ round }) => round), [2]);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('checkpoint options: a dry run, a review-only run, the analysis mode and an invalid run id stop in the preflight', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    for (const [workflow, code] of [
+      [{ checkpoint: true, dryRun: true }, 'INVALID_CONFIGURATION'],
+      [{ resume: CHECKPOINT_RUN_ID, reviewOnly: true }, 'INVALID_CONFIGURATION'],
+      [{ resume: '../other' }, 'INVALID_CONFIGURATION'],
+      [{ checkpoint: true, taskMode: 'analysis' }, 'INVALID_TASK_MODE'],
+    ]) {
+      const error = await stopOf(
+        runFixture(directory, { workflow: { stateDirectory, ...workflow } }),
+      );
+      assert.equal(error.code, code, JSON.stringify(workflow));
+      assert.equal(error.stage, 'preflight');
+    }
+    assert.equal(existsSync(stateDirectory), false);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('checkpoint key: by default in $XDG_STATE_HOME/ringi, which this test file points to a temporary directory', async () => {
+  assert.equal(
+    loopExports.resolveCheckpointStateDirectory({
+      XDG_STATE_HOME: '/state',
+      HOME: '/home/user',
+    }),
+    '/state/ringi',
+  );
+  assert.equal(
+    loopExports.resolveCheckpointStateDirectory({
+      XDG_STATE_HOME: 'relative',
+      HOME: '/home/user',
+    }),
+    '/home/user/.local/state/ringi',
+  );
+  assert.equal(loopExports.resolveCheckpointStateDirectory({}), undefined);
+  const directory = await createRepository();
+  try {
+    const { report } = await runFixture(directory, {
+      workflow: { checkpoint: true },
+    });
+    assert.equal(report.checkpoint.phase, 'review');
+    assert.equal(
+      existsSync(join(TEST_STATE_HOME, 'ringi', 'checkpoint.key')),
+      true,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('parseAgentArguments: --checkpoint and --resume', () => {
+  assert.equal(parseAgentArguments(['task.md']).checkpoint, undefined);
+  assert.equal(parseAgentArguments(['task.md']).resume, undefined);
+  assert.equal(
+    parseAgentArguments(['task.md', '--checkpoint']).checkpoint,
+    true,
+  );
+  assert.equal(
+    parseAgentArguments(['task.md', '--resume', CHECKPOINT_RUN_ID]).resume,
+    CHECKPOINT_RUN_ID,
+  );
+  assert.equal(
+    parseAgentArguments([`--resume=${CHECKPOINT_RUN_ID}`, 'task.md']).resume,
+    CHECKPOINT_RUN_ID,
+  );
+  for (const argumentsList of [
+    ['task.md', '--checkpoint', '--dry-run'],
+    ['task.md', '--resume', CHECKPOINT_RUN_ID, '--review-only'],
+    ['task.md', '--checkpoint', '--task-mode', 'analysis'],
+  ]) {
+    assert.match(
+      parseAgentArguments(argumentsList).error,
+      /--checkpoint i --resume/,
+      argumentsList.join(' '),
+    );
+  }
+  assert.match(
+    parseAgentArguments(['task.md', '--resume', 'a', '--resume', 'b']).error,
+    /tylko raz/,
+  );
+  assert.match(parseAgentArguments(['task.md', '--resume']).error, /--resume/);
+});
+
+// Runs last: no test wrote in the user's state directory.
+test('guard: tests leave the user state directory as it was', () => {
+  assert.notEqual(TEST_STATE_HOME, undefined);
+  assert.equal(process.env.XDG_STATE_HOME, TEST_STATE_HOME);
+  assert.deepEqual(
+    USER_STATE_DIRECTORIES.map(stateDirectoryListing),
+    USER_STATE_DIRECTORIES_LISTING,
+  );
 });
 

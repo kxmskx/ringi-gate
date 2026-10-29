@@ -457,6 +457,57 @@ flowchart TD
    `HUMAN_DECISION_REQUIRED` (stage `reviewer`) and the full finding state
    in the report; there is no correction round.
 
+### Checkpoints and resume
+
+Checkpoints are opt-in. With `--checkpoint` (see
+[cli.md](cli.md#checkpoints-and-resume)) the runner saves a signed
+checkpoint after each completed phase: after the writer's round and its
+integrity checks, after the gates and their checks (the state before the
+review), and after the review. `--resume <runId>` runs the full preflight,
+verifies the checkpoint and continues with its round number and finding
+state; the round limit counts every run of the lineage. A resume skips only
+the writer of the interrupted round: the gates, the review snapshot and the
+review always run again, and a checkpoint holds no gate results.
+
+Threat model. `.agent-review-loop/` is in the repository and outside the
+manifest, so the writer, whose sandbox may write the working tree, may
+change any file there. Nothing from an earlier run is trusted because it
+lies there:
+
+- A checkpoint is accepted only with a valid HMAC (SHA-256) over its exact
+  payload text, made with a 32-byte key in the user's state directory
+  (`$XDG_STATE_HOME/ringi` or `~/.local/state/ringi`), outside the
+  repository. The signature is compared in constant time.
+- No key, a key or key directory with looser permissions, another owner or a
+  symbolic link, a malformed file, a wrong signature or another run id:
+  `INTEGRITY_CHECK_FAILED`. The run never falls back to a run from the
+  start, so a refused resume cannot be mistaken for a continued one.
+- A valid checkpoint for another task, profile, runner, branch, `HEAD`,
+  round limit or working tree (manifest and diff against `HEAD`):
+  `HUMAN_DECISION_REQUIRED`. Every integrity check of the run itself still
+  applies after the resume.
+- A stop that is not resumable is recorded in the signed checkpoint and
+  revokes every run of the lineage with a marker in the state directory, so
+  restoring an older signed checkpoint of the same run is refused too. When
+  the record or the revocation fails, the run fails closed: the lineage is
+  revoked, its checkpoints are removed and the report warns.
+
+Resumable stops are an allowlist (`RESUMABLE_STOP_CODES`, listed in
+[cli.md](cli.md#checkpoints-and-resume)): a failed or interrupted gate, a
+failed or timed-out process and unusable agent output. Every other code,
+including one added later, is not resumable, and neither is any stop with
+`integrityViolations`.
+
+Limits. The signature detects a checkpoint changed without the key. It is
+not a boundary against code that runs as the user: the writer (sandboxes
+restrict writes, not reads in the user's home) and the gates (outside any
+sandbox) can read the key, and a gate can also remove revocation markers. A
+checkpoint forged with the key can set the round or the findings history a
+resume continues with. It cannot approve a run: the gates and the review
+always run again, and `APPROVE` requires passing fresh gates and, for a
+task class with review, a fresh review with no unresolved findings. Without `--checkpoint` or `--resume`
+nothing of this applies and nothing is written in the state directory.
+
 ## Task modes and classes
 
 - `--task-mode implementation` (default): the flow above.

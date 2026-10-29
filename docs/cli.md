@@ -196,7 +196,8 @@ ringi doctor: 15 ok, 0 warn, 0 fail
 
 ```sh
 ringi run path/to/task.md [--dry-run] [--task-mode implementation|analysis]
-  [--review-only] [--review-profile <name>] [--implementer-model <id>]
+  [--review-only] [--checkpoint] [--resume <runId>]
+  [--review-profile <name>] [--implementer-model <id>]
   [--implementer-effort <effort>] [--verbose] [--no-animation] [--json]
 ```
 
@@ -281,6 +282,79 @@ Stops before the gates: no uncommitted change other than the task file is
 code `2`); the analysis candidate is the writer's artifact. The report and
 the dry-run plan carry `runMode: 'review-only'`; see
 [profile.md](profile.md#report-fields).
+
+### Checkpoints and resume
+
+```sh
+ringi run tasks/my-task.md --checkpoint
+ringi run tasks/my-task.md --resume 2026-08-08T12-00-00-000Z--1234abcd
+```
+
+Checkpoints are opt-in: only a run with `--checkpoint` (or `--resume`)
+saves them. `--checkpoint` saves a signed checkpoint after every completed
+phase: the writer's round (after its integrity checks), the gates (the state
+after the gates and before the review) and the review. It is
+`.agent-review-loop/runs/<runId>/checkpoint.json`, next to the report, and
+holds the run id and its lineage, the task's path and SHA-256, the
+fingerprints of the profile and the runner, the branch, `HEAD`, the hashes
+of the repository manifest and of the diff against `HEAD`, the dependency
+fingerprints and the Corepack cache, the round, the findings with their
+`findingId` and the writer's validated report. It holds no gate results.
+Its strings are redacted like the reports. After a stop the checkpoint also
+records the stop code and whether it is resumable.
+
+`--resume <runId>` continues that run after its last completed phase. The
+preflight runs in full (fresh fingerprints, the secret scan against `HEAD`,
+the agents' CLIs); then the run continues only when the signature is valid
+and the task, the profile, the runner, the branch, `HEAD`, the round limit
+and the working tree (manifest and diff) match the checkpoint. A resumed run
+gets a new run id, saves its own checkpoints and its report carries
+`resumedFrom`. The round limit counts the rounds of every run of the
+lineage: a resume continues with the checkpoint's round number. The writer's
+session is not resumed; a correction round starts a new session with the
+open findings.
+
+A resume skips only the writer of the interrupted round. The gates, the
+review snapshot and the review always run again: after the writer's phase or
+after the gates the run continues with the gates of the same round, after a
+review with the writer of the next round. `APPROVE` therefore always comes
+from gates and a review of the resumed run itself.
+
+Refusals (all in the preflight, before any agent):
+
+| Condition | Code |
+| --- | --- |
+| `--checkpoint` or `--resume` with `--dry-run`, `--review-only` or `--task-mode analysis` | argument error (exit code `2`); in the API `INVALID_CONFIGURATION` or `INVALID_TASK_MODE` |
+| No checkpoint for the run id, an invalid run id, no `XDG_STATE_HOME` or `HOME` | `INVALID_CONFIGURATION` |
+| Missing key, a key or key directory with looser permissions, another owner or a symbolic link, a malformed checkpoint, a signature that does not verify | `INTEGRITY_CHECK_FAILED` |
+| A stop that is not resumable, another task, profile, runner, branch, `HEAD`, round limit or working tree, a run with nothing left, a round limit already used | `HUMAN_DECISION_REQUIRED` |
+
+Resumable stops are an allowlist (`RESUMABLE_STOP_CODES` in the runner):
+`CHECK_FAILED`, `TIMEOUT`, `INTERRUPTED`, `PROCESS_ERROR`, `PROCESS_FAILED`,
+`CLAUDE_PROCESS_FAILED`, `CLAUDE_FALLBACK_FAILED`, `OUTPUT_LIMIT_EXCEEDED`
+and `INVALID_AGENT_OUTPUT`. Every other stop code is never resumed, and
+neither is a stop that carries `integrityViolations`. Such a stop also
+revokes every run of the lineage with a marker in the state directory, so
+an older signed checkpoint of the same run restored from a copy is refused
+too. When the stop cannot be recorded in the checkpoint, or the revocation
+fails, the run fails closed: every run of the lineage is revoked and its
+checkpoint removed, and the report's `warnings` say so (and name a
+checkpoint that could not be removed). After a resumable stop the report's
+`resume` names the command. A stop in the middle of a writer round leaves
+the working tree different from the last checkpoint: such a run is not
+resumed until the tree matches it again.
+
+The signing key is `$XDG_STATE_HOME/ringi/checkpoint.key`, or
+`~/.local/state/ringi/checkpoint.key` (directory `0700`, file `0600`, 32
+random bytes), created on the first run with `--checkpoint` and never
+replaced; see [SECURITY.md](../SECURITY.md). The signature detects a
+checkpoint changed without the key. It does not protect against code that
+runs as the user, such as the writer or the gates, which can read the key: a
+checkpoint forged that way can change the round or the findings history a
+resume continues with, but it cannot make a run approve without fresh gates
+and, for a task class with review, a fresh review with no unresolved
+findings. Without `--checkpoint` or `--resume` a run writes nothing there
+and its report is unchanged.
 
 Exit codes are those of the earlier CLI: `0` for a completed run (`APPROVE`
 or `DRY_RUN_OK`), `1` for a stopped run, `2` for invalid arguments or an

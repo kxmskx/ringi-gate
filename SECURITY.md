@@ -54,8 +54,29 @@ on.
   `--strict-mcp-config`) and its `CLAUDE.md` files (`--safe-mode`).
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
+- Checkpoints are opt-in. With `--checkpoint` or `--resume`, state carried
+  between runs (round, findings) is accepted only with a valid HMAC
+  (SHA-256) signature, compared in constant time. The key is 32 random
+  bytes in `$XDG_STATE_HOME/ringi/checkpoint.key` or
+  `~/.local/state/ringi/checkpoint.key`: created once, atomically, never
+  replaced; the directory must be the current user's with mode `0700` and
+  the file `0600`, neither a symbolic link, or the resume stops with
+  `INTEGRITY_CHECK_FAILED`. Only the stops in an allowlist are resumable
+  (see [cli.md](docs/cli.md#checkpoints-and-resume)). A resumed run always
+  runs the gates and the review again, so `APPROVE` after a resume requires
+  passing fresh gates and, for a task class with review, a fresh review with
+  no unresolved findings.
+  Without these options nothing is written in the state directory.
 
 ## What the runner does not guarantee
+
+- The checkpoint signature detects a checkpoint changed without the key. It
+  does not protect against code that runs as the user: the writer (the
+  sandboxes restrict writes, not reads in the user's home) and the gates
+  (outside any sandbox) can read the key, and a gate can remove revocation
+  markers. A checkpoint forged that way can change the round or the
+  findings history a resume continues with, but cannot approve a run.
+  Deleting the key makes every existing checkpoint unverifiable.
 
 - It is not a sandbox. Isolation of the implementer relies on the
   implementer's CLI: with the default profile setting, the Codex CLI

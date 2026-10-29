@@ -937,7 +937,7 @@ const FALLBACK_PROFILE_ATTEMPTS = 2;
 // no stem of a word of the result contract or of format instructions
 // anywhere in a word. This guards against mistakes in a trusted profile;
 // it is not a barrier against prompt injection.
-const REVIEW_LANE_KEYS = new Set(['id', 'focus', 'profile']);
+const REVIEW_LANE_KEYS = new Set(['id', 'focus', 'profile', 'paths']);
 const MAX_REVIEW_LANES = 4;
 const REVIEW_LANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_REVIEW_LANE_FOCUS_LENGTH = 200;
@@ -954,6 +954,234 @@ function isReviewLaneFocus(value) {
     !value.includes('  ') &&
     !REVIEW_LANE_FOCUS_RESERVED.test(value)
   );
+}
+
+// The paths of a review lane (its context package): 1 to 32 relative POSIX
+// paths, each a directory prefix (ending with /) or an exact file path,
+// compared by normalized segments and case-sensitively. There is no glob
+// dialect: * ? [ { are refused, as are an absolute path, a '..' segment, a
+// backslash, a control character (C0, DEL or C1), an entry that is empty
+// after normalization and a duplicate. Returns the normalized frozen list, or
+// undefined for an invalid value.
+const MAX_REVIEW_LANE_PATHS = 32;
+const MAX_REVIEW_LANE_PATH_LENGTH = 4_096;
+// At most this many uncovered files are named in the stop message.
+const MAX_UNCOVERED_FILES_LISTED = 20;
+const REVIEW_LANE_PATH_REFUSED = /[*?[{\\\u0000-\u001f\u007f-\u009f]/;
+
+// A changed file name as one JSON string that cannot start a new line:
+// JSON.stringify leaves U+0085, U+2028 and U+2029 as they are.
+function fileNameLine(file) {
+  return JSON.stringify(file).replace(
+    /[\u{85}\u{2028}\u{2029}]/gu,
+    (character) => `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
+// The file of a lane's part of the full diff, next to the full diff in the
+// snapshot (the lane id is a safe file name).
+function reviewLaneDiffPath(id) {
+  return `.review-context/lane-${id}.diff`;
+}
+
+function normalizeReviewLanePaths(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_REVIEW_LANE_PATHS
+  )
+    return undefined;
+  const normalized = [];
+  for (const entry of value) {
+    if (
+      typeof entry !== 'string' ||
+      entry.length > MAX_REVIEW_LANE_PATH_LENGTH ||
+      entry.startsWith('/') ||
+      REVIEW_LANE_PATH_REFUSED.test(entry)
+    )
+      return undefined;
+    const segments = entry.split('/');
+    if (segments.includes('..')) return undefined;
+    const kept = segments.filter((segment) => segment !== '' && segment !== '.');
+    if (kept.length === 0) return undefined;
+    const path = `${kept.join('/')}${entry.endsWith('/') ? '/' : ''}`;
+    if (normalized.includes(path)) return undefined;
+    normalized.push(path);
+  }
+  return Object.freeze(normalized);
+}
+
+// A changed file belongs to a lane when one of its paths is the file itself
+// or a directory prefix of it.
+function reviewLanePathsMatch(paths, file) {
+  return paths.some((path) =>
+    path.endsWith('/') ? file.startsWith(path) : file === path,
+  );
+}
+
+// A path of a diff header or of a rename/copy line: as is, or C-quoted by
+// git (escapes and octal bytes of UTF-8). undefined when the quoting is not
+// valid.
+const GIT_PATH_ESCAPES = Object.freeze({
+  a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92,
+});
+
+function readGitPathToken(text) {
+  if (!text.startsWith('"')) return { path: text, rest: '' };
+  const bytes = [];
+  for (let index = 1; index < text.length; index += 1) {
+    const character = String.fromCodePoint(text.codePointAt(index));
+    if (character === '"') {
+      return {
+        path: new TextDecoder('utf-8', { fatal: true }).decode(
+          Uint8Array.from(bytes),
+        ),
+        rest: text.slice(index + 1),
+      };
+    }
+    if (character !== '\\') {
+      bytes.push(...Buffer.from(character));
+      index += character.length - 1;
+      continue;
+    }
+    const next = text[index + 1];
+    if (/^[0-3][0-7]{2}$/.test(text.slice(index + 1, index + 4))) {
+      bytes.push(Number.parseInt(text.slice(index + 1, index + 4), 8));
+      index += 3;
+    } else if (Object.hasOwn(GIT_PATH_ESCAPES, next)) {
+      bytes.push(GIT_PATH_ESCAPES[next]);
+      index += 1;
+    } else {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function gitPathOf(text) {
+  try {
+    const token = readGitPathToken(text);
+    return token && token.rest === '' && token.path !== '' ? token.path : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The changed paths of one file section of the diff: both sides of a rename,
+// the target of a copy, otherwise the one path of the header "diff --git
+// <old> <new>", whose two sides then name the same file with prefixes of one
+// length (a/ b/, any one-letter prefixes, or none). undefined when they
+// cannot be read for certain.
+function diffSectionPaths(lines) {
+  const extended = [];
+  for (const line of lines.slice(1)) {
+    if (line.startsWith('@@') || line.startsWith('--- ') || line === 'GIT binary patch') break;
+    extended.push(line);
+  }
+  const named = (prefix) =>
+    extended.filter((line) => line.startsWith(prefix)).map((line) => gitPathOf(line.slice(prefix.length)));
+  const renamed = [...named('rename from '), ...named('rename to ')];
+  const copied = named('copy to ');
+  if (renamed.length > 0 || copied.length > 0) {
+    const paths = [...renamed, ...copied];
+    return paths.every((path) => path !== undefined) ? [...new Set(paths)] : undefined;
+  }
+  const header = lines[0].slice('diff --git '.length);
+  let sides;
+  if (header.startsWith('"')) {
+    const first = (() => {
+      try {
+        return readGitPathToken(header);
+      } catch {
+        return undefined;
+      }
+    })();
+    if (!first?.rest.startsWith(' ')) return undefined;
+    const second = gitPathOf(first.rest.slice(1));
+    sides = second === undefined ? undefined : [first.path, second];
+  } else {
+    const middle = (header.length - 1) / 2;
+    sides =
+      Number.isInteger(middle) && header[middle] === ' '
+        ? [header.slice(0, middle), header.slice(middle + 1)]
+        : undefined;
+  }
+  if (!sides) return undefined;
+  const [before, after] = sides;
+  if (before === after) return [before];
+  if (
+    before.length === after.length &&
+    before.length > 2 &&
+    before[1] === '/' &&
+    after[1] === '/' &&
+    before.slice(2) === after.slice(2)
+  )
+    return [before.slice(2)];
+  return undefined;
+}
+
+// The full diff of the snapshot as file sections ({ text, paths }), in diff
+// order. A section whose paths cannot be read (paths undefined), and any
+// text before the first header, belongs to every lane's package.
+function diffFileSections(diff) {
+  const sections = [];
+  let current;
+  for (const line of diff.split(/(?<=\n)/)) {
+    if (line === '') continue;
+    if (line.startsWith('diff --git ')) {
+      current = { lines: [] };
+      sections.push(current);
+    } else if (!current) {
+      current = { lines: [], preamble: true };
+      sections.push(current);
+    }
+    current.lines.push(line);
+  }
+  return sections.map(({ lines, preamble }) => ({
+    text: lines.join(''),
+    paths: preamble
+      ? undefined
+      : diffSectionPaths(lines.map((line) => line.replace(/\r?\n$/, ''))),
+  }));
+}
+
+// The context packages of review lanes with paths, from the snapshot's full
+// diff: every changed file of the change (names, sorted), each lane's part
+// of the diff (its text, the file it is written to in the snapshot and its
+// SHA-256) and its files, and the changed files that no lane covers (a lane
+// without paths covers all of them).
+function reviewLanePackages(lanes, diff) {
+  const sections = diffFileSections(diff);
+  const files = [
+    ...new Set(sections.flatMap(({ paths }) => paths ?? [])),
+  ].sort();
+  const packages = new Map();
+  for (const lane of lanes) {
+    if (lane.paths === undefined) continue;
+    const included = sections.filter(
+      ({ paths }) =>
+        paths === undefined ||
+        paths.some((file) => reviewLanePathsMatch(lane.paths, file)),
+    );
+    const laneDiff = included.map(({ text }) => text).join('');
+    packages.set(lane.id, {
+      paths: [...lane.paths],
+      files,
+      laneFiles: [
+        ...new Set(included.flatMap(({ paths }) => paths ?? [])),
+      ].sort(),
+      diff: laneDiff,
+      diffPath: reviewLaneDiffPath(lane.id),
+      diffHash: createHash('sha256').update(laneDiff).digest('hex'),
+    });
+  }
+  const uncovered = lanes.some((lane) => lane.paths === undefined)
+    ? []
+    : files.filter(
+        (file) =>
+          !lanes.some((lane) => reviewLanePathsMatch(lane.paths, file)),
+      );
+  return { files, packages, uncovered };
 }
 
 // Provider modules (scripts/providers/contract.mjs). The built-in modules
@@ -5192,10 +5420,12 @@ function claudePrompt({
   integrityPath,
   expectedConfirmation,
   lane,
+  lanePackage,
 }) {
   return buildClaudePrompt({
     locale: currentLocale(),
     ...(lane === undefined ? {} : { lane: { id: lane.id, focus: lane.focus } }),
+    ...(lane === undefined || lanePackage === undefined ? {} : { lanePackage }),
     task,
     taskMode: resolveTaskMode(taskMode),
     instructionsPath,
@@ -5209,6 +5439,52 @@ function claudePrompt({
     expectedConfirmation,
     analysisFindingFile: ANALYSIS_FINDING_FILE,
   });
+}
+
+// The reviewer's prompt on a snapshot: the input of runClaudeReview, and the
+// prompt whose size the review lane stage reports.
+function reviewerPrompt({ task, taskMode, snapshot, lane, lanePackage }) {
+  return claudePrompt({
+    task,
+    taskMode,
+    instructionsPath: snapshot.instructionsPath,
+    diffPath: snapshot.diffPath,
+    gatesPath: snapshot.gatesPath,
+    correctionContextPath: snapshot.correctionContextPath,
+    originalTaskPath: snapshot.originalTaskPath,
+    manifestPath: snapshot.manifestPath,
+    analysisArtifactPath: snapshot.analysisArtifactPath,
+    integrityPath: snapshot.integrityPath,
+    expectedConfirmation: snapshot.expectedConfirmation,
+    lane,
+    lanePackage,
+  });
+}
+
+// A lane's context package as the lane stage passes it to the prompt: the
+// lane's paths, the names, and the file and SHA-256 of its part of the diff,
+// never the diff itself. Checked again because it goes into the prompt.
+const REVIEW_LANE_PACKAGE_KEYS = Object.freeze([
+  'diffHash',
+  'diffPath',
+  'files',
+  'laneFiles',
+  'paths',
+]);
+
+function isReviewLanePackage(value, laneId) {
+  const strings = (items) =>
+    Array.isArray(items) && items.every((item) => typeof item === 'string');
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).sort().join() === REVIEW_LANE_PACKAGE_KEYS.join() &&
+    normalizeReviewLanePaths(value.paths) !== undefined &&
+    strings(value.files) &&
+    strings(value.laneFiles) &&
+    value.diffPath === reviewLaneDiffPath(laneId) &&
+    typeof value.diffHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(value.diffHash)
+  );
 }
 
 async function createGitGuard({ directory, gitPath, seal = true }) {
@@ -5789,6 +6065,9 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
     resolved.reviewLanes = Object.freeze(
       lanes.map((value) => {
         const lane = record(value, REVIEW_LANE_KEYS);
+        const paths = Object.hasOwn(lane, 'paths')
+          ? normalizeReviewLanePaths(list(lane.paths))
+          : undefined;
         if (
           typeof lane.id !== 'string' ||
           !REVIEW_LANE_ID.test(lane.id) ||
@@ -5796,7 +6075,8 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
           !isReviewLaneFocus(lane.focus) ||
           (Object.hasOwn(lane, 'profile') &&
             (typeof lane.profile !== 'string' ||
-              !Object.hasOwn(profiles, lane.profile)))
+              !Object.hasOwn(profiles, lane.profile))) ||
+          (Object.hasOwn(lane, 'paths') && paths === undefined)
         )
           invalid();
         ids.add(lane.id);
@@ -5804,6 +6084,7 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
           id: lane.id,
           focus: lane.focus,
           ...(Object.hasOwn(lane, 'profile') ? { profile: lane.profile } : {}),
+          ...(paths === undefined ? {} : { paths }),
         });
       }),
     );
@@ -6790,6 +7071,16 @@ export async function createReviewSnapshot({
     { mode: 0o600 },
   );
   await writeFile(join(snapshotRoot, diffPath), diffBefore, { mode: 0o600 });
+  // The part of the full diff for each review lane with paths, next to it:
+  // read-only and counted in the snapshot hash like the full diff.
+  if (profile?.reviewLanes?.some((lane) => lane.paths !== undefined)) {
+    const { packages } = reviewLanePackages(profile.reviewLanes, diffBefore);
+    for (const lanePackage of packages.values()) {
+      await writeFile(join(snapshotRoot, lanePackage.diffPath), lanePackage.diff, {
+        mode: 0o600,
+      });
+    }
+  }
   await writeFile(
     join(snapshotRoot, gatesPath),
     `${JSON.stringify(gateReport, null, 2)}\n`,
@@ -8195,18 +8486,24 @@ async function runClaudeReview({
   // A review lane of the profile ({ id, focus }); checked again here because
   // its focus goes into the prompt.
   lane,
+  // The context package of a lane with paths (implementation mode only).
+  lanePackage,
   timeoutMs,
   verbose = false,
 }) {
   const selectedTaskMode = resolveTaskMode(taskMode);
   if (
-    lane !== undefined &&
-    !(
-      isPlainObject(lane) &&
-      typeof lane.id === 'string' &&
-      REVIEW_LANE_ID.test(lane.id) &&
-      isReviewLaneFocus(lane.focus)
-    )
+    (lane !== undefined &&
+      !(
+        isPlainObject(lane) &&
+        typeof lane.id === 'string' &&
+        REVIEW_LANE_ID.test(lane.id) &&
+        isReviewLaneFocus(lane.focus)
+      )) ||
+    (lanePackage !== undefined &&
+      (lane === undefined ||
+        selectedTaskMode !== 'implementation' ||
+        !isReviewLanePackage(lanePackage, lane.id)))
   ) {
     throw new AgentWorkflowError(msg('profile.invalid'), {
       code: 'INVALID_CONFIGURATION',
@@ -8257,19 +8554,12 @@ async function runClaudeReview({
         undefined,
         'reviewer',
       ),
-      input: claudePrompt({
+      input: reviewerPrompt({
         task,
         taskMode: selectedTaskMode,
-        instructionsPath: snapshot.instructionsPath,
-        diffPath: snapshot.diffPath,
-        gatesPath: snapshot.gatesPath,
-        correctionContextPath: snapshot.correctionContextPath,
-        originalTaskPath: snapshot.originalTaskPath,
-        manifestPath: snapshot.manifestPath,
-        analysisArtifactPath: snapshot.analysisArtifactPath,
-        integrityPath: snapshot.integrityPath,
-        expectedConfirmation: snapshot.expectedConfirmation,
+        snapshot,
         lane,
+        lanePackage,
       }),
       timeoutMs,
       stage: 'reviewer',
@@ -10806,10 +11096,106 @@ async function runWorkflow(options) {
           'post-review',
         );
       }
+      // Context packages (implementation mode): the prompt of a lane with
+      // paths names the snapshot file with the part of the full diff for its
+      // files, its SHA-256 and every changed file; the lane still reads the
+      // whole snapshot. Every changed file must belong to at least one lane before
+      // any reviewer starts; otherwise the run stops with
+      // INVALID_CONFIGURATION and the uncovered files.
+      const withPaths = reviewLanes.some((lane) => lane.paths !== undefined);
+      let packages = new Map();
+      let changedFiles;
+      if (selectedTaskMode === 'implementation') {
+        let diff;
+        try {
+          diff = await readFile(join(snapshot.root, snapshot.diffPath), 'utf8');
+        } catch (error) {
+          if (withPaths) {
+            throw await withImplementerStateViolation(
+              asWorkflowError(error, 'INTEGRITY_CHECK_FAILED', 'reviewer'),
+              'post-review',
+            );
+          }
+        }
+        if (diff !== undefined) {
+          const built = reviewLanePackages(reviewLanes, diff);
+          changedFiles = built.files;
+          if (built.uncovered.length > 0) {
+            throw await withImplementerStateViolation(
+              new AgentWorkflowError(
+                msg('reviewer.laneCoverage', {
+                  count: built.uncovered.length,
+                  files: `${built.uncovered
+                    .slice(0, MAX_UNCOVERED_FILES_LISTED)
+                    .map(fileNameLine)
+                    .join(', ')
+                    .slice(0, 2_000)}${built.uncovered.length > MAX_UNCOVERED_FILES_LISTED ? ', …' : ''}`,
+                }),
+                { code: 'INVALID_CONFIGURATION', stage: 'reviewer' },
+              ),
+              'post-review',
+            );
+          }
+          // The snapshot holds each lane's part in its own file (written
+          // before the snapshot hash); it must be exactly the part built
+          // here. The prompt names the file and its SHA-256, not the diff.
+          for (const [id, { diff: laneDiff, ...lanePackage }] of built.packages) {
+            let written;
+            try {
+              written = await readFile(join(snapshot.root, lanePackage.diffPath));
+            } catch (error) {
+              throw await withImplementerStateViolation(
+                asWorkflowError(error, 'INTEGRITY_CHECK_FAILED', 'reviewer'),
+                'post-review',
+              );
+            }
+            if (!written.equals(Buffer.from(laneDiff))) {
+              throw await withImplementerStateViolation(
+                new AgentWorkflowError(msg('snapshot.changedDuringReview'), {
+                  code: 'SNAPSHOT_CHANGED',
+                  stage: 'reviewer',
+                }),
+                'post-review',
+              );
+            }
+            packages.set(id, lanePackage);
+          }
+        }
+      }
+      // Measurements of each lane: the size of its prompt in UTF-8 bytes and
+      // the number of changed files in the diff it starts from (its part, or
+      // every changed file without paths; null without a diff, as in
+      // analysis mode).
+      const measurements = new Map(
+        reviewLanes.map((lane) => {
+          const lanePackage = packages.get(lane.id);
+          return [
+            lane.id,
+            {
+              lanePackage,
+              contextBytes: Buffer.byteLength(
+                reviewerPrompt({
+                  task,
+                  taskMode: selectedTaskMode,
+                  snapshot,
+                  lane: { id: lane.id, focus: lane.focus },
+                  lanePackage,
+                }),
+              ),
+              diffFiles: lanePackage
+                ? lanePackage.laneFiles.length
+                : (changedFiles?.length ?? null),
+            },
+          ];
+        }),
+      );
       const outcomes = await Promise.all(
         reviewLanes.map(async (lane) => {
           const startedAt = monotonicNow();
           const attemptStarts = new Map();
+          const { lanePackage, contextBytes, diffFiles } = measurements.get(
+            lane.id,
+          );
           let policy;
           try {
             policy = resolveReviewProfile(
@@ -10841,6 +11227,7 @@ async function runWorkflow(options) {
               reviewer,
               reviewAttempt: claudeReview,
               lane: { id: lane.id, focus: lane.focus },
+              ...(lanePackage === undefined ? {} : { lanePackage }),
               beforeAttempt: serialStateCheck,
               afterAttempt: serialStateCheck,
               onAttemptStart: (attempt) => {
@@ -10867,6 +11254,8 @@ async function runWorkflow(options) {
                   durationMs:
                     monotonicNow() -
                     (attemptStarts.get(attempt.attempt) ?? monotonicNow()),
+                  contextBytes,
+                  diffFiles,
                 });
               },
             });
@@ -10928,6 +11317,8 @@ async function runWorkflow(options) {
           status,
           findingCount: review ? review.findings.length : null,
           durationMs: Math.max(0, Math.round(outcome.durationMs)),
+          contextBytes: measurements.get(lane.id).contextBytes,
+          diffFiles: measurements.get(lane.id).diffFiles,
         };
         reviewLaneAudits.push(entry);
         if (execution) reviewRuns.push({ ...execution, lane: lane.id });
@@ -12357,6 +12748,10 @@ export const internal = {
   assignFindingIds,
   mergeLaneFindings,
   isReviewLaneFocus,
+  normalizeReviewLanePaths,
+  diffFileSections,
+  reviewLanePackages,
+  reviewerPrompt,
   fullDiff,
   isDependencyInputPath,
   listRepositoryPaths,

@@ -67,8 +67,12 @@ export function buildCodexPrompt({ locale, ...options }) {
 // The locale and taskMode must already be resolved by the core. lane: a
 // review lane ({ id, focus }) validated by the core; its focus is appended to
 // the fixed prompt and changes none of its rules. Without a lane the prompt
-// is exactly the fixed one.
-export function buildClaudePrompt({ locale, lane, ...options }) {
+// is exactly the fixed one. lanePackage: the context package of a lane with
+// paths, built by the core ({ paths, files, laneFiles, diffPath, diffHash }:
+// the snapshot file with the lane's part of the diff and its SHA-256, never
+// the diff itself); it follows the lane's addendum. Without it the lane's
+// prompt is unchanged.
+export function buildClaudePrompt({ locale, lane, lanePackage, ...options }) {
   const prompt = promptBuilder(
     locale,
     buildClaudePromptEn,
@@ -80,7 +84,43 @@ export function buildClaudePrompt({ locale, lane, ...options }) {
     reviewLaneAddendumEn,
     reviewLaneAddendumPl,
   )(lane);
-  return `${prompt}\n\n${addendum}`;
+  if (lanePackage === undefined) return `${prompt}\n\n${addendum}`;
+  const contextPackage = promptBuilder(
+    locale,
+    reviewLanePackageEn,
+    reviewLanePackagePl,
+  )({ id: lane.id, fullDiffPath: options.diffPath, ...lanePackage });
+  return `${prompt}\n\n${addendum}\n\n${contextPackage}`;
+}
+
+// File names come from the working tree: each one is a JSON string on its
+// own line, with U+0085, U+2028 and U+2029 escaped too, so a name cannot
+// start a line of its own.
+function fileNameList(files) {
+  return files
+    .map(
+      (file) =>
+        `- ${JSON.stringify(file).replace(
+          /[\u{85}\u{2028}\u{2029}]/gu,
+          (character) =>
+            `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`,
+        )}`,
+    )
+    .join('\n');
+}
+
+function reviewLanePackageEn({ id, fullDiffPath, paths, files, laneFiles, diffPath, diffHash }) {
+  return `CONTEXT PACKAGE OF LANE ${id}: the part of the full diff for the changed files that match the lane's paths (${paths.join(', ')}) is in ${diffPath} (changed files: ${laneFiles.length}, SHA-256 ${diffHash}). It limits where you start, not your access: the read-only snapshot is complete. Start from ${diffPath} instead of the full diff in ${fullDiffPath}; read the full diff or another changed file only when a direct dependency, a regression or a contract of the lane's files requires it, and name such reads in checks. Other lanes review the remaining files.
+
+Changed files of the whole change (${files.length}), names only:
+${fileNameList(files) || '- none'}`;
+}
+
+function reviewLanePackagePl({ id, fullDiffPath, paths, files, laneFiles, diffPath, diffHash }) {
+  return `PACZKA KONTEKSTU TORU ${id}: część pełnego diffu dla zmienionych plików pasujących do ścieżek toru (${paths.join(', ')}) jest w ${diffPath} (plików: ${laneFiles.length}, SHA-256 ${diffHash}). Wyznacza ona punkt startu, a nie Twój dostęp: snapshot tylko do odczytu jest kompletny. Zacznij od ${diffPath} zamiast od pełnego diffu w ${fullDiffPath}; pełny diff albo inny zmieniony plik czytaj tylko wtedy, gdy wymaga tego bezpośrednia zależność, regresja albo kontrakt plików toru, i wskaż takie odczyty w checks. Pozostałe pliki przeglądają inne tory.
+
+Zmienione pliki całej zmiany (${files.length}), tylko nazwy:
+${fileNameList(files) || '- brak'}`;
 }
 
 // The focus may already end with a full stop; never add a second one.

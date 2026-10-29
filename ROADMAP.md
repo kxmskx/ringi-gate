@@ -157,11 +157,17 @@ Everything below "Planned" is a plan, not a feature. The
   fixed prompt, then merges their findings by `findingId` and stops when a
   lane has no valid result. See
   [docs/architecture.md](docs/architecture.md#review-lanes).
+- Context packages per review lane (opt-in). A lane's `paths` give it a
+  read-only file with the part of the diff for its files and the names of
+  every changed file, on the same complete snapshot; the runner stops before the
+  reviewers when a changed file belongs to no lane. The report and the
+  ledger measure each lane's prompt size and diff files. See
+  [docs/profile.md](docs/profile.md#context-packages-paths).
 
 ## Planned (not implemented)
 
-- Minimal context packages per review lane, and measurements of the cost
-  and findings of lanes.
+- Token and cost measurements of review lanes, once a reviewer provider
+  reports them to the runner.
 
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).

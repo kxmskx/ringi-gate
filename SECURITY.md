@@ -70,6 +70,24 @@ on.
   barrier. Each lane is a full
   review, so the review cost of a round grows with the number of lanes (up
   to 4).
+- A lane's `paths` (its context package) limit only where its review starts:
+  its prompt names every changed file and a file of the snapshot with the
+  part of the diff for its files.
+  They are not isolation: every lane runs on the same complete read-only
+  copy and can read the full diff and any file in it. A review of the whole
+  change therefore depends on coverage, which the runner enforces: before
+  any reviewer starts, every changed file (both sides of a rename, a deleted
+  file too) must belong to at least one lane, otherwise the run stops with
+  `INVALID_CONFIGURATION`. A lane still reviews its files with the depth it
+  chooses, so narrow paths can mean a narrower review of the changes they
+  leave to other lanes. No diff content enters the prompt: the lane's part
+  is written next to the full diff (`.review-context/lane-<id>.diff`)
+  before the copy is made read-only and hashed, so it has the same
+  protection as the full diff, and a change to it stops the run with
+  `SNAPSHOT_CHANGED`. The prompt carries only that path, its SHA-256 and
+  the names of the changed files, each a JSON string on its own line with
+  U+0085, U+2028 and U+2029 escaped too. File names are working tree
+  content and stay untrusted.
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
 - Checkpoints are opt-in. With `--checkpoint` or `--resume`, state carried

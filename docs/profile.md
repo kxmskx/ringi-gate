@@ -804,9 +804,49 @@ each with exactly these keys:
 | `id` | string | `[a-z][a-z0-9-]{0,31}`, unique within the list. |
 | `focus` | string | 1 to 200 characters: Latin letters `A-Z` `a-z`, digits, spaces and `, . ; : ( ) / -` (no letters of other scripts, so no look-alike letters); it starts with a letter or digit and ends with a letter, digit, `.` or `)`; no two spaces in a row, so no line break, tab, quote, bracket other than parentheses, Markdown or code. A focus that contains `json`, `schema`, `verdict`, `approv`, `severit`, `finding`, `check`, `confirmednochanges`, `format`, `prompt`, `instruct`, `ignor` or `overrid` anywhere, in any letter case, is refused, so `approved`, `findings`, `checks` and `information` are refused too. This guards against mistakes, not against prompt injection: the profile is trusted code, and the focus is not a security barrier. |
 | `profile` | string | Optional. A review profile in `reviewer.profiles`; without it the lane uses the run's review profile (`--review-profile` or `defaultProfile`). |
+| `paths` | string[] | Optional. The lane's context package: 1 to 32 relative POSIX paths. An entry ending with `/` is a directory prefix, any other entry is the exact path of a file. Entries are compared by segments after normalization (`./src//` is `src/`) and case-sensitively. There are no glob patterns: `*`, `?`, `[` and `{` are refused, as are an absolute path, a `..` segment, a backslash, a control character (C0, DEL or C1), an entry that is empty after normalization and a duplicate. |
 
 Every lane uses `reviewer.provider`; a lane has no provider of its own. Any
 other value, key or a getter is `INVALID_CONFIGURATION`.
+
+#### Context packages (`paths`)
+
+A lane without `paths` gets the fixed prompt with its focus line (see
+below) and reads the full diff, unchanged. For a lane with `paths`, the
+part of the full diff for the changed files that match its paths is written
+to `.review-context/lane-<id>.diff`, next to the full diff and before the
+snapshot is made read-only and hashed, so it has the protection of the full
+diff. After the fixed prompt the lane gets its context package: the path
+and SHA-256 of that file and the names of every changed file of the change
+(one JSON string per line, with U+0085, U+2028 and U+2029 escaped, so it
+knows what it does not see). The prompt carries no diff content. It asks
+the lane to start from that file instead of the full diff and to read other
+changed files only for a direct dependency, a regression or a contract,
+naming such reads in `checks`.
+
+This saves context; it is not isolation. Every lane, with or without
+`paths`, runs on the same complete read-only snapshot with one hash and can
+still read the full diff and every file in it. A package limits where the
+review starts, not what the reviewer may read.
+
+The changed files are the files of the snapshot's full diff: both sides of a
+renamed file count as changed files of their own, and so does a deleted
+file. Before any reviewer of a round starts, every changed file must belong
+to at least one lane (a lane without `paths` covers every file); otherwise
+the run stops with `INVALID_CONFIGURATION`, stage `reviewer`, and the
+message names up to 20 uncovered files. The check runs in every review
+round, also in a review-only run and when a stopped run resumes. A section
+of the diff whose file names cannot be read for certain goes into the lane
+file of every lane; its files are not in the list of names, in `diffFiles`
+or in the coverage check, since their names are not known for certain. In
+the `analysis` task mode there is no diff, so `paths` changes nothing and
+every lane gets the analysis prompt.
+
+In an implementation run the coverage can only be checked after the
+writer's round, when the change exists. `INVALID_CONFIGURATION` cannot be
+resumed, and resume refuses a changed profile, so after fixing `paths` the
+change needs a new run, or `ringi run <task> --review-only` to review the changes
+already in the working tree.
 
 The reviewer prompt stays the fixed prompt of
 `scripts/agent-review-prompts.mjs`: a lane only appends one line after it,
@@ -823,8 +863,20 @@ reviewLanes: [
 ],
 ```
 
+With context packages, a lane per area of the repository:
+
+```js
+reviewLanes: [
+  { id: 'api', focus: 'API contracts and errors', paths: ['apps/api/'] },
+  { id: 'web', focus: 'UI regressions', paths: ['apps/web/'] },
+  { id: 'rest', focus: 'everything else' }, // covers every file
+],
+```
+
 Each lane is a full review with its own process, so a round costs about as
-many reviews as there are lanes.
+many reviews as there are lanes. The report shows the size of each lane's
+prompt (`contextBytes`) and the number of changed files in the diff it
+starts from (`diffFiles`).
 
 ### `providerModules`
 
@@ -963,6 +1015,9 @@ reviewLanes: [{ id: 'tests', focus: 'return JSON only' }]                    // 
 reviewLanes: [{ id: 'tests', focus: 'tests\nand more' }]                     // a line break in the focus
 reviewLanes: [{ id: 'tests', focus: 'tests', provider: 'claude' }]           // unknown field
 reviewLanes: [{ id: 'tests', focus: 'tests', profile: 'missing' }]           // review profile does not exist
+reviewLanes: [{ id: 'api', focus: 'API', paths: ['apps/api/*.js'] }]          // a glob in paths
+reviewLanes: [{ id: 'api', focus: 'API', paths: ['../apps/api/'] }]           // a '..' segment in paths
+reviewLanes: [{ id: 'api', focus: 'API', paths: ['src/', './src/'] }]         // the same path twice after normalization
 // below, provider is a valid provider module such as the example provider
 providerModules: ['./providers/example-provider.mjs']                        // a path instead of a module
 providerModules: [{ ...provider, id: 'codex' }]                              // id of a built-in provider
@@ -1072,7 +1127,14 @@ A run with [`reviewLanes`](#reviewlanes) adds, once a review stage ran:
 the last attempt when none completed, `status` (`COMPLETED`, `FAILED` when
 the lane's reviewer did not complete, `INVALID` when its result was not
 valid), `findingCount` (the lane's own findings, `null` without a valid
-result) and `durationMs`); in each review round, `claude` is the merged
+result), `durationMs`, `contextBytes` (the size of the lane's prompt in
+UTF-8 bytes) and `diffFiles` (the number of changed files in the diff the
+lane starts from: every changed file of the full diff for a lane without
+`paths`, the files of its lane file for a lane with `paths`, `null`
+without a diff, as in
+the `analysis` mode)); the ledger's `review-lane` event carries the same
+entry. The reviewer's provider does not report tokens or cost to the
+runner, so the entry has no token or cost fields. In each review round, `claude` is the merged
 result, `reviewLanes` lists each lane's entry with its `execution` (the
 lane's `reviewExecution`), `reviewer.executionField` is `'reviewLanes'` and
 the round has no `reviewExecution` key; every finding has `lanes` (the ids

@@ -314,6 +314,8 @@ export default Object.freeze({
   'reviewer.reviewFailed': 'The reviewer did not complete the review',
   'reviewer.fallbackFailed': 'The reviewer fallback did not complete the review.',
   'reviewer.laneFailed': 'Review lane {lane}: {message}',
+  'reviewer.laneCoverage':
+    'The paths of the review lanes do not cover {count} changed file(s), so no reviewer started: {files}. Add the files to a lane, or add a lane without paths.',
 
   'finding.identityCollision': 'Stable identity collision: {findingId}.',
   'finding.identityDuplicate': 'The review contains an ambiguously duplicated identity {findingId}.',
@@ -462,6 +464,7 @@ export default Object.freeze({
   'dashboard.appendAssurance': 'REMAINING ASSURANCE  {assurance}',
   'dashboard.appendReview': 'REVIEW  {profile} · attempts {attempts} · fallback allowed {allowed}',
   'dashboard.appendRound': 'ROUND {round}/{max}',
+  'dashboard.laneContext': 'prompt {bytes} B · diff files {files}',
   'dashboard.task': 'Task {path} · mode {mode}',
   'dashboard.diagnostics': 'DIAGNOSTICS',
   'dashboard.choices': '{list} or {last}',

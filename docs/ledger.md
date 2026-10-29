@@ -54,7 +54,7 @@ or paths outside the repository.
 | `integrity` | analysis mode, before and after the review | `round`, `checks` (`name`, `status`) |
 | `snapshot` | after the reviewer's snapshot | `round` and the round's `snapshot` field of the report (counts and hashes) |
 | `review-attempt` | after the review, per attempt | `round`, `lane` (with [review lanes](profile.md#reviewlanes) only), `attempt`, `model`, `effort`, `status` |
-| `review-lane` | with review lanes, after each lane's attempts | the lane's entry of `report.reviewer.lanes`: `round`, `id`, `provider`, `profile`, `model`, `effort`, `status`, `findingCount`, `durationMs` |
+| `review-lane` | with review lanes, after each lane's attempts | the lane's entry of `report.reviewer.lanes`: `round`, `id`, `provider`, `profile`, `model`, `effort`, `status`, `findingCount`, `durationMs`, `contextBytes`, `diffFiles` (see [profile.md](profile.md#context-packages-paths)) |
 | `findings` | after the review | `round`, `verdict`, `findings` (`findingId`, `severity`), `unresolved` (finding ids) |
 | `checkpoint` | after each checkpoint (`--checkpoint`, `--resume`) | `path`, `phase`, `round` |
 | `stop` | a stopped run | `code`, `stage`, `lane` (only when a review lane stopped the run), `resumable` (only with checkpoints), `integrityViolations` (count) |

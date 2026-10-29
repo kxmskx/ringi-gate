@@ -1467,3 +1467,82 @@ test('ringi run --dry-run: profile from ringi.config.mjs, same plan as scripts/a
     await cleanup(project, bin);
   }
 });
+
+test('ringi run --review-only: help, argument errors, a plan without the writer CLI, a clean tree stops with INVALID_TASK', async () => {
+  const project = await createPnpmProject();
+  // The implementer's CLI fails every call: review only never probes it.
+  const bin = await createStubBin({ claude: CLAUDE_VERSION });
+  await writeFile(join(bin, 'codex'), '#!/bin/sh\nexit 99\n');
+  await chmod(join(bin, 'codex'), 0o755);
+  try {
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      NO_COLOR: '1',
+    };
+    delete env.CI;
+    delete env.FORCE_COLOR;
+    const help = ringi(project, ['run', '--help'], env);
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /--review-only +Review the uncommitted changes; start no writer/);
+    git(project, ['init', '--quiet', '--initial-branch', 'main']);
+    git(project, ['config', 'user.name', 'Synthetic Tester']);
+    git(project, ['config', 'user.email', 'tester@example.invalid']);
+    git(project, ['config', 'commit.gpgsign', 'false']);
+    const init = ringi(project, ['init'], env);
+    assert.equal(init.status, 0, init.stderr);
+    git(project, ['add', '-A']);
+    git(project, ['commit', '--quiet', '-m', 'test: baseline']);
+    git(project, ['switch', '--quiet', '-c', 'feat/review-only']);
+
+    for (const [args, pattern] of [
+      [['--task-mode', 'analysis'], /--review-only option works only with --task-mode implementation/],
+      [['--implementer-effort', 'high'], /--implementer-effort option cannot be given with --review-only/],
+      [['--implementer-model=gpt-6.1-sol'], /--implementer-model option cannot be given with --review-only/],
+    ]) {
+      const child = ringi(project, ['run', EXAMPLE_TASK_PATH, '--review-only', ...args], env);
+      assert.equal(child.status, 2, args.join(' '));
+      assert.equal(child.stdout, '');
+      assert.match(child.stderr, pattern);
+      assert.match(child.stderr, /\[--review-only\]/);
+    }
+
+    // No uncommitted change: nothing to review.
+    const clean = ringi(project, ['run', EXAMPLE_TASK_PATH, '--review-only', '--dry-run', '--json'], env);
+    assert.equal(clean.status, 1, clean.stderr);
+    const stopped = JSON.parse(clean.stdout);
+    assert.equal(stopped.status, 'STOPPED');
+    assert.equal(stopped.code, 'INVALID_TASK');
+    assert.equal(stopped.stage, 'preflight');
+    assert.equal(stopped.runMode, 'review-only');
+    assert.equal(stopped.schemaVersion, 1);
+
+    await writeFile(join(project, 'notes.md'), '# Notes\n\nA change written by hand.\n');
+    const child = ringi(project, ['run', EXAMPLE_TASK_PATH, '--review-only', '--dry-run'], env);
+    assert.equal(child.status, 0, child.stderr);
+    const plan = JSON.parse(child.stdout);
+    assert.equal(plan.status, 'DRY_RUN_OK');
+    assert.equal(plan.schemaVersion, 1);
+    assert.equal(plan.runMode, 'review-only');
+    assert.equal(plan.taskMode, 'implementation');
+    assert.equal(plan.maxRounds, 1);
+    assert.deepEqual(plan.sequence, [
+      'no writer: the uncommitted changes relative to HEAD are the candidate',
+      'deterministic checks',
+      'isolated read-only copy',
+      'reviewer: diff-first review',
+      'no correction round: any finding stops the run for a human decision',
+    ]);
+    assert.equal(plan.agents.codex, null);
+    assert.equal(plan.agents.implementer.version, null);
+    assert.equal(plan.agents.claude, CLAUDE_VERSION);
+    assert.equal(plan.implementer.status, 'NOT_RUN');
+    assert.equal(plan.implementer.attemptCount, 0);
+    assert.equal(
+      git(project, ['status', '--porcelain', '--untracked-files=all']),
+      '?? notes.md\n',
+    );
+  } finally {
+    await cleanup(project, bin);
+  }
+});

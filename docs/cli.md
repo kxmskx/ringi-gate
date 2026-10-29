@@ -196,7 +196,7 @@ ringi doctor: 15 ok, 0 warn, 0 fail
 
 ```sh
 ringi run path/to/task.md [--dry-run] [--task-mode implementation|analysis]
-  [--review-profile <name>] [--implementer-model <id>]
+  [--review-only] [--review-profile <name>] [--implementer-model <id>]
   [--implementer-effort <effort>] [--verbose] [--no-animation] [--json]
 ```
 
@@ -236,6 +236,51 @@ the shared parser. `--codex-model` and `--sol-effort` are deprecated aliases
 of `--implementer-model` and `--implementer-effort` with the same
 validation; giving an alias together with its new option is an argument
 error.
+
+### Review only
+
+```sh
+ringi run tasks/my-task.md --review-only --dry-run
+ringi run tasks/my-task.md --review-only
+ringi run tasks/my-task.md --review-only --review-profile critical-opus --json
+```
+
+`--review-only` sends a change that is already in the working tree through
+the gates and the independent review without starting the writer: for a
+change written by hand, or for a second opinion on a change made elsewhere.
+The candidate is exactly what a writer round leaves behind: the uncommitted
+changes relative to `HEAD` (modified, deleted and new, non-ignored files),
+nothing staged.
+
+- The preflight is the same, apart from the writer: its CLI is neither
+  required nor probed (`agents.codex` and `agents.implementer.version` are
+  `null`), there is no sandbox check and no writer layout check. `ringi
+  doctor` is unchanged and still checks the implementer's CLI.
+- The fingerprints (dependencies, the repository manifest, `HEAD`, the
+  branch, the profile and the runner) are taken from the working tree at the
+  start; secret-like content in the changes that is not in `HEAD` stops the
+  run with `SECRET_DETECTED`, as in every preflight. So a change written by
+  hand may change `package.json`, lockfiles or `.npmrc`, which after a
+  writer round would stop the run with `DEPENDENCY_INPUT_CHANGED`; review
+  such a change yourself, since the gates run with the dependencies
+  installed before it.
+- One round: the gates of the task, the read-only snapshot and the review.
+  Any change of the working tree after the preflight, during the gates or
+  during the review stops the run (`WORKING_TREE_CHANGED` and the other
+  integrity codes).
+- No finding: `APPROVE` (`publicationApproved: false`). Any finding stops the
+  run with `HUMAN_DECISION_REQUIRED` (stage `reviewer`); there is no
+  correction round, and the findings with their `findingId` and severity
+  are in `findings` and `findingPolicy` of the report.
+
+Stops before the gates: no uncommitted change other than the task file is
+`INVALID_TASK`; a task class that skips the independent review (for example
+`docs-minor`) is `INVALID_TASK_CLASS`; a staged change is `STAGED_CHANGES`.
+`--task-mode analysis`, `--implementer-model` and `--implementer-effort`
+(and their aliases) together with `--review-only` are argument errors (exit
+code `2`); the analysis candidate is the writer's artifact. The report and
+the dry-run plan carry `runMode: 'review-only'`; see
+[profile.md](profile.md#report-fields).
 
 Exit codes are those of the earlier CLI: `0` for a completed run (`APPROVE`
 or `DRY_RUN_OK`), `1` for a stopped run, `2` for invalid arguments or an

@@ -957,11 +957,11 @@ names, which stay as aliases with equal values (see
 
 | Neutral field | Alias |
 | --- | --- |
-| `implementer` (`provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`; `warnings: ['UNPROBED_VERSION']` only when the implementer CLI's version is outside the module's `probedVersions` or cannot be read) | `sol` (`plannedModel`, `plannedEffort`, `effectiveModel`, `effectiveEffort`, `runs`) |
+| `implementer` (`status: 'NOT_RUN'` and the other fields `null` with `--review-only`; otherwise `provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`; `warnings: ['UNPROBED_VERSION']` only when the implementer CLI's version is outside the module's `probedVersions` or cannot be read) | `sol` (`plannedModel`, `plannedEffort`, `effectiveModel`, `effectiveEffort`, `runs`) |
 | `reviewer` (`provider`, `profile`, `model` and `effort` of the first planned attempt, `effectiveModel`, `effectiveEffort`, `attemptCount`; `warnings` only when not empty: `SAME_PROVIDER_REVIEW` when both roles use the same provider and a review is required, then `UNPROBED_VERSION` as for `implementer`) | summary of `review` |
 | `agents.implementer` (`provider`, `version`, `model`, `effort`; `warnings` as in `implementer`, version warning only) | `agents.codex`, `agents.codexModel`, `agents.codexReasoning` |
 | `agents.reviewer` (`provider`, `version`, `profile`, `plannedAttemptCount`, `fallbackAllowed`, `plannedAttempts`; `warnings: ['UNPROBED_VERSION']` as for `implementer`) | `agents.claude`, `agents.claudeReviewProfile`, `agents.claudeAttemptCount`, `agents.claudeFallbackAllowed`, `agents.claudeAttempts` |
-| `rounds[].implementer` (`provider`, `outputField: 'codex'`, `executionField: 'solExecution'`), `rounds[].reviewer` (`provider`, `outputField: 'claude'` or `null` when no review ran, `executionField: 'reviewExecution'`) | names of the keys `rounds[].codex`, `rounds[].solExecution`, `rounds[].claude`, `rounds[].reviewExecution` |
+| `rounds[].implementer` (`provider`, `outputField: 'codex'` or `null` with `--review-only`, `executionField: 'solExecution'`), `rounds[].reviewer` (`provider`, `outputField: 'claude'` or `null` when no review ran, `executionField: 'reviewExecution'`) | names of the keys `rounds[].codex`, `rounds[].solExecution`, `rounds[].claude`, `rounds[].reviewExecution` |
 | `findings.rejectedByImplementer` | `findings.rejectedByCodex` |
 | `metadata` event: `implementer` (`provider`, `model`, `effort`), `reviewer` (`provider`, `profile`, `attempts`, `fallbackAllowed`) | `solModel`, `solEffort`, `reviewProfile`, `reviewAttempts`, `reviewFallbackAllowed` |
 | `actor` (`implementer` or `reviewer`) and `provider` in writer and reviewer `stage:*` and `activity` events | `badge` `SOL`/`CLAUDE`, `role` `ASTRA`/`CLAUDE` |
@@ -989,3 +989,16 @@ read the CLI versions, so a run stopped before that has none; it is a
 warning only and changes no status, stop code or exit code. The field adds
 to the format without changing an existing field, so `schemaVersion`
 stays 1.
+
+A run with `--review-only` (see [cli.md](cli.md#review-only)) adds
+`runMode: 'review-only'` to the report (`APPROVE` and `STOPPED`), the
+dry-run plan and the `metadata` event; any other run has no `runMode`
+field. In such a run the writer does not run: `implementer` has
+`status: 'NOT_RUN'`, `attemptCount: 0` and `runs: []` (its `model` and
+`effort` are the profile's, unused), `sol.runs` is empty,
+`agents.codex` and `agents.implementer.version` are `null`, the single
+round has no `codex` and `solExecution` keys, and its `implementer` has
+`outputField: null` and `executionField: null`, as `reviewer.outputField`
+is `null` when no review ran. The dry-run plan has `maxRounds: 1`. These
+fields add to the format or take values the format already allows, and a
+run without the option is unchanged, so `schemaVersion` stays 1.

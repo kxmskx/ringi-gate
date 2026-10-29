@@ -1058,7 +1058,13 @@ export function parseAgentArguments(argumentsList, profile) {
       continue;
     }
     if (
-      ['--dry-run', '--verbose', '--no-animation', '--json'].includes(argument)
+      [
+        '--dry-run',
+        '--review-only',
+        '--verbose',
+        '--no-animation',
+        '--json',
+      ].includes(argument)
     ) {
       flags.add(argument);
     } else if (argument.startsWith('--')) {
@@ -1070,9 +1076,24 @@ export function parseAgentArguments(argumentsList, profile) {
   if (taskPaths.length !== 1) {
     return { error: t(locale, 'cli.oneTaskPath') };
   }
+  // Review only: no writer runs, so its options and the analysis track
+  // (whose candidate is the writer's artifact) are argument errors.
+  const reviewOnly = flags.has('--review-only');
+  if (reviewOnly && taskMode !== 'implementation') {
+    return { error: t(locale, 'cli.reviewOnlyTaskMode') };
+  }
+  const writerOption = reviewOnly
+    ? (implementerModelOption ?? implementerEffortOption)
+    : undefined;
+  if (writerOption) {
+    return {
+      error: t(locale, 'cli.reviewOnlyImplementer', { option: writerOption }),
+    };
+  }
   return {
     taskPath: taskPaths[0],
     taskMode,
+    ...(reviewOnly ? { reviewOnly: true } : {}),
     reviewProfile,
     implementerModel,
     implementerEffort,

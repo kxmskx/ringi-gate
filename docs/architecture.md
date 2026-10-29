@@ -421,6 +421,42 @@ flowchart TD
 The runner never commits, pushes, merges or reverts. When it stops, the
 writer's changes stay in the working tree for a human to inspect.
 
+### Review only
+
+With `--review-only` (see [cli.md](cli.md#review-only)) the uncommitted
+changes in the working tree relative to `HEAD` are the candidate, and no
+writer starts:
+
+```mermaid
+flowchart TD
+  T[Task file + uncommitted changes] --> P[Preflight without the writer]
+  P -->|any failure / no change| S[STOPPED + code]
+  P --> G[Deterministic gates]
+  G -->|failed / tree changed| S
+  G --> N[Read-only snapshot]
+  N --> R[Independent review]
+  R -->|zero findings| A[APPROVE<br/>publicationApproved: false]
+  R -->|any finding| S
+```
+
+1. **Preflight** as above, without the writer's checks: no
+   `codex --version`, no sandbox check, no writer layout check. Nothing may be
+   staged (`STAGED_CHANGES`); a working tree without a change other than the
+   task file stops with `INVALID_TASK`, a task class that skips the review
+   with `INVALID_TASK_CLASS`, analysis mode with `INVALID_TASK_MODE`. The
+   repository manifest is read first, then the secret baseline (changes
+   compared with `HEAD`, `SECRET_DETECTED`) and the dependency fingerprints:
+   all from the working tree at the start.
+2. **Writer round and post-writer checks:** skipped. Before the first gate
+   the manifest, Git state, dependency state, Corepack cache, profile and
+   runner are compared with the preflight; a change stops with
+   `WORKING_TREE_CHANGED` or the other integrity codes.
+3. **Gates, snapshot and review** as steps 4 to 6 above, with the manifest
+   of the preflight as the baseline of the gates.
+4. **Result.** Zero findings: `APPROVE`. Any finding stops the run with
+   `HUMAN_DECISION_REQUIRED` (stage `reviewer`) and the full finding state
+   in the report; there is no correction round.
+
 ## Task modes and classes
 
 - `--task-mode implementation` (default): the flow above.

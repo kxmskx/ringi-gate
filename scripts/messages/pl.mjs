@@ -39,6 +39,14 @@ export default Object.freeze({
   'run.interrupted': 'Workflow przerwany przez Ctrl+C.',
   'run.maxRounds':
     'Wyczerpano limit {maxRounds} rund przy niepustej liście findings. Decyzję przejmuje człowiek.',
+  'run.reviewOnlyFindings':
+    'Przebieg review-only zakończył się z {count} otwartymi findings. Żaden wykonawca ich nie poprawia: decyzję przejmuje człowiek.',
+  'run.reviewOnlyTaskMode':
+    'Przebieg review-only ocenia kandydata implementacji; tryb analysis nie jest dostępny.',
+  'run.reviewOnlyNoChanges':
+    'Przebieg review-only wymaga niezacommitowanych zmian względem HEAD poza plikiem zadania; working tree ich nie ma.',
+  'run.reviewOnlyClass':
+    'Klasa zadania {taskClass} pomija niezależne review; przebieg review-only wymaga klasy z review.',
   'run.resume':
     'Usuń przyczynę, sprawdź working tree i uruchom zadanie ponownie. Workflow nie cofa zmian wykonawcy.',
   'cleanup.failed': 'Cleanup nie powiódł się: {detail}',
@@ -374,6 +382,8 @@ export default Object.freeze({
   'plan.implementationReview': 'reviewer: review diff-first',
   'plan.implementationCorrection': 'korekta wykonawcy po każdym findingu BLOCKER/HIGH/MEDIUM/LOW',
   'plan.noMutations': 'brak',
+  'plan.reviewOnlyInput': 'bez wykonawcy: kandydatem są niezacommitowane zmiany względem HEAD',
+  'plan.reviewOnlyFindings': 'bez rundy korekcyjnej: każdy finding zatrzymuje przebieg do decyzji człowieka',
 
   'report.docsApproval':
     'APPROVE oznacza wykonanie wymaganych kontroli docs; niezależne review NOT_REQUIRED.',
@@ -435,6 +445,8 @@ export default Object.freeze({
     'Opcji {option} i jej przestarzałego aliasu {alias} nie można podać razem.',
   'cli.unknownOption': 'Nieznana opcja: {option}',
   'cli.oneTaskPath': 'Wymagana jest dokładnie jedna ścieżka zadania.',
+  'cli.reviewOnlyTaskMode': 'Opcja --review-only działa tylko z --task-mode implementation.',
+  'cli.reviewOnlyImplementer': 'Opcji {option} nie można podać z --review-only: żaden wykonawca nie startuje.',
   'cli.usage':
     'Użycie: pnpm agents:run -- ścieżka/do/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':

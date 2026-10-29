@@ -8244,6 +8244,9 @@ async function environmentReport({
   implementerModel,
   implementerEffort,
   independentReviewRequired = true,
+  // false for review only: the implementer's CLI is neither required nor
+  // probed (version null).
+  implementerRequired = true,
   implementer = DEFAULT_IMPLEMENTER,
   reviewer = DEFAULT_REVIEWER,
   platform = process.platform,
@@ -8309,10 +8312,14 @@ async function environmentReport({
     isProbedVersion(adapter[role], hostVersion)
       ? {}
       : { warnings: ['UNPROBED_VERSION'] };
-  const writer = roleProvider(implementer, 'implementer');
-  const codex = await version(writer);
-  assertPreflight(writer, 'implementer', codex);
-  const implementerWarnings = versionWarnings(writer, 'implementer', codex);
+  let codex = null;
+  let implementerWarnings = {};
+  if (implementerRequired) {
+    const writer = roleProvider(implementer, 'implementer');
+    codex = await version(writer);
+    assertPreflight(writer, 'implementer', codex);
+    implementerWarnings = versionWarnings(writer, 'implementer', codex);
+  }
   let claude = null;
   let reviewerWarnings = {};
   if (independentReviewRequired) {
@@ -9175,6 +9182,9 @@ async function runWorkflow(options) {
     // Deprecated aliases of implementerModel and implementerEffort.
     codexModel,
     solEffort,
+    // Review only: no writer; the uncommitted changes relative to HEAD at
+    // the start are the candidate of a single review round.
+    reviewOnly = false,
     dryRun = false,
     maxRounds = MAX_ROUNDS,
     codexTimeoutMs = 45 * 60_000,
@@ -9260,6 +9270,7 @@ async function runWorkflow(options) {
       implementer: {
         ...buildImplementerAudit(implementer.provider, sol),
         ...(implementerWarnings.length > 0 ? { warnings: implementerWarnings } : {}),
+        ...(reviewOnly ? { status: 'NOT_RUN' } : {}),
       },
       reviewer: {
         ...buildReviewerAudit(reviewer.provider, review),
@@ -9275,8 +9286,8 @@ async function runWorkflow(options) {
     return {
       implementer: {
         provider: implementer.provider,
-        outputField: 'codex',
-        executionField: 'solExecution',
+        outputField: reviewOnly ? null : 'codex',
+        executionField: reviewOnly ? null : 'solExecution',
       },
       reviewer: {
         provider: reviewer.provider,
@@ -9333,6 +9344,10 @@ async function runWorkflow(options) {
     }
     await assertFingerprintsUnchanged(stage);
   };
+  // Report field runMode: only a review-only run has it.
+  const runModeFields = () => (reviewOnly ? { runMode: 'review-only' } : {});
+  // A review-only run has a single round: findings are not corrected.
+  const roundLimit = reviewOnly ? 1 : maxRounds;
   let pendingFindings = [];
   let latestFindings = [];
   const runId = createRunId(now(), randomId);
@@ -9394,6 +9409,14 @@ async function runWorkflow(options) {
       optionModel === undefined ? implementer.model : optionModel,
     );
     selectedTaskMode = resolveTaskMode(taskMode);
+    // The analysis candidate is the writer's artifact: without a writer
+    // there is nothing to review.
+    if (reviewOnly && selectedTaskMode !== 'implementation') {
+      throw new AgentWorkflowError(msg('run.reviewOnlyTaskMode'), {
+        code: 'INVALID_TASK_MODE',
+        stage: 'preflight',
+      });
+    }
     selectedSolEffort = resolveSolEffort(
       optionEffort === undefined ? implementer.effort : optionEffort,
       implementer.allowedEfforts,
@@ -9404,9 +9427,10 @@ async function runWorkflow(options) {
     );
     // The provider modules of the roles: the task mode must be one they
     // serve, and the writer's model must pass the module's rule too (for
-    // codex and claude it is the core rule above).
+    // codex and claude it is the core rule above). Review only starts no
+    // writer, so the implementer's checks do not apply.
     const implementerAdapter = roleProvider(implementer, 'implementer');
-    if (!isProviderModel(implementerAdapter, selectedCodexModel)) {
+    if (!reviewOnly && !isProviderModel(implementerAdapter, selectedCodexModel)) {
       throw new AgentWorkflowError(
         msg('config.modelUnsupported', {
           model: JSON.stringify(selectedCodexModel),
@@ -9415,7 +9439,8 @@ async function runWorkflow(options) {
         { code: 'INVALID_CODEX_MODEL', stage: 'preflight' },
       );
     }
-    assertProviderTaskMode(implementerAdapter, 'implementer', selectedTaskMode);
+    if (!reviewOnly)
+      assertProviderTaskMode(implementerAdapter, 'implementer', selectedTaskMode);
     assertProviderTaskMode(
       roleProvider(reviewer, 'reviewer'),
       'reviewer',
@@ -9458,12 +9483,16 @@ async function runWorkflow(options) {
     }
     const head = await readHead(runner, cwd);
     await assertNoStagedChanges(runner, cwd);
-    await assertImplementerRepositoryLayout({
-      runner,
-      cwd,
-      adapter: implementerAdapter,
-    });
-    if (implementerStateChecks(implementerAdapter).gitDirectoryWritable) {
+    if (!reviewOnly)
+      await assertImplementerRepositoryLayout({
+        runner,
+        cwd,
+        adapter: implementerAdapter,
+      });
+    if (
+      !reviewOnly &&
+      implementerStateChecks(implementerAdapter).gitDirectoryWritable
+    ) {
       coreGitIndex.index = await createCoreGitIndex({
         runner,
         cwd,
@@ -9478,6 +9507,27 @@ async function runWorkflow(options) {
       profile: selectedProfile,
     });
     quality = { ...task.quality, effectiveGates: [...task.checks] };
+    if (reviewOnly) {
+      // The review is the purpose of the run: a class without it is
+      // refused, as is a working tree without a candidate.
+      if (!quality.independentReviewRequired) {
+        throw new AgentWorkflowError(
+          msg('run.reviewOnlyClass', { taskClass: task.taskClass }),
+          { code: 'INVALID_TASK_CLASS', stage: 'preflight' },
+        );
+      }
+      const candidatePaths = await readCandidatePaths({
+        runner,
+        cwd,
+        stage: 'preflight',
+      });
+      if (!candidatePaths.some((path) => path !== task.path)) {
+        throw new AgentWorkflowError(msg('run.reviewOnlyNoChanges'), {
+          code: 'INVALID_TASK',
+          stage: 'preflight',
+        });
+      }
+    }
     if (quality.docs)
       await assertDocsCandidate({
         runner,
@@ -9502,6 +9552,7 @@ async function runWorkflow(options) {
         ? reviewPolicy.profile
         : null,
       taskMode: selectedTaskMode,
+      ...runModeFields(),
       solModel: selectedCodexModel,
       solEffort: selectedSolEffort,
       quality,
@@ -9530,6 +9581,12 @@ async function runWorkflow(options) {
           quality.independentReviewRequired && reviewPolicy.fallbackAllowed,
       },
     });
+    // Review only: the working tree at the start is the candidate, read
+    // before the other fingerprints; any later change of it stops the run
+    // (WORKING_TREE_CHANGED).
+    const initialManifest = reviewOnly
+      ? await readRepositoryManifest({ runner, cwd, stage: 'preflight' })
+      : undefined;
     const secretBaseline = await establishSecretBaseline({ runner, cwd });
     const dependencyMetadata = await createDependencyMetadataFingerprint({
       repositoryRoot: cwd,
@@ -9545,6 +9602,7 @@ async function runWorkflow(options) {
       implementerModel: selectedCodexModel,
       implementerEffort: selectedSolEffort,
       independentReviewRequired: quality.independentReviewRequired,
+      implementerRequired: !reviewOnly,
       implementer,
       reviewer,
     });
@@ -9593,6 +9651,7 @@ async function runWorkflow(options) {
         dryRun: true,
         status: 'DRY_RUN_OK',
         taskMode: selectedTaskMode,
+        ...runModeFields(),
         taskSchemaVersion: selectedProfile.taskSchema.version,
         branch,
         head,
@@ -9640,8 +9699,15 @@ async function runWorkflow(options) {
           files: dependencyInputs.paths.length,
           manifestsMatchLockfile: true,
         },
-        sequence:
-          selectedTaskMode === 'analysis'
+        sequence: reviewOnly
+          ? [
+              msg('plan.reviewOnlyInput'),
+              msg('plan.checks'),
+              msg('plan.isolatedCopy'),
+              msg('plan.implementationReview'),
+              msg('plan.reviewOnlyFindings'),
+            ]
+          : selectedTaskMode === 'analysis'
             ? [
                 msg('plan.analysisWriter'),
                 msg('plan.analysisIntegrity'),
@@ -9663,7 +9729,7 @@ async function runWorkflow(options) {
                   msg('plan.implementationReview'),
                   msg('plan.implementationCorrection'),
                 ],
-        maxRounds,
+        maxRounds: roundLimit,
         mutations: msg('plan.noMutations'),
         ...projectProfileFields(),
         ...runnerFields(),
@@ -9694,12 +9760,12 @@ async function runWorkflow(options) {
     const knownFindingIdentities = new Map();
     let sessionId;
 
-    for (let round = 1; round <= maxRounds; round += 1) {
-      assertNotCancelled(runner, 'implementer');
+    for (let round = 1; round <= roundLimit; round += 1) {
+      assertNotCancelled(runner, reviewOnly ? 'checks' : 'implementer');
       emit({
         type: 'round:start',
         round,
-        maxRounds,
+        maxRounds: roundLimit,
         gateCount: task.checks.length,
         gateNames: [...task.checks],
         integrityCount: ANALYSIS_PRE_REVIEW_CHECKS.length,
@@ -9731,13 +9797,15 @@ async function runWorkflow(options) {
       // Providers whose sandbox does not keep the Git directory read-only,
       // whose CLI leaves directories in the repository, and every provider
       // module from a profile are checked around the round (before any
-      // gate); codex is not.
-      const implementerState = await readImplementerStateBaseline({
-        runner,
-        repositoryRoot: cwd,
-        adapter: roleProvider(roles().implementer, 'implementer'),
-        stage: 'implementer',
-      });
+      // gate); codex is not. Review only starts no implementer.
+      const implementerState = reviewOnly
+        ? undefined
+        : await readImplementerStateBaseline({
+            runner,
+            repositoryRoot: cwd,
+            adapter: roleProvider(roles().implementer, 'implementer'),
+            stage: 'implementer',
+          });
       // Checks after the gates on a failure path (a gate or the reviewer failed): the Git
       // directory and private index comparison is attached to the STOP
       // report, like post-implementer.
@@ -9756,231 +9824,251 @@ async function runWorkflow(options) {
           return appendIntegrityViolation(failure, integrityError);
         }
       };
-      const codexStageId = `round-${round}:implementer`;
-      const codexStartedAt = monotonicNow();
-      const solExecution = {
-        round,
-        resumed: Boolean(sessionId),
-        requestedModel: selectedCodexModel,
-        requestedEffort: selectedSolEffort,
-        status: 'STARTED',
-        completed: null,
-      };
-      solRuns.push(solExecution);
-      emit({
-        type: 'stage:start',
-        id: codexStageId,
-        badge: 'SOL',
-        ...implementerActor,
-        model: selectedCodexModel,
-        effort: selectedSolEffort,
-        label:
-          selectedTaskMode === 'analysis'
-            ? round === 1
-              ? msg('stage.analysis')
-              : msg('stage.analysisCorrection')
-            : round === 1
-              ? msg('stage.implementation')
-              : msg('stage.findingsCorrection'),
-      });
+      let solExecution;
       let codexResult;
-      try {
-        codexResult = await codexRound({
-          runner,
-          repositoryRoot: cwd,
-          runDirectory,
-          tempRoot,
-          gitPath,
-          pnpmPath,
-          corepackPath,
-          task,
-          checks: task.checks,
-          profile: selectedProfile,
+      let analysisArtifact;
+      if (!reviewOnly) {
+        const codexStageId = `round-${round}:implementer`;
+        const codexStartedAt = monotonicNow();
+        solExecution = {
           round,
-          findings: pendingFindings,
-          sessionId,
-          taskMode: selectedTaskMode,
-          codexModel: selectedCodexModel,
-          solEffort: selectedSolEffort,
-          timeoutMs: codexTimeoutMs,
-          environment: checkPreparation.codexEnvironment,
-          onActivity: (entry) =>
-            emit({ type: 'activity', role: 'ASTRA', ...implementerActor, entry }),
-          verbose,
-        });
-        solExecution.status = 'COMPLETED';
-        solExecution.completed = {
+          resumed: Boolean(sessionId),
+          requestedModel: selectedCodexModel,
+          requestedEffort: selectedSolEffort,
+          status: 'STARTED',
+          completed: null,
+        };
+        solRuns.push(solExecution);
+        emit({
+          type: 'stage:start',
+          id: codexStageId,
+          badge: 'SOL',
+          ...implementerActor,
           model: selectedCodexModel,
           effort: selectedSolEffort,
-        };
-        if (Object.hasOwn(codexResult, 'permissionDenials'))
-          solExecution.permissionDenials = codexResult.permissionDenials;
-      } catch (error) {
-        solExecution.status = 'FAILED';
-        let failure = error;
-        if (implementerState) {
-          try {
-            await assertImplementerStateUnchanged({
-              runner,
-              repositoryRoot: cwd,
-              baseline: implementerState,
-              stage: 'post-implementer',
-            });
-          } catch (integrityError) {
-            failure = appendIntegrityViolation(error, integrityError);
-          }
-        }
-        throw await profileViolationFirst(failure, 'post-implementer');
-      }
-      const codexLog = await saveDiagnosticLog({
-        runDirectory,
-        relativePath: join('logs', `round-${round}-sol.log`),
-        label: msg('log.implementerRound', { round }),
-        stderr: codexResult.stderr,
-        stage: 'implementer',
-      });
-      diagnosticLogs.push(codexLog);
-      roundDiagnosticLogs.push(codexLog);
-      emit({
-        type: 'stage:end',
-        id: codexStageId,
-        badge: 'SOL',
-        ...implementerActor,
-        label:
-          selectedTaskMode === 'analysis'
-            ? round === 1
-              ? msg('stage.analysis')
-              : msg('stage.analysisCorrection')
-            : round === 1
-              ? msg('stage.implementation')
-              : msg('stage.findingsCorrection'),
-        status: 'PASS',
-        durationMs: monotonicNow() - codexStartedAt,
-      });
-      let analysisArtifact;
-      // The writer's report and artifact are checked after the project
-      // profile: its change stays the primary stop code.
-      try {
-        const validatedCodexReport = validateCodexReport(
-          codexResult.report,
-          pendingFindings,
-          selectedTaskMode,
-        );
-        emit({
-          type: 'activity',
-          role: 'ASTRA',
-          ...implementerActor,
-          entry: {
-            type: 'SUMMARY',
-            status: validatedCodexReport.status,
-            changes: validatedCodexReport.changes.length,
-          },
+          label:
+            selectedTaskMode === 'analysis'
+              ? round === 1
+                ? msg('stage.analysis')
+                : msg('stage.analysisCorrection')
+              : round === 1
+                ? msg('stage.implementation')
+                : msg('stage.findingsCorrection'),
         });
-        if (selectedTaskMode === 'analysis') {
-          const materialized = await materializeAnalysisArtifact({
-            repositoryRoot: cwd,
-            runDirectory,
-            round,
-            report: validatedCodexReport,
-          });
-          codexResult.report = materialized.report;
-          analysisArtifact = materialized.artifact;
-          analysisArtifacts.push(analysisArtifact);
-          await saveJson(
-            join(runDirectory, `round-${round}-codex.json`),
-            codexResult.report,
-          );
-        } else {
-          codexResult.report = validatedCodexReport;
-        }
-      } catch (error) {
-        throw await profileViolationFirst(error, 'post-implementer');
-      }
-      responseHistory.push(...codexResult.report.findingResponses);
-      const needsHuman = codexResult.report.findingResponses.find(
-        ({ status }) => status === 'NEEDS_HUMAN',
-      );
-      const humanDecisionError = needsHuman
-        ? new AgentWorkflowError(
-            msg('finding.needsHuman', {
-              findingId: needsHuman.findingId,
-              question: redactSensitive(needsHuman.question),
-            }),
-            { code: 'HUMAN_DECISION_REQUIRED', stage: 'implementer' },
-          )
-        : undefined;
-      sessionId = codexResult.sessionId;
-      try {
-        await assertProjectProfileAfter('post-implementer', () =>
-          assertPostCodexStateUnchanged({
+        try {
+          codexResult = await codexRound({
             runner,
             repositoryRoot: cwd,
-            branch,
-            head,
-            dependencyMetadata,
-            dependencyInputs,
-            secretBaseline,
-            implementerState,
-            coreGitIndex: coreGitIndex.index ? coreGitIndex : undefined,
-          }),
+            runDirectory,
+            tempRoot,
+            gitPath,
+            pnpmPath,
+            corepackPath,
+            task,
+            checks: task.checks,
+            profile: selectedProfile,
+            round,
+            findings: pendingFindings,
+            sessionId,
+            taskMode: selectedTaskMode,
+            codexModel: selectedCodexModel,
+            solEffort: selectedSolEffort,
+            timeoutMs: codexTimeoutMs,
+            environment: checkPreparation.codexEnvironment,
+            onActivity: (entry) =>
+              emit({ type: 'activity', role: 'ASTRA', ...implementerActor, entry }),
+            verbose,
+          });
+          solExecution.status = 'COMPLETED';
+          solExecution.completed = {
+            model: selectedCodexModel,
+            effort: selectedSolEffort,
+          };
+          if (Object.hasOwn(codexResult, 'permissionDenials'))
+            solExecution.permissionDenials = codexResult.permissionDenials;
+        } catch (error) {
+          solExecution.status = 'FAILED';
+          let failure = error;
+          if (implementerState) {
+            try {
+              await assertImplementerStateUnchanged({
+                runner,
+                repositoryRoot: cwd,
+                baseline: implementerState,
+                stage: 'post-implementer',
+              });
+            } catch (integrityError) {
+              failure = appendIntegrityViolation(error, integrityError);
+            }
+          }
+          throw await profileViolationFirst(failure, 'post-implementer');
+        }
+        const codexLog = await saveDiagnosticLog({
+          runDirectory,
+          relativePath: join('logs', `round-${round}-sol.log`),
+          label: msg('log.implementerRound', { round }),
+          stderr: codexResult.stderr,
+          stage: 'implementer',
+        });
+        diagnosticLogs.push(codexLog);
+        roundDiagnosticLogs.push(codexLog);
+        emit({
+          type: 'stage:end',
+          id: codexStageId,
+          badge: 'SOL',
+          ...implementerActor,
+          label:
+            selectedTaskMode === 'analysis'
+              ? round === 1
+                ? msg('stage.analysis')
+                : msg('stage.analysisCorrection')
+              : round === 1
+                ? msg('stage.implementation')
+                : msg('stage.findingsCorrection'),
+          status: 'PASS',
+          durationMs: monotonicNow() - codexStartedAt,
+        });
+        // The writer's report and artifact are checked after the project
+        // profile: its change stays the primary stop code.
+        try {
+          const validatedCodexReport = validateCodexReport(
+            codexResult.report,
+            pendingFindings,
+            selectedTaskMode,
+          );
+          emit({
+            type: 'activity',
+            role: 'ASTRA',
+            ...implementerActor,
+            entry: {
+              type: 'SUMMARY',
+              status: validatedCodexReport.status,
+              changes: validatedCodexReport.changes.length,
+            },
+          });
+          if (selectedTaskMode === 'analysis') {
+            const materialized = await materializeAnalysisArtifact({
+              repositoryRoot: cwd,
+              runDirectory,
+              round,
+              report: validatedCodexReport,
+            });
+            codexResult.report = materialized.report;
+            analysisArtifact = materialized.artifact;
+            analysisArtifacts.push(analysisArtifact);
+            await saveJson(
+              join(runDirectory, `round-${round}-codex.json`),
+              codexResult.report,
+            );
+          } else {
+            codexResult.report = validatedCodexReport;
+          }
+        } catch (error) {
+          throw await profileViolationFirst(error, 'post-implementer');
+        }
+        responseHistory.push(...codexResult.report.findingResponses);
+        const needsHuman = codexResult.report.findingResponses.find(
+          ({ status }) => status === 'NEEDS_HUMAN',
         );
-        if (quality.docs)
-          await assertDocsCandidate({
+        const humanDecisionError = needsHuman
+          ? new AgentWorkflowError(
+              msg('finding.needsHuman', {
+                findingId: needsHuman.findingId,
+                question: redactSensitive(needsHuman.question),
+              }),
+              { code: 'HUMAN_DECISION_REQUIRED', stage: 'implementer' },
+            )
+          : undefined;
+        sessionId = codexResult.sessionId;
+        try {
+          await assertProjectProfileAfter('post-implementer', () =>
+            assertPostCodexStateUnchanged({
+              runner,
+              repositoryRoot: cwd,
+              branch,
+              head,
+              dependencyMetadata,
+              dependencyInputs,
+              secretBaseline,
+              implementerState,
+              coreGitIndex: coreGitIndex.index ? coreGitIndex : undefined,
+            }),
+          );
+          if (quality.docs)
+            await assertDocsCandidate({
+              runner,
+              cwd,
+              stage: 'post-implementer',
+              profile: selectedProfile,
+              protectedPaths: projectProfileReport?.files.map(({ path }) => path),
+            });
+          await assertRequiredGates({
             runner,
             cwd,
             stage: 'post-implementer',
+            task,
             profile: selectedProfile,
-            protectedPaths: projectProfileReport?.files.map(({ path }) => path),
           });
-        await assertRequiredGates({
-          runner,
-          cwd,
-          stage: 'post-implementer',
-          task,
-          profile: selectedProfile,
-        });
-        if (selectedTaskMode === 'analysis') {
-          const mutationFingerprint = await readAnalysisMutationFingerprint({
-            runner,
-            cwd,
-            stage: 'analysis',
-          });
-          if (mutationFingerprint.hash !== analysisMutationBaseline.hash) {
-            throw new AgentWorkflowError(
-              msg('writer.analysisWrite'),
-              { code: 'ANALYSIS_WORKING_TREE_WRITE', stage: 'analysis' },
-            );
+          if (selectedTaskMode === 'analysis') {
+            const mutationFingerprint = await readAnalysisMutationFingerprint({
+              runner,
+              cwd,
+              stage: 'analysis',
+            });
+            if (mutationFingerprint.hash !== analysisMutationBaseline.hash) {
+              throw new AgentWorkflowError(
+                msg('writer.analysisWrite'),
+                { code: 'ANALYSIS_WORKING_TREE_WRITE', stage: 'analysis' },
+              );
+            }
+            await assertQaStateUnchanged({
+              runner,
+              repositoryRoot: cwd,
+              branch,
+              head,
+              dependencyMetadata,
+              dependencyInputs,
+              repositoryManifest: analysisRoundBaseline,
+              cache: checkPreparation.cache,
+              stage: 'analysis',
+            });
+            await assertAnalysisArtifactIntegrity(analysisArtifact, 'analysis');
           }
-          await assertQaStateUnchanged({
-            runner,
-            repositoryRoot: cwd,
-            branch,
-            head,
-            dependencyMetadata,
-            dependencyInputs,
-            repositoryManifest: analysisRoundBaseline,
-            cache: checkPreparation.cache,
-            stage: 'analysis',
-          });
-          await assertAnalysisArtifactIntegrity(analysisArtifact, 'analysis');
+        } catch (integrityError) {
+          if (!humanDecisionError) throw integrityError;
+          // A change of the project profile stays the primary stop code; the
+          // human decision is kept as an integrity violation.
+          throw integrityError?.code === 'PROFILE_MODIFIED'
+            ? appendIntegrityViolation(integrityError, humanDecisionError)
+            : appendIntegrityViolation(humanDecisionError, integrityError);
         }
-      } catch (integrityError) {
-        if (!humanDecisionError) throw integrityError;
-        // A change of the project profile stays the primary stop code; the
-        // human decision is kept as an integrity violation.
-        throw integrityError?.code === 'PROFILE_MODIFIED'
-          ? appendIntegrityViolation(integrityError, humanDecisionError)
-          : appendIntegrityViolation(humanDecisionError, integrityError);
+        if (humanDecisionError) throw humanDecisionError;
       }
-      if (humanDecisionError) throw humanDecisionError;
       let gateReport;
       let integrityReport;
       if (selectedTaskMode === 'implementation') {
-        const beforeChecks = await readRepositoryManifest({
-          runner,
-          cwd,
-          stage: 'checks',
-        });
+        // Review only: the gates start from the working tree of the
+        // preflight; a change since then stops the run before the first gate.
+        if (reviewOnly)
+          await assertProjectProfileAfter('checks', () =>
+            assertQaStateUnchanged({
+              runner,
+              repositoryRoot: cwd,
+              branch,
+              head,
+              dependencyMetadata,
+              dependencyInputs,
+              repositoryManifest: initialManifest,
+              cache: checkPreparation.cache,
+            }),
+          );
+        const beforeChecks = reviewOnly
+          ? initialManifest
+          : await readRepositoryManifest({
+              runner,
+              cwd,
+              stage: 'checks',
+            });
         await assertPreparedCorepackCacheUnchanged({
           cache: checkPreparation.cache,
           stage: 'checks',
@@ -10220,7 +10308,7 @@ async function runWorkflow(options) {
         integrityReport,
         analysisArtifact,
         previousFindings: latestFindings,
-        findingResponses: codexResult.report.findingResponses,
+        findingResponses: codexResult?.report.findingResponses ?? [],
       });
       emit({
         type: 'stage:end',
@@ -10353,8 +10441,8 @@ async function runWorkflow(options) {
         round,
         taskMode: selectedTaskMode,
         quality,
-        codex: codexResult.report,
-        solExecution,
+        // Review only: no writer output (implementer.outputField is null).
+        ...(reviewOnly ? {} : { codex: codexResult.report, solExecution }),
         ...(selectedTaskMode === 'implementation'
           ? { gates: gateReport }
           : {
@@ -10452,6 +10540,7 @@ async function runWorkflow(options) {
           status: 'APPROVE',
           quality,
           taskMode: selectedTaskMode,
+          ...runModeFields(),
           taskSchemaVersion: selectedProfile.taskSchema.version,
           durationMs: Math.max(
             0,
@@ -10492,6 +10581,14 @@ async function runWorkflow(options) {
         break;
       }
       pendingFindings = unresolvedFindings;
+      // Review only: no writer corrects the findings; they stay in the
+      // report (findings) for a human decision.
+      if (reviewOnly) {
+        throw new AgentWorkflowError(
+          msg('run.reviewOnlyFindings', { count: unresolvedFindings.length }),
+          { code: 'HUMAN_DECISION_REQUIRED', stage: 'reviewer' },
+        );
+      }
       if (round === maxRounds) {
         throw new AgentWorkflowError(
           msg('run.maxRounds', { maxRounds }),
@@ -10536,6 +10633,7 @@ async function runWorkflow(options) {
       status: 'STOPPED',
       quality,
       taskMode: selectedTaskMode ?? 'invalid',
+      ...runModeFields(),
       ...(selectedProfile
         ? { taskSchemaVersion: selectedProfile.taskSchema.version }
         : {}),

@@ -57,6 +57,15 @@ import {
   buildCodexPrompt,
 } from './agent-review-prompts.mjs';
 import {
+  LEDGER_MAC,
+  RUN_ID_PATTERN,
+  createLedgerWriter,
+  ledgerPath,
+  readLedgerText,
+  verifyResumableLedger,
+  verifyRunLedgerFiles,
+} from './agent-review-ledger.mjs';
+import {
   CODEX_MODEL,
   DEFAULT_IMPLEMENTER,
   DEFAULT_REVIEW_PROFILE,
@@ -9175,8 +9184,6 @@ const CHECKPOINT_STOPPED_DIRECTORY = 'stopped';
 const CHECKPOINT_KEY_BYTES = 32;
 const MAX_CHECKPOINT_BYTES = 32 * 1024 * 1024;
 const CHECKPOINT_PHASES = new Set(['implementer', 'checks', 'review']);
-const RUN_ID_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z--[A-Za-z0-9]{1,64}$/;
 // The only stops after which a run may be resumed: a failed or interrupted
 // gate, a process that failed or timed out, and an agent's output that could
 // not be used. Every other code, including codes added later, is not
@@ -9344,6 +9351,44 @@ async function openCheckpointKey({ stateDirectory, create, stage }) {
   await assertPrivateStateDirectory(stateDirectory, stage);
   if (create) await createCheckpointKey(stateDirectory, stage);
   return readCheckpointKey(stateDirectory, stage);
+}
+
+// The ledger's key: the checkpoint key when it already exists, with the
+// same checks as openCheckpointKey; never created, and nothing is written.
+// unavailable: why there is no key ('no-state-directory', 'no-key' or
+// 'key-unsafe'); without a key the ledger has no mac.
+async function readExistingCheckpointKey(stateDirectory) {
+  if (!stateDirectory) return { key: null, unavailable: 'no-state-directory' };
+  for (const path of [stateDirectory, join(stateDirectory, CHECKPOINT_KEY_FILE)]) {
+    const missing = await lstat(path).then(
+      () => false,
+      (error) => error?.code === 'ENOENT',
+    );
+    if (missing) return { key: null, unavailable: 'no-key' };
+  }
+  try {
+    await assertPrivateStateDirectory(stateDirectory, 'preflight');
+    return { key: await readCheckpointKey(stateDirectory, 'preflight'), unavailable: null };
+  } catch {
+    return { key: null, unavailable: 'key-unsafe' };
+  }
+}
+
+export function isRunId(value) {
+  return typeof value === 'string' && RUN_ID_PATTERN.test(value);
+}
+
+// ringi verify: the ledger of a run in the repository against itself, the
+// key (when it exists; it is only read) and the run's report.
+export async function verifyRunLedger({ repositoryRoot, runId, stateDirectory }) {
+  const { key, unavailable } = await readExistingCheckpointKey(stateDirectory);
+  const result = await verifyRunLedgerFiles({
+    runsDirectory: join(repositoryRoot, STATE_DIRECTORY, 'runs'),
+    stateDirectoryName: STATE_DIRECTORY,
+    runId,
+    key,
+  });
+  return { ...result, key: unavailable ?? 'present' };
 }
 
 function signCheckpoint(key, payload) {
@@ -9798,6 +9843,34 @@ async function runWorkflow(options) {
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(checkpointContext ? { checkpoint: checkpointReport(stop) } : {}),
   });
+  // The evidence ledger of the run (agent-review-ledger.mjs), from the
+  // creation of the run directory on. It documents the run; the runner
+  // never reads it back to decide anything.
+  let ledger;
+  const ledgerFields = () =>
+    ledger
+      ? {
+          ledger: {
+            path: ledgerPath(STATE_DIRECTORY, runId),
+            events: ledger.events,
+            headHash: ledger.headHash,
+          },
+        }
+      : {};
+  // An event that cannot be written stops the run with
+  // INTEGRITY_CHECK_FAILED, like a checkpoint that cannot be written: the
+  // run's evidence would be incomplete. The code is not resumable.
+  const record = async (type, data, stage) => {
+    if (!ledger) return;
+    try {
+      await ledger.append(type, data);
+    } catch (error) {
+      throw new AgentWorkflowError(
+        msg('ledger.writeFailed', { detail: error?.code ?? 'unknown' }),
+        { code: 'INTEGRITY_CHECK_FAILED', stage },
+      );
+    }
+  };
   // A review-only run has a single round: findings are not corrected.
   const roundLimit = reviewOnly ? 1 : maxRounds;
   let pendingFindings = [];
@@ -10207,7 +10280,31 @@ async function runWorkflow(options) {
             maxRounds: roundLimit,
           });
         }
-        resumeFrom = { ...candidate, codexReport };
+        // The resumed run's ledger must verify with the key and end its
+        // checkpoints at this checkpoint; otherwise the checkpoint is
+        // refused. Nothing is taken from the ledger but its head, which the
+        // new ledger continues.
+        const previousLedger = verifyResumableLedger(
+          await readLedgerText(join(cwd, STATE_DIRECTORY, 'runs', resume)).catch(
+            () => '',
+          ),
+          { key, runId: resume, phase: candidate.phase, round: candidate.round },
+        );
+        if (previousLedger.failure) {
+          throw checkpointStop('checkpoint.ledger', {
+            runId: resume,
+            detail: previousLedger.failure,
+          });
+        }
+        resumeFrom = {
+          ...candidate,
+          codexReport,
+          ledger: {
+            path: ledgerPath(STATE_DIRECTORY, resume),
+            events: previousLedger.events,
+            headHash: previousLedger.headHash,
+          },
+        };
         resumedFrom = resume;
       }
       checkpointContext = {
@@ -10328,8 +10425,57 @@ async function runWorkflow(options) {
       return report;
     }
 
+    // The ledger's key: the checkpoint key of a run with checkpoints, else
+    // the existing key, only read: a run without checkpoints writes nothing
+    // outside the repository, and without a key its ledger has no mac.
+    const ledgerKey = checkpointContext
+      ? { key: checkpointContext.key, unavailable: null }
+      : await readExistingCheckpointKey(
+          stateDirectory ?? resolveCheckpointStateDirectory(sourceEnvironment),
+        );
     runDirectory = join(cwd, STATE_DIRECTORY, 'runs', runId);
     await mkdir(runDirectory, { recursive: true, mode: 0o700 });
+    ledger = createLedgerWriter({
+      path: join(cwd, ledgerPath(STATE_DIRECTORY, runId)),
+      key: ledgerKey.key,
+      prev: resumeFrom?.ledger.headHash ?? null,
+      now: () => now().toISOString(),
+      redact: redactSensitive,
+    });
+    await record(
+      'preflight',
+      {
+        runId,
+        mac: ledgerKey.key ? LEDGER_MAC : null,
+        ...(ledgerKey.key ? {} : { macUnavailable: ledgerKey.unavailable }),
+        taskMode: selectedTaskMode,
+        ...runModeFields(),
+        branch,
+        head,
+        task: { path: task.path, sha256: task.hash, mode: selectedTaskMode },
+      },
+      'preflight',
+    );
+    await record(
+      'fingerprints',
+      {
+        runner: runnerFingerprint.sha256,
+        projectProfile: projectProfileReport?.sha256 ?? null,
+      },
+      'preflight',
+    );
+    if (resumeFrom) {
+      await record(
+        'resume',
+        {
+          resumedFrom,
+          phase: resumeFrom.phase,
+          round: resumeFrom.round,
+          previousLedger: resumeFrom.ledger,
+        },
+        'preflight',
+      );
+    }
     const [gitPath, pnpmPath, corepackPath] = await Promise.all([
       findExecutable('git'),
       findExecutable('pnpm'),
@@ -10410,6 +10556,31 @@ async function runWorkflow(options) {
         stage: `post-${fields.phase}`,
       });
       checkpointContext.last = payload;
+      await record(
+        'checkpoint',
+        {
+          path: join(STATE_DIRECTORY, 'runs', runId, CHECKPOINT_FILE),
+          phase: fields.phase,
+          round: fields.round,
+        },
+        `post-${fields.phase}`,
+      );
+    };
+    // The reviewer's attempts of a round, as reviewExecution lists them.
+    const recordReviewAttempts = async (round, execution) => {
+      for (const attempt of execution?.attempts ?? []) {
+        await record(
+          'review-attempt',
+          {
+            round,
+            attempt: attempt.attempt,
+            model: attempt.requestedModel,
+            effort: attempt.requestedEffort,
+            status: attempt.status,
+          },
+          'reviewer',
+        );
+      }
     };
 
     for (let round = startRound; round <= roundLimit; round += 1) {
@@ -10705,6 +10876,16 @@ async function runWorkflow(options) {
             : appendIntegrityViolation(humanDecisionError, integrityError);
         }
         if (humanDecisionError) throw humanDecisionError;
+        await record(
+          'writer-round',
+          {
+            round,
+            status: codexResult.report.status,
+            changes: codexResult.report.changes.length,
+            findingResponses: codexResult.report.findingResponses.length,
+          },
+          'post-implementer',
+        );
         if (checkpointContext) {
           await saveCheckpoint({
             phase: 'implementer',
@@ -10775,9 +10956,17 @@ async function runWorkflow(options) {
               });
               diagnosticLogs.push(gateLog);
               roundDiagnosticLogs.push(gateLog);
-              if (result.code !== 0 || result.timedOut || result.signal) {
-                lastDiagnosticLog = gateLog;
-              }
+              const passed = !(
+                result.code !== 0 ||
+                result.timedOut ||
+                result.signal
+              );
+              if (!passed) lastDiagnosticLog = gateLog;
+              await record(
+                'gate',
+                { round, index: gateIndex, name, passed },
+                'checks',
+              );
             },
             afterEach: async () =>
               assertQaStateUnchanged({
@@ -10892,6 +11081,17 @@ async function runWorkflow(options) {
         });
         integrityReport = createAnalysisIntegrityReport();
         validateAnalysisIntegrityReport(integrityReport);
+        await record(
+          'integrity',
+          {
+            round,
+            checks: integrityReport.checks.map(({ name, status }) => ({
+              name,
+              status,
+            })),
+          },
+          'analysis',
+        );
         emit({
           type: 'stage:end',
           id: integrityStageId,
@@ -10939,6 +11139,11 @@ async function runWorkflow(options) {
         };
         rounds.push(roundReport);
         await saveJson(join(runDirectory, `round-${round}.json`), roundReport);
+        await record(
+          'result',
+          { status: 'APPROVE', rounds: rounds.length, publicationApproved: false },
+          'workflow',
+        );
         const audits = roleAudits(review);
         report = {
           schemaVersion: 1,
@@ -10968,6 +11173,7 @@ async function runWorkflow(options) {
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
+          ...ledgerFields(),
         };
         await saveJson(join(runDirectory, 'report.json'), report);
         break;
@@ -11000,6 +11206,23 @@ async function runWorkflow(options) {
         previousFindings: latestFindings,
         findingResponses: codexResult?.report.findingResponses ?? [],
       });
+      // The round's snapshot field of the report (round-N.json).
+      const snapshotSummary = {
+        mode: selectedTaskMode,
+        fileCount: snapshot.fileCount,
+        totalBytes: snapshot.totalBytes,
+        sourceHash: snapshot.sourceHash,
+        ...(selectedTaskMode === 'implementation'
+          ? { diffHash: snapshot.diffHash, minimal: false }
+          : {
+              manifestHash: snapshot.manifestHash,
+              artifactHash: analysisArtifact.sha256,
+              packageHash: snapshot.snapshotHash,
+              minimal: true,
+            }),
+        readOnly: true,
+      };
+      await record('snapshot', { round, ...snapshotSummary }, 'snapshot');
       emit({
         type: 'stage:end',
         id: snapshotStageId,
@@ -11091,8 +11314,12 @@ async function runWorkflow(options) {
         reviewRuns.push(claudeResult.execution);
       } catch (error) {
         if (error?.reviewExecution) reviewRuns.push(error.reviewExecution);
+        // The stop is recorded next; a failed write here leaves the review's
+        // error the stop code (the report then carries a warning).
+        await recordReviewAttempts(round, error?.reviewExecution).catch(() => {});
         throw await withImplementerStateViolation(error, 'post-review');
       }
+      await recordReviewAttempts(round, claudeResult.execution);
       // The same checks again after the review, before the final report or the next
       // round's baseline.
       await assertStateStillUnchanged('post-review');
@@ -11113,6 +11340,17 @@ async function runWorkflow(options) {
       if (selectedTaskMode === 'analysis') {
         integrityReport = createAnalysisIntegrityReport({ postReview: true });
         validateAnalysisIntegrityReport(integrityReport, { postReview: true });
+        await record(
+          'integrity',
+          {
+            round,
+            checks: integrityReport.checks.map(({ name, status }) => ({
+              name,
+              status,
+            })),
+          },
+          'analysis',
+        );
       }
       const reviewedFindings = assignFindingIds(
         validatedClaudeReview.findings,
@@ -11139,21 +11377,7 @@ async function runWorkflow(options) {
               integrity: integrityReport,
               analysisArtifact: codexResult.report.analysisArtifact,
             }),
-        snapshot: {
-          mode: selectedTaskMode,
-          fileCount: snapshot.fileCount,
-          totalBytes: snapshot.totalBytes,
-          sourceHash: snapshot.sourceHash,
-          ...(selectedTaskMode === 'implementation'
-            ? { diffHash: snapshot.diffHash, minimal: false }
-            : {
-                manifestHash: snapshot.manifestHash,
-                artifactHash: analysisArtifact.sha256,
-                packageHash: snapshot.snapshotHash,
-                minimal: true,
-              }),
-          readOnly: true,
-        },
+        snapshot: snapshotSummary,
         claude: claudeResult.review,
         reviewExecution: claudeResult.execution,
         ...roundRoles('claude'),
@@ -11164,6 +11388,19 @@ async function runWorkflow(options) {
 
       const unresolvedFindings = reviewedFindings.filter(({ severity }) =>
         UNRESOLVED_FINDING_SEVERITIES.has(severity),
+      );
+      await record(
+        'findings',
+        {
+          round,
+          verdict: claudeResult.review.verdict,
+          findings: reviewedFindings.map(({ findingId, severity }) => ({
+            findingId,
+            severity,
+          })),
+          unresolved: unresolvedFindings.map(({ findingId }) => findingId),
+        },
+        'reviewer',
       );
       if (checkpointContext) {
         await saveCheckpoint({
@@ -11234,6 +11471,11 @@ async function runWorkflow(options) {
         }
         // The runner once more, right before the final report.
         assertRunnerUnchanged(runnerFingerprint, 'post-review');
+        await record(
+          'result',
+          { status: 'APPROVE', rounds: rounds.length, publicationApproved: false },
+          'workflow',
+        );
         report = {
           schemaVersion: 1,
           runId,
@@ -11279,6 +11521,7 @@ async function runWorkflow(options) {
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
+          ...ledgerFields(),
         };
         await saveJson(join(runDirectory, 'report.json'), report);
         break;
@@ -11460,6 +11703,34 @@ async function runWorkflow(options) {
     if (normalized.integrityViolations?.length) {
       report.integrityViolations = normalized.integrityViolations;
     }
+    // The stop and the result end the ledger. They cannot change the stop
+    // code: a write that fails here, or failed before, leaves a warning.
+    if (ledger) {
+      try {
+        await record(
+          'stop',
+          {
+            code: normalized.code,
+            stage: normalized.stage ?? null,
+            ...(report.checkpoint
+              ? { resumable: report.checkpoint.resumable }
+              : {}),
+            integrityViolations: normalized.integrityViolations?.length ?? 0,
+          },
+          'workflow',
+        );
+        await record(
+          'result',
+          { status: 'STOPPED', rounds: rounds.length, publicationApproved: false },
+          'workflow',
+        );
+      } catch {
+        // ledger.failed is set; the warning follows.
+      }
+      if (ledger.failed)
+        report.warnings = [...(report.warnings ?? []), msg('ledger.incomplete')];
+      Object.assign(report, ledgerFields());
+    }
     if (runDirectory) {
       await saveJson(join(runDirectory, 'report.json'), report).catch(() => {});
     }
@@ -11482,6 +11753,25 @@ async function runWorkflow(options) {
           workflowError.report = report;
         } else {
           const completedReport = report;
+          // The ledger ended with the completed result: the stop and the
+          // new result follow it; a failed write leaves a warning.
+          const warnings = [warning];
+          if (ledger) {
+            try {
+              await record(
+                'stop',
+                { code: 'CLEANUP_FAILED', stage: 'cleanup', integrityViolations: 0 },
+                'cleanup',
+              );
+              await record(
+                'result',
+                { status: 'STOPPED', rounds: rounds.length, publicationApproved: false },
+                'cleanup',
+              );
+            } catch {
+              warnings.push(msg('ledger.incomplete'));
+            }
+          }
           report = {
             schemaVersion: 1,
             runId,
@@ -11501,7 +11791,7 @@ async function runWorkflow(options) {
             code: 'CLEANUP_FAILED',
             stage: 'cleanup',
             error: warning,
-            warnings: [warning],
+            warnings,
             partial: completedReport,
             rounds,
             ...(quality?.independentReviewRequired === false
@@ -11521,6 +11811,7 @@ async function runWorkflow(options) {
               : {}),
             ...projectProfileFields(),
             ...runnerFields(),
+            ...ledgerFields(),
           };
           workflowError = new AgentWorkflowError(warning, {
             code: 'CLEANUP_FAILED',

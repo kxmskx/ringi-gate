@@ -117,6 +117,7 @@ const REQUIRED_FILES = [
   'scripts/agent-review-dashboard.mjs',
   'scripts/agent-review-prompts.mjs',
   'scripts/agent-review-providers.mjs',
+  'scripts/agent-review-ledger.mjs',
   'scripts/agent-review-profile.mjs',
   'scripts/messages/index.mjs',
   'scripts/messages/en.mjs',

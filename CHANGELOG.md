@@ -42,8 +42,28 @@ is published by hand, without provenance; later versions are published by
   the key; code running as the user can read the key, so a forged
   checkpoint can change the round or findings history but cannot approve a
   run. Reports add `checkpoint` and `resumedFrom`; `schemaVersion` stays 1,
-  and a run without the options is unchanged and writes nothing in the
+  and a run without the options has neither field and writes nothing in the
   state directory.
+- Run ledger: every run with a run directory appends its evidence to
+  `.agent-review-loop/runs/<runId>/ledger.jsonl` (`ledgerVersion` 1, see
+  `docs/ledger.md`), one line per phase event with the SHA-256 of the
+  previous line and, when the checkpoint key exists, an HMAC of the line;
+  each line is synced to disk. Only evidence the report already contains, or
+  hashes of it, redacted like the report. A run without checkpoints only
+  reads an existing key and never creates it. An event that cannot be
+  written stops the run with `INTEGRITY_CHECK_FAILED`. Reports add
+  `ledger: { path, events, headHash }`; `schemaVersion` stays 1. A resume
+  verifies the ledger of the run it continues (otherwise
+  `INTEGRITY_CHECK_FAILED`) and continues its chain. The ledger documents a
+  run; the runner never reads it as trusted state.
+- `ringi verify <runId> [--json]`: verifies a run's ledger (chain, `seq`,
+  every `mac` with the key, the report's `ledger` field and fingerprints,
+  the ledger a resumed run continues) and prints `ok` or the first mismatch;
+  exit code `0`, `1`, or `2` for invalid arguments. Without the key it
+  verifies only the chain and warns that this does not prove authenticity.
+  With the key present, a ledger without `mac` is reported as `unverified`
+  (exit code `1`): it was written without the key or its `mac` fields were
+  removed.
 
 ## 0.2.4 — 2026-10-28
 

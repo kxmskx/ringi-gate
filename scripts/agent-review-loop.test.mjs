@@ -6,6 +6,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import {
   chmod,
   copyFile,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -38,6 +39,7 @@ import enMessages from './messages/en.mjs';
 import plMessages from './messages/pl.mjs';
 import * as loopExports from './agent-review-loop-lib.mjs';
 import * as dashboardExports from './agent-review-dashboard.mjs';
+import * as ledgerExports from './agent-review-ledger.mjs';
 import * as promptExports from './agent-review-prompts.mjs';
 import * as providerExports from './agent-review-providers.mjs';
 import * as contractExports from './providers/contract.mjs';
@@ -1185,6 +1187,8 @@ test('runner surface contract: lib named exports', () => {
       'createStreamingRedactor',
       'internal',
       'isResumableStop',
+      // The run id format (ringi verify).
+      'isRunId',
       'isSuspiciousSecretPath',
       'isValidCodexModel',
       // Profile loaded from ringi.config.mjs.
@@ -1203,6 +1207,8 @@ test('runner surface contract: lib named exports', () => {
       'resolveTaskMode',
       'runAgentReviewLoop',
       'validateTaskMarkdown',
+      // The verification of a run's ledger (ringi verify).
+      'verifyRunLedger',
     ],
     'lib named exports',
   );
@@ -1803,6 +1809,8 @@ async function createCliPreflightRepository({
       'agent-review-prompts.mjs',
       // Provider adapter module imported by lib.
       'agent-review-providers.mjs',
+      // Evidence ledger module imported by lib.
+      'agent-review-ledger.mjs',
       // Contract and built-in provider modules.
       'providers/contract.mjs',
       'providers/codex.mjs',
@@ -16856,6 +16864,13 @@ function stripRunnerField(value, kind) {
       assertRunnerFingerprintFormat(report.runner);
       delete report.runner;
     }
+    // The ledger's fingerprints event has the runner's SHA-256: its head
+    // changes with the runner's code too.
+    if (Object.hasOwn(report, 'ledger')) {
+      assert.deepEqual(Object.keys(report.ledger), ['path', 'events', 'headHash'], 'ledger keys');
+      assert.match(report.ledger.headHash, /^[0-9a-f]{64}$/u, 'ledger.headHash');
+      report.ledger.headHash = '<sha256>';
+    }
     strip(report.partial);
   };
   if (kind === 'events') for (const event of value) strip(event.report);
@@ -16905,6 +16920,8 @@ const GOLDEN_NORMALIZATIONS = deepFreeze({
     'Neutralne pola ról (raport: implementer, reviewer, agents.implementer/reviewer, findings.rejectedByImplementer, rounds[].implementer/reviewer; zdarzenia: actor, provider, metadata.implementer/reviewer) są pominięte, jak w wersji sprzed tych pól.',
   runnerFingerprint:
     'Pole raportu runner (odcisk SHA-256 plików runnera, zmienia się z każdą zmianą kodu runnera; także w raporcie zdarzenia result i w raporcie partial) jest pominięte po sprawdzeniu formatu, jak w wersji sprzed tego pola.',
+  ledgerHeadHash:
+    'ledger.headHash w raporcie (SHA-256 ostatniej linii ledgera, którego zdarzenie fingerprints zawiera odcisk runnera; także w raporcie zdarzenia result i w raporcie partial) ma wartość "<sha256>" po sprawdzeniu formatu.',
 });
 
 // Synthetic environment of snapshot scenarios instead of the machine's
@@ -16994,6 +17011,7 @@ const GOLDEN_SNAPSHOTS = deepFreeze({
       'temporaryPaths',
       'neutralRoleFields',
       'runnerFingerprint',
+      'ledgerHeadHash',
     ],
   },
   'adapters-codex-claude-reviewer': {
@@ -17004,7 +17022,7 @@ const GOLDEN_SNAPSHOTS = deepFreeze({
   'runs-default': {
     test: 'run compatibility [golden]: full-run report and events of the default profile are identical',
     baseline: 'core before the claude implementer',
-    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint'],
+    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint', 'ledgerHeadHash'],
   },
   'adapters-codex-claude': {
     test: 'adapter compatibility [golden]: codex and claude adapters (both roles) and implementer and reviewer rounds are unchanged',
@@ -17014,17 +17032,17 @@ const GOLDEN_SNAPSHOTS = deepFreeze({
   'runs-claude-implementer': {
     test: 'run compatibility [golden]: full-run report and events of the default profile and the claude implementer profile are identical',
     baseline: 'core with the claude implementer, before provider modules',
-    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint'],
+    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint', 'ledgerHeadHash'],
   },
   'runs-runner-profile': {
     test: 'runner profile run compatibility [golden]: full-run report and events of the default profile and with claude as implementer are identical',
     baseline: 'core with provider modules and the runner profile, before locale',
-    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint'],
+    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint', 'ledgerHeadHash'],
   },
   'runs-locale-pl': {
     test: 'locale pl compatibility [golden]: full-run report, events and terminal output are identical',
     baseline: 'last core before locale',
-    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint'],
+    normalizations: ['durationMs', 'dependencyMetadataFingerprint', 'temporaryPaths', 'runnerFingerprint', 'ledgerHeadHash'],
   },
   'cli-locale-pl': {
     test: 'locale pl compatibility [golden]: CLI parser, usage and error diagnosis are identical',
@@ -22707,9 +22725,15 @@ test('RINGI project profile: fingerprint of the file and local imports in the dr
       assert.equal(Object.hasOwn(runs.explicit[kind], 'projectProfile'), false);
       const withoutProfile = { ...runs.ringi[kind] };
       delete withoutProfile.projectProfile;
+      // The ledger's fingerprints event names the profile: only its head
+      // differs.
+      const withoutHead = (report) =>
+        report.ledger
+          ? { ...report, ledger: { ...report.ledger, headHash: '<sha256>' } }
+          : report;
       assert.equal(
-        JSON.stringify(stripDurations(withoutProfile)),
-        JSON.stringify(stripDurations(runs.explicit[kind])),
+        JSON.stringify(stripDurations(withoutHead(withoutProfile))),
+        JSON.stringify(stripDurations(withoutHead(runs.explicit[kind]))),
         kind,
       );
     }
@@ -23581,8 +23605,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // run.reviewOnlyTaskMode, run.reviewOnlyNoChanges, run.reviewOnlyClass,
   // plan.reviewOnlyInput, plan.reviewOnlyFindings, cli.reviewOnlyTaskMode,
   // cli.reviewOnlyImplementer; checkpoints and resume: 21 checkpoint.*
-  // keys, cli.checkpointOptions, cli.resumeOnce.
-  assert.equal(keys.length, 383);
+  // keys, cli.checkpointOptions, cli.resumeOnce; the run ledger:
+  // checkpoint.ledger, ledger.writeFailed, ledger.incomplete.
+  assert.equal(keys.length, 386);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -26158,6 +26183,626 @@ test('checkpoint key: by default in $XDG_STATE_HOME/ringi, which this test file 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// The evidence ledger (scripts/agent-review-ledger.mjs) and ringi verify.
+// Every test passes its own state directory, like the checkpoint tests.
+const RINGI_BIN = join(dirname(agentReviewScriptDirectory), 'bin', 'ringi.mjs');
+
+function ledgerFile(directory, runId = CHECKPOINT_RUN_ID) {
+  return join(directory, '.agent-review-loop', 'runs', runId, 'ledger.jsonl');
+}
+
+async function ledgerLines(directory, runId) {
+  return (await readFile(ledgerFile(directory, runId), 'utf8'))
+    .trimEnd()
+    .split('\n');
+}
+
+async function ledgerEntries(directory, runId) {
+  return (await ledgerLines(directory, runId)).map((line) => JSON.parse(line));
+}
+
+function verifyLedger(directory, stateDirectory, runId = CHECKPOINT_RUN_ID) {
+  return loopExports.verifyRunLedger({
+    repositoryRoot: directory,
+    runId,
+    stateDirectory,
+  });
+}
+
+// The ledger rewritten by change(lines), verified, then restored.
+async function verifyTampered(directory, stateDirectory, change, runId) {
+  const path = ledgerFile(directory, runId);
+  const original = await readFile(path, 'utf8');
+  try {
+    await writeFile(path, change(original.trimEnd().split('\n')));
+    return await verifyLedger(directory, stateDirectory, runId);
+  } finally {
+    await writeFile(path, original);
+  }
+}
+
+// A state directory with another valid key.
+async function createOtherKey() {
+  const stateDirectory = await createStateDirectory();
+  await mkdir(stateDirectory, { mode: 0o700 });
+  await chmod(stateDirectory, 0o700);
+  await writeFile(join(stateDirectory, 'checkpoint.key'), randomBytes(32), {
+    mode: 0o600,
+  });
+  return stateDirectory;
+}
+
+const lineHash = (line) => createHash('sha256').update(line).digest('hex');
+
+test('ledger: a run without a key writes a hash chain without mac, only evidence of the report, and nothing outside the repository', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const { report } = await runFixture(directory, { workflow: { stateDirectory } });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(existsSync(stateDirectory), false);
+    const lines = await ledgerLines(directory);
+    const entries = lines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+      entries.map(({ type }) => type),
+      [
+        'preflight',
+        'fingerprints',
+        'writer-round',
+        'gate',
+        'gate',
+        'gate',
+        'snapshot',
+        'review-attempt',
+        'findings',
+        'result',
+      ],
+    );
+    assert.deepEqual(
+      entries.map(({ seq }) => seq),
+      entries.map((_, index) => index + 1),
+    );
+    for (const [index, entry] of entries.entries()) {
+      assert.deepEqual(Object.keys(entry), [
+        'ledgerVersion',
+        'seq',
+        'ts',
+        'type',
+        'data',
+        'prev',
+        'mac',
+      ]);
+      assert.equal(entry.ledgerVersion, 1);
+      assert.equal(entry.mac, null);
+      assert.equal(entry.prev, index === 0 ? null : lineHash(lines[index - 1]));
+    }
+    assert.deepEqual(entries[0].data, {
+      runId: CHECKPOINT_RUN_ID,
+      mac: null,
+      macUnavailable: 'no-key',
+      taskMode: 'implementation',
+      branch: report.branch,
+      head: report.head,
+      task: { path: 'task.md', sha256: report.task.sha256, mode: 'implementation' },
+    });
+    assert.deepEqual(entries[1].data, {
+      runner: report.runner.sha256,
+      projectProfile: null,
+    });
+    assert.deepEqual(entries[6].data, { round: 1, ...report.rounds[0].snapshot });
+    assert.deepEqual(entries.at(-1).data, {
+      status: 'APPROVE',
+      rounds: 1,
+      publicationApproved: false,
+    });
+    assert.deepEqual(report.ledger, {
+      path: `.agent-review-loop/runs/${CHECKPOINT_RUN_ID}/ledger.jsonl`,
+      events: 10,
+      headHash: lineHash(lines.at(-1)),
+    });
+    const saved = JSON.parse(
+      await readFile(join(directory, report.reportPath), 'utf8'),
+    );
+    assert.deepEqual(saved.ledger, report.ledger);
+    // No path outside the repository, no writer output, prompt or task text.
+    const text = lines.join('\n');
+    for (const absent of [
+      directory,
+      realpathSync(directory),
+      tmpdir(),
+      'runda',
+      'Runda 1',
+      (await readFile(join(directory, 'task.md'), 'utf8')).split('\n')[0],
+    ]) {
+      assert.equal(text.includes(absent), false, absent);
+    }
+    const verified = await verifyLedger(directory, stateDirectory);
+    assert.equal(verified.status, 'ok');
+    assert.equal(verified.mac, 'absent');
+    assert.equal(verified.key, 'no-key');
+    assert.equal(verified.headHash, report.ledger.headHash);
+    // Chain only: a changed line breaks the next prev.
+    const changed = await verifyTampered(directory, stateDirectory, (all) => {
+      all[2] = all[2].replace('"round":1', '"round":2');
+      return `${all.join('\n')}\n`;
+    });
+    assert.equal(changed.status, 'fail');
+    assert.deepEqual(
+      [changed.failure.seq, changed.failure.check],
+      [4, 'prev'],
+    );
+    assert.equal(existsSync(stateDirectory), false);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ledger: with the key every line has a mac; changes, removed, swapped or truncated lines, a replaced mac and another key are detected', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const otherKey = await createOtherKey();
+  try {
+    const { report } = await checkpointRun(directory, stateDirectory);
+    assert.equal(report.status, 'APPROVE');
+    const entries = await ledgerEntries(directory);
+    assert.equal(entries[0].data.mac, 'hmac-sha256');
+    assert.equal('macUnavailable' in entries[0].data, false);
+    assert.ok(entries.every(({ mac }) => /^[0-9a-f]{64}$/u.test(mac)));
+    assert.deepEqual(
+      entries.filter(({ type }) => type === 'checkpoint').map(({ data }) => data),
+      ['implementer', 'checks', 'review'].map((phase) => ({
+        path: `.agent-review-loop/runs/${CHECKPOINT_RUN_ID}/checkpoint.json`,
+        phase,
+        round: 1,
+      })),
+    );
+    const verified = await verifyLedger(directory, stateDirectory);
+    assert.deepEqual(
+      [verified.status, verified.mac, verified.key, verified.events],
+      ['ok', 'verified', 'present', entries.length],
+    );
+    const manipulations = [
+      [
+        'changed line',
+        (lines) => lines.map((line, index) =>
+          index === 2 ? line.replace('"round":1', '"round":2') : line),
+        [3, 'mac'],
+      ],
+      ['removed line', (lines) => lines.filter((_, index) => index !== 2), [3, 'seq']],
+      [
+        'swapped lines',
+        (lines) => [lines[0], lines[2], lines[1], ...lines.slice(3)],
+        [2, 'seq'],
+      ],
+      ['truncated tail', (lines) => lines.slice(0, -1), [null, 'report']],
+      [
+        'replaced mac',
+        (lines) => lines.map((line, index) =>
+          index === 1 ? line.replace(/"mac":"[0-9a-f]{64}"/u, `"mac":"${'0'.repeat(64)}"`) : line),
+        [2, 'mac'],
+      ],
+    ];
+    for (const [name, change, [seq, check]] of manipulations) {
+      const result = await verifyTampered(directory, stateDirectory, (lines) =>
+        `${change(lines).join('\n')}\n`);
+      assert.equal(result.status, 'fail', name);
+      assert.deepEqual([result.failure.seq, result.failure.check], [seq, check], name);
+    }
+    const partial = await verifyTampered(directory, stateDirectory, (lines) =>
+      `${lines.join('\n')}\n{"ledgerVersion":1`);
+    assert.deepEqual(
+      [partial.status, partial.failure.check],
+      ['fail', 'truncated'],
+    );
+    const other = await verifyLedger(directory, otherKey);
+    assert.deepEqual(
+      [other.status, other.failure.seq, other.failure.check],
+      ['fail', 1, 'mac'],
+    );
+    // Without the key only the chain is verified, and the key is not created.
+    const missingKey = await createStateDirectory();
+    const chainOnly = await verifyLedger(directory, missingKey);
+    assert.deepEqual(
+      [chainOnly.status, chainOnly.mac, chainOnly.key],
+      ['ok', 'not-verified', 'no-key'],
+    );
+    assert.equal(existsSync(missingKey), false);
+    await rm(dirname(missingKey), { recursive: true, force: true });
+    // A report that names another head fails too.
+    const reportPath = join(directory, report.reportPath);
+    const saved = await readFile(reportPath, 'utf8');
+    try {
+      await writeFile(
+        reportPath,
+        saved.replace(report.ledger.headHash, '0'.repeat(64)),
+      );
+      const result = await verifyLedger(directory, stateDirectory);
+      assert.deepEqual([result.status, result.failure.check], ['fail', 'report']);
+    } finally {
+      await writeFile(reportPath, saved);
+    }
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+    await rm(dirname(otherKey), { recursive: true, force: true });
+  }
+});
+
+test('ledger: a run without checkpoints uses an existing key read-only and writes nothing in the state directory', async () => {
+  const keyRepository = await createRepository();
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    await checkpointRun(keyRepository, stateDirectory);
+    const before = stateDirectoryListing(stateDirectory);
+    const { report } = await runFixture(directory, { workflow: { stateDirectory } });
+    assert.equal('checkpoint' in report, false);
+    assert.deepEqual(stateDirectoryListing(stateDirectory), before);
+    const entries = await ledgerEntries(directory);
+    assert.equal(entries[0].data.mac, 'hmac-sha256');
+    const verified = await verifyLedger(directory, stateDirectory);
+    assert.deepEqual([verified.status, verified.mac], ['ok', 'verified']);
+    assert.deepEqual(stateDirectoryListing(stateDirectory), before);
+  } finally {
+    await rm(keyRepository, { recursive: true, force: true });
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ledger: a stop, a review-only run and an analysis run end their ledgers and verify', async () => {
+  const stateDirectory = await createStateDirectory();
+  const stopDirectory = await createRepository();
+  const reviewOnlyDirectory = await createRepository();
+  const analysisDirectory = await createRepository();
+  try {
+    const stopped = await stopOf(
+      runFixture(stopDirectory, {
+        runner: createMockRunner({ failCheck: 'pnpm check' }),
+        workflow: { stateDirectory },
+      }),
+    );
+    assert.equal(stopped.code, 'CHECK_FAILED');
+    const stopEntries = await ledgerEntries(stopDirectory);
+    assert.deepEqual(stopEntries.slice(-2).map(({ type }) => type), ['stop', 'result']);
+    assert.deepEqual(stopEntries.at(-2).data, {
+      code: 'CHECK_FAILED',
+      stage: stopped.report.stage,
+      integrityViolations: 0,
+    });
+    assert.deepEqual(stopEntries.at(-1).data, {
+      status: 'STOPPED',
+      rounds: 0,
+      publicationApproved: false,
+    });
+    assert.ok(
+      stopEntries.some(({ type, data }) => type === 'gate' && data.passed === false),
+    );
+    assert.equal(stopped.report.ledger.events, stopEntries.length);
+    assert.equal((await verifyLedger(stopDirectory, stateDirectory)).status, 'ok');
+
+    await writeFile(join(reviewOnlyDirectory, 'implementation.txt'), 'written by hand\n');
+    const reviewOnly = await runReviewOnlyFixture(reviewOnlyDirectory, {
+      workflow: { stateDirectory },
+    });
+    assert.equal(reviewOnly.report.status, 'APPROVE');
+    const reviewEntries = await ledgerEntries(reviewOnlyDirectory);
+    assert.equal(reviewEntries[0].data.runMode, 'review-only');
+    assert.equal(reviewEntries.some(({ type }) => type === 'writer-round'), false);
+    assert.equal((await verifyLedger(reviewOnlyDirectory, stateDirectory)).status, 'ok');
+
+    await configureAnalysisTask(analysisDirectory);
+    const analysis = await runAnalysisFixture(analysisDirectory, {
+      workflow: { stateDirectory },
+    });
+    assert.equal(analysis.report.status, 'APPROVE');
+    const analysisRunId = analysis.report.runId;
+    const analysisEntries = await ledgerEntries(analysisDirectory, analysisRunId);
+    assert.equal(analysisEntries.filter(({ type }) => type === 'integrity').length, 2);
+    assert.equal(analysisEntries.some(({ type }) => type === 'gate'), false);
+    assert.equal(
+      (await verifyLedger(analysisDirectory, stateDirectory, analysisRunId)).status,
+      'ok',
+    );
+  } finally {
+    for (const directory of [stopDirectory, reviewOnlyDirectory, analysisDirectory])
+      await rm(directory, { recursive: true, force: true });
+    await rm(dirname(stateDirectory), { recursive: true, force: true });
+  }
+});
+
+test('ledger: a resumed run verifies the ledger, records resume and continues the chain; a changed or missing ledger refuses the checkpoint', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: createMockRunner({ failCheck: 'pnpm check' }),
+      }),
+    );
+    assert.equal(stopped.code, 'CHECK_FAILED');
+    const previous = stopped.report.ledger;
+    const path = ledgerFile(directory);
+    const original = await readFile(path, 'utf8');
+    const refusals = [
+      ['changed', original.replace('"round":1', '"round":2')],
+      ['missing', null],
+    ];
+    for (const [name, content] of refusals) {
+      if (content === null) await rm(path);
+      else await writeFile(path, content);
+      let agents = 0;
+      const refused = await stopOf(
+        resumeRun(directory, stateDirectory, {
+          codexRound: async () => {
+            agents += 1;
+          },
+          claudeReview: async () => {
+            agents += 1;
+          },
+        }),
+      );
+      assert.equal(refused.code, 'INTEGRITY_CHECK_FAILED', name);
+      assert.equal(refused.stage, 'preflight', name);
+      assert.match(refused.message, /Ledger przebiegu 2026-08-08T12-00-00-000Z--1234abcd/u, name);
+      assert.equal(agents, 0, name);
+      await writeFile(path, original);
+    }
+    const { report } = await resumeRun(directory, stateDirectory);
+    assert.equal(report.status, 'APPROVE');
+    const entries = await ledgerEntries(directory, RESUMED_RUN_ID);
+    assert.equal(entries[0].prev, previous.headHash);
+    assert.deepEqual(entries[2], {
+      ...entries[2],
+      type: 'resume',
+      data: {
+        resumedFrom: CHECKPOINT_RUN_ID,
+        phase: 'implementer',
+        round: 1,
+        previousLedger: previous,
+      },
+    });
+    const verified = await verifyLedger(directory, stateDirectory, RESUMED_RUN_ID);
+    assert.deepEqual([verified.status, verified.mac], ['ok', 'verified']);
+    // The resumed run's verification covers the ledger it continues: a
+    // predecessor without its last line no longer ends at the first prev.
+    await writeFile(path, `${original.trimEnd().split('\n').slice(0, -1).join('\n')}\n`);
+    const chained = await verifyLedger(directory, stateDirectory, RESUMED_RUN_ID);
+    assert.deepEqual(
+      [chained.status, chained.failure.check],
+      ['fail', 'predecessor'],
+    );
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ledger: an event that cannot be written stops the run with INTEGRITY_CHECK_FAILED, which cannot be resumed', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      runFixture(directory, {
+        workflow: { stateDirectory },
+        codexRound: async ({ round, findings }) => {
+          await writeFile(join(directory, 'implementation.txt'), `runda ${round}\n`);
+          // The ledger replaced by a symbolic link: the next append refuses it.
+          await rm(ledgerFile(directory));
+          await symlink(join(directory, 'implementation.txt'), ledgerFile(directory));
+          return completedCodex(round, {}, findings);
+        },
+      }),
+    );
+    assert.equal(stopped.code, 'INTEGRITY_CHECK_FAILED');
+    assert.equal(stopped.stage, 'post-implementer');
+    assert.match(stopped.message, /Nie udało się zapisać ledgera przebiegu/u);
+    assert.equal(loopExports.isResumableStop(stopped), false);
+    assert.deepEqual(stopped.report.ledger.events, 2);
+    assert.ok(
+      stopped.report.warnings.some((warning) => /Ledger przebiegu jest niekompletny/u.test(warning)),
+    );
+    assert.equal((await verifyLedger(directory, stateDirectory)).status, 'fail');
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ringi verify: ok, chain only with a warning, the first mismatch with exit code 1, --json, and argument errors with exit code 2', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const env = { ...process.env, XDG_STATE_HOME: dirname(stateDirectory) };
+  const verify = (...args) =>
+    spawnSync(process.execPath, [RINGI_BIN, 'verify', ...args], {
+      cwd: directory,
+      env,
+      encoding: 'utf8',
+      shell: false,
+    });
+  try {
+    const { report } = await runFixture(directory, { workflow: { stateDirectory } });
+    const ok = verify(CHECKPOINT_RUN_ID);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /^ok: \.agent-review-loop\/runs\/.+\/ledger\.jsonl \(10 events, chain only\)/u);
+    assert.match(ok.stdout, /warning: The ledger has no mac/u);
+    const json = verify(CHECKPOINT_RUN_ID, '--json');
+    assert.equal(json.status, 0);
+    const result = JSON.parse(json.stdout);
+    assert.deepEqual(
+      [result.status, result.events, result.headHash, result.mac, result.failure],
+      ['ok', 10, report.ledger.headHash, 'absent', null],
+    );
+    assert.equal(result.warnings.length, 1);
+    await writeFile(
+      ledgerFile(directory),
+      `${(await ledgerLines(directory)).slice(0, -1).join('\n')}\n`,
+    );
+    const failed = verify('--json', CHECKPOINT_RUN_ID);
+    assert.equal(failed.status, 1);
+    assert.equal(JSON.parse(failed.stdout).failure.check, 'report');
+    const text = verify(CHECKPOINT_RUN_ID);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout, /^fail: .+\nhead: [0-9a-f]{64}\nfirst mismatch: report: /u);
+    const missing = verify('2026-08-08T12-00-00-000Z--00000000');
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /first mismatch: missing: /u);
+    for (const args of [[], ['not-a-run-id'], [CHECKPOINT_RUN_ID, '--strict'], [CHECKPOINT_RUN_ID, CHECKPOINT_RUN_ID]]) {
+      const usage = verify(...args);
+      assert.equal(usage.status, 2, args.join(' '));
+      assert.match(usage.stderr, /Usage: ringi verify <runId> \[--json\]/u);
+    }
+    assert.equal(existsSync(stateDirectory), false);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ringi verify: a ledger without mac while the key exists is unverified with exit code 1, not ok', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const keyState = await createOtherKey();
+  const verify = (...args) =>
+    spawnSync(process.execPath, [RINGI_BIN, 'verify', ...args], {
+      cwd: directory,
+      env: { ...process.env, XDG_STATE_HOME: dirname(keyState) },
+      encoding: 'utf8',
+      shell: false,
+    });
+  try {
+    await runFixture(directory, { workflow: { stateDirectory } });
+    const before = stateDirectoryListing(keyState);
+    const result = await verifyLedger(directory, keyState);
+    assert.deepEqual(
+      [result.status, result.mac, result.key, result.failure],
+      ['unverified', 'absent', 'present', null],
+    );
+    const text = verify(CHECKPOINT_RUN_ID);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stdout, /^unverified: \.agent-review-loop\/runs\/.+\/ledger\.jsonl \(10 events, chain only\)/u);
+    assert.match(
+      text.stdout,
+      /warning: The checkpoint key exists but the ledger has no mac: it was written without the key, or its macs were removed\./u,
+    );
+    assert.doesNotMatch(text.stdout, /^ok:/mu);
+    const json = verify('--json', CHECKPOINT_RUN_ID);
+    assert.equal(json.status, 1);
+    const parsed = JSON.parse(json.stdout);
+    assert.deepEqual(
+      [parsed.status, parsed.mac, parsed.key, parsed.warnings.length],
+      ['unverified', 'absent', 'present', 1],
+    );
+    // Without the key the same ledger stays ok, chain only.
+    assert.equal((await verifyLedger(directory, stateDirectory)).status, 'ok');
+    assert.equal(existsSync(stateDirectory), false);
+    assert.deepEqual(stateDirectoryListing(keyState), before);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+    await rm(dirname(keyState), { recursive: true, force: true });
+  }
+});
+
+test('ledger: a ledger hard-linked or replaced during the run is not written to and stops the run with INTEGRITY_CHECK_FAILED', async () => {
+  for (const manipulation of ['hard link', 'replaced']) {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    const outside = join(dirname(ledgerFile(directory)), 'outside.jsonl');
+    try {
+      const stopped = await stopOf(
+        runFixture(directory, {
+          workflow: { stateDirectory },
+          codexRound: async ({ round, findings }) => {
+            await writeFile(join(directory, 'implementation.txt'), `runda ${round}\n`);
+            if (manipulation === 'hard link') {
+              await link(ledgerFile(directory), outside);
+            } else {
+              await copyFile(ledgerFile(directory), outside);
+              await rename(outside, ledgerFile(directory));
+            }
+            return completedCodex(round, {}, findings);
+          },
+        }),
+      );
+      assert.equal(stopped.code, 'INTEGRITY_CHECK_FAILED', manipulation);
+      assert.equal(stopped.stage, 'post-implementer', manipulation);
+      assert.match(stopped.message, /Nie udało się zapisać ledgera przebiegu/u, manipulation);
+      assert.equal(loopExports.isResumableStop(stopped), false, manipulation);
+      assert.equal(stopped.report.ledger.events, 2, manipulation);
+      // No line was appended after the manipulation.
+      assert.equal((await ledgerLines(directory)).length, 2, manipulation);
+      assert.equal(existsSync(stateDirectory), false, manipulation);
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  }
+});
+
+test('ledger: the ledger of another run in the resumed run directory refuses the checkpoint and fails verify', async () => {
+  const directory = await createRepository();
+  const otherDirectory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const otherRunId = '2026-08-08T12-00-00-000Z--aaaa0000';
+  try {
+    const failCheck = { runner: createMockRunner({ failCheck: 'pnpm check' }) };
+    assert.equal((await stopOf(checkpointRun(directory, stateDirectory, failCheck))).code, 'CHECK_FAILED');
+    assert.equal(
+      (await stopOf(checkpointRun(otherDirectory, stateDirectory, {
+        ...failCheck,
+        workflow: { randomId: 'aaaa0000' },
+      }))).code,
+      'CHECK_FAILED',
+    );
+    const path = ledgerFile(directory);
+    const original = await readFile(path, 'utf8');
+    // Signed with the same key and ends at the same phase and round.
+    const foreign = await readFile(ledgerFile(otherDirectory, otherRunId), 'utf8');
+    await writeFile(path, foreign);
+    let agents = 0;
+    const refused = await stopOf(
+      resumeRun(directory, stateDirectory, {
+        codexRound: async () => {
+          agents += 1;
+        },
+      }),
+    );
+    assert.equal(refused.code, 'INTEGRITY_CHECK_FAILED');
+    assert.equal(refused.stage, 'preflight');
+    assert.equal(agents, 0);
+    await writeFile(path, original);
+    assert.equal((await resumeRun(directory, stateDirectory)).report.status, 'APPROVE');
+    assert.equal((await verifyLedger(directory, stateDirectory, RESUMED_RUN_ID)).status, 'ok');
+    await writeFile(path, foreign);
+    const result = await verifyLedger(directory, stateDirectory, RESUMED_RUN_ID);
+    assert.deepEqual([result.status, result.failure.check], ['fail', 'predecessor']);
+    assert.match(result.failure.message, /is not the ledger of run 2026-08-08T12-00-00-000Z--1234abcd/u);
+  } finally {
+    await rm(otherDirectory, { recursive: true, force: true });
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('ledger: a second resume event is refused', () => {
+  const head = 'a'.repeat(64);
+  const events = [
+    ['preflight', { runId: RESUMED_RUN_ID, mac: null }],
+    ['resume', { resumedFrom: CHECKPOINT_RUN_ID, previousLedger: { headHash: head } }],
+    ['resume', { resumedFrom: CHECKPOINT_RUN_ID, previousLedger: { headHash: head } }],
+  ];
+  const ledgerText = (count) => {
+    let prev = head;
+    let text = '';
+    for (const [index, [type, data]] of events.slice(0, count).entries()) {
+      const line = ledgerExports.formatLedgerLine({ seq: index + 1, ts: 't', type, data, prev });
+      text += `${line.text}\n`;
+      prev = line.hash;
+    }
+    return text;
+  };
+  assert.equal(ledgerExports.verifyLedgerText(ledgerText(2)).failure, null);
+  const second = ledgerExports.verifyLedgerText(ledgerText(3));
+  assert.deepEqual(
+    [second.failure.seq, second.failure.check],
+    [3, 'resume'],
+  );
 });
 
 test('parseAgentArguments: --checkpoint and --resume', () => {

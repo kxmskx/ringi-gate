@@ -146,6 +146,11 @@ Everything below "Planned" is a plan, not a feature. The
   tree match, skipping only the writer of the interrupted round: the gates
   and the review always run again. Only an allowlist of stops is resumable.
   See [docs/cli.md](docs/cli.md#checkpoints-and-resume).
+- Run ledger. Every run appends the evidence of its phases to a hash-chained
+  `ledger.jsonl`, signed with the checkpoint key when it exists;
+  `ringi verify <runId>` checks it against the key and the report. The
+  ledger documents a run and is never a source of trusted state. See
+  [docs/ledger.md](docs/ledger.md).
 
 ## Planned (not implemented)
 

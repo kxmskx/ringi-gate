@@ -67,6 +67,14 @@ on.
   passing fresh gates and, for a task class with review, a fresh review with
   no unresolved findings.
   Without these options nothing is written in the state directory.
+- Every run with a run directory writes an append-only evidence ledger
+  (`ledger.jsonl`, see [ledger.md](docs/ledger.md)): a SHA-256 hash chain of
+  its phases, and an HMAC of each line when the checkpoint key exists. Only
+  evidence the report already contains, or hashes of it, after the same
+  redaction. A run without checkpoints only reads an existing key, with the
+  same permission checks, and never creates it. An event that cannot be
+  written stops the run with `INTEGRITY_CHECK_FAILED`. `ringi verify <runId>`
+  checks the ledger against the key and the report, read-only.
 
 ## What the runner does not guarantee
 
@@ -77,6 +85,18 @@ on.
   markers. A checkpoint forged that way can change the round or the
   findings history a resume continues with, but cannot approve a run.
   Deleting the key makes every existing checkpoint unverifiable.
+
+- The ledger detects a line changed, removed, reordered or cut by someone
+  without the key, as long as the report is not changed with it. It does not
+  prove that a ledger is authentic: the writer and the gates can read the
+  key and write a ledger that verifies. The ledger is in the run directory in
+  the repository, which the writer can change or delete; a deleted ledger is
+  detectable as a missing one, but a ledger rewritten without `mac` together
+  with its report is not detectable without the key. With the key present,
+  `ringi verify` reports a ledger without `mac` as `unverified` (exit code
+  `1`), since it cannot tell a ledger written without the key from one whose
+  macs were removed. Without the key `ringi verify` checks only the hash
+  chain and says so. The runner never takes trusted state from the ledger.
 
 - It is not a sandbox. Isolation of the implementer relies on the
   implementer's CLI: with the default profile setting, the Codex CLI

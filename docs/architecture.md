@@ -508,6 +508,27 @@ always run again, and `APPROVE` requires passing fresh gates and, for a
 task class with review, a fresh review with no unresolved findings. Without `--checkpoint` or `--resume`
 nothing of this applies and nothing is written in the state directory.
 
+### Run ledger
+
+Every run with a run directory appends its evidence to
+`.agent-review-loop/runs/<runId>/ledger.jsonl` (format in
+[ledger.md](ledger.md)): the preflight and the fingerprints, each writer
+round, gate, integrity check, snapshot, review attempt and finding state,
+each checkpoint, the stop and the result. Each line carries the SHA-256 of
+the line before it and, when the checkpoint key exists, an HMAC of the line;
+each is synced to disk before the run goes on. A run without checkpoints only
+reads an existing key and writes nothing outside the repository. The report
+names the ledger and its last line (`ledger`), and `ringi verify <runId>`
+checks the chain, the macs and the report against it.
+
+The ledger only documents the run: no gate, review or approval reads it.
+An event that cannot be written stops the run with `INTEGRITY_CHECK_FAILED`.
+A resumed run verifies the ledger of the run it continues and refuses the
+checkpoint when it does not verify; the new ledger continues that chain. The
+same limits as for checkpoints apply: the writer and the gates can read the
+key, and the run directory is in the repository, so a removed or rewritten
+ledger is detectable only against the report.
+
 ## Task modes and classes
 
 - `--task-mode implementation` (default): the flow above.

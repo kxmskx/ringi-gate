@@ -1016,3 +1016,9 @@ lineage, and a round resumed after the writer's phase has no `solExecution`
 key (no writer ran in it). Its gate results always come from gates run in
 that run. A run without these options has none of these fields, so
 `schemaVersion` stays 1.
+
+Every run with a run directory adds `ledger` to the report (`APPROVE` and
+`STOPPED`, not the dry-run plan): `path` (the run's `ledger.jsonl` relative
+to the repository), `events` (the number of its events) and `headHash` (the
+SHA-256 of its last line); see [ledger.md](ledger.md). The field is
+additive and no other field changes, so `schemaVersion` stays 1.

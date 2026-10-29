@@ -497,6 +497,44 @@ A `findingId` is derived from the finding's identity (`file`, `anchor`,
 `category`), so two lanes that report the same id report the same identity;
 only the text and severity may differ, and the merge keeps one of them.
 
+### Routing
+
+With `routing.rules` in the profile (see [profile.md](profile.md#routing)),
+the preflight of an implementation run picks the rule named after the
+task's class: an
+implementer effort, a review profile, review lanes and checks added to the
+class's set, each from the profile's own lists. The options
+(`--implementer-effort`, `--review-profile`) win over the rule, and the rule
+over the profile's defaults. Routing is deterministic: no model takes part
+in it, and the same profile, task, options and candidate give the same
+routing.
+
+- **Escalation.** A rule's `escalate` entries name candidate paths (the
+  review lanes' path dialect, no patterns) and another rule: the rule of
+  another class, or an escalation rule (a name that is no class, which
+  applies only as such a target and has no entries of its own). The candidate
+  (the changes relative to `HEAD`) is checked in the preflight and after
+  each writer round, before the gates, always against every entry of the
+  class's rule; the strictest matching target sets the gates and the review.
+  Routing only moves up, so a mild match in an early round never keeps a
+  stricter one from applying later, and the targets' own entries are never
+  followed. The writer keeps its effort. A lane with its own review profile
+  keeps it.
+- **Only within the profile, only tighter.** Profile validation refuses a
+  rule that names anything outside the profile, changes a class
+  (`checkSet`, `docsOnly`, review) or removes a check, an escalation that
+  lowers the review effort, drops a lane or drops an added check, and two
+  targets of one rule that are not comparable. Review profiles that cannot
+  be compared (other models or attempts) cannot be the two ends of an
+  escalation.
+- **Evidence.** The report's `routing` field and the ledger's `routing`
+  event show the class, the rule, the escalation, the values in effect, the
+  options that overrode the rule and the rule's reason. A checkpoint stores
+  the routing; a resumed run computes it again and reports the differences.
+
+Without `routing` none of this runs: no extra Git read, no report field, no
+ledger event, the same prompts.
+
 ### Review only
 
 With `--review-only` (see [cli.md](cli.md#review-only)) the uncommitted

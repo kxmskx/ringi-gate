@@ -88,6 +88,35 @@ on.
   the names of the changed files, each a JSON string on its own line with
   U+0085, U+2028 and U+2029 escaped too. File names are working tree
   content and stay untrusted.
+- `routing` (see [profile.md](docs/profile.md#routing)) does not widen any
+  permission or budget beyond the profile. Its only key is `rules`; a rule
+  either belongs to a class by its name or is an escalation rule that
+  applies only as a target and must be one, so a misspelt class name or an
+  unknown key of `routing` is refused instead of being ignored. A rule
+  (escalation rules too) can only pick an
+  implementer effort from `implementer.allowedEfforts`, a review profile
+  from `reviewer.profiles`, lanes from `reviewLanes` and checks from
+  `checks`; it names no provider, model, tool, sandbox or command, cannot
+  switch the review off, remove a gate or change a class, and a profile
+  that tries is `INVALID_CONFIGURATION` before any process starts. What a
+  rule may choose is therefore bounded by what the profile already allows,
+  and the most expensive choice costs no more than the profile's most
+  expensive allowed values. An escalation, triggered by candidate paths the
+  writer controls, can only tighten the review and add gates. The writer
+  also cannot choose how much stricter: after every round all entries are
+  checked against the whole candidate relative to `HEAD`, the strictest
+  matching target applies and routing never moves down, so touching a path
+  of a mild entry first does not keep a stricter entry from applying once
+  the candidate touches its path (the targets of one rule must be
+  comparable, so the strictest is always defined). What the writer can
+  still do is leave a path out of the candidate, which the escalation
+  cannot see. A lane with its own `profile` keeps that profile under any
+  rule. Selecting fewer lanes than the
+  profile has, or a cheaper review profile for a class, is a choice of the
+  trusted profile; the coverage check of lane `paths` still applies to the
+  lanes that run. `--implementer-effort` and `--review-profile` still win,
+  also below the rule, as a human decision that the report lists in
+  `routing.overriddenBy`.
 - `.review-context` is reserved: the runner writes the review context (full
   diff, trusted gate report, task and instructions, correction context,
   lane diffs) into that directory of the snapshot. A working-tree path with

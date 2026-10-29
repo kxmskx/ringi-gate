@@ -28340,6 +28340,820 @@ test('review lanes: a run stopped by a failed lane resumes and runs every lane a
   }
 });
 
+// Routing (routing): deterministic rules per task class in the profile.
+const ROUTING_REASON = 'Auth changes need the stronger review.';
+const ESCALATED_RULE = Object.freeze({
+  reviewProfile: 'critical-opus',
+  reviewLanes: 'all',
+  addChecks: ['pnpm lint', 'pnpm test'],
+  reason: 'Escalated: the candidate touches implementation.txt.',
+});
+
+// A class rule with a mild target (the rule of class docs-contract) and a
+// strict one (auth-review, an escalation rule that is no class); the strict
+// entry is listed last, so list order alone would pick the mild one.
+const MILD_AND_STRICT_RULES = deepFreeze({
+  implementation: {
+    reviewProfile: 'economy',
+    reason: ROUTING_REASON,
+    escalate: [
+      { paths: ['docs/'], to: 'docs-contract' },
+      { paths: ['src/auth/'], to: 'auth-review' },
+    ],
+  },
+  'docs-contract': { reviewProfile: 'standard', addChecks: ['pnpm lint'], reason: 'Mild: docs touched.' },
+  'auth-review': { reviewProfile: 'critical-opus', addChecks: ['pnpm lint', 'pnpm test'], reason: 'Strict: auth touched.' },
+});
+
+function routingProfile(rules, base = LANE_PROFILE) {
+  return { ...base, routing: { rules } };
+}
+
+// A writer that records its options and writes implementation.txt.
+function recordingWriter(directory, calls) {
+  return async (options) => {
+    calls.push(options);
+    await writeFile(join(directory, 'implementation.txt'), `runda ${options.round}\n`);
+    return completedCodex(options.round, {}, options.findings);
+  };
+}
+
+test('routing: profile validation accepts rules of the profile and refuses each invariant with INVALID_CONFIGURATION', () => {
+  const rules = {
+    implementation: {
+      implementerEffort: 'xhigh',
+      reviewProfile: 'standard',
+      reviewLanes: ['correctness', 'security'],
+      addChecks: ['pnpm lint'],
+      reason: ROUTING_REASON,
+      escalate: [{ paths: ['./src//auth/', 'implementation.txt'], to: 'critical' }],
+    },
+    critical: { ...ESCALATED_RULE },
+    'docs-minor': { implementerEffort: 'medium', addChecks: ['pnpm lint'], reason: 'Docs only.' },
+  };
+  const resolved = internal.resolveRunnerProfile(routingProfile(rules));
+  assert.deepEqual(Object.keys(resolved.routing), ['rules']);
+  assert.deepEqual(resolved.routing.rules.implementation.escalate, [
+    { paths: ['src/auth/', 'implementation.txt'], to: 'critical' },
+  ]);
+  assert.deepEqual(resolved.routing.rules.critical, ESCALATED_RULE);
+  assert.equal(Object.isFrozen(resolved.routing), true);
+  assert.equal(Object.isFrozen(resolved.routing.rules), true);
+  assert.equal(Object.isFrozen(resolved.routing.rules.implementation.reviewLanes), true);
+  assert.deepEqual(internal.resolveRunnerProfile(resolved).routing, resolved.routing);
+  assert.equal(Object.hasOwn(internal.resolveRunnerProfile(TEST_PROFILE), 'routing'), false);
+  // An escalation may keep every setting.
+  internal.resolveRunnerProfile(
+    routingProfile({
+      implementation: { reason: 'Same.', escalate: [{ paths: ['a'], to: 'critical' }] },
+      critical: { reason: 'Same.' },
+    }),
+  );
+  // An escalation rule (a name that is no class) is accepted as a target,
+  // with review settings, and resolves unchanged.
+  const withEscalationRule = internal.resolveRunnerProfile(
+    routingProfile({
+      implementation: {
+        reviewProfile: 'standard',
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['src/auth/'], to: 'auth-review' }],
+      },
+      'auth-review': { ...ESCALATED_RULE },
+    }),
+  );
+  assert.deepEqual(withEscalationRule.routing.rules['auth-review'], ESCALATED_RULE);
+  // The example of docs/profile.md#routing.
+  internal.resolveRunnerProfile(
+    routingProfile({
+      implementation: {
+        reviewProfile: 'standard',
+        reviewLanes: ['correctness', 'tests'],
+        reason: 'Ordinary changes: two lanes at the standard effort.',
+        escalate: [
+          { paths: ['docs/api/'], to: 'api-docs' },
+          { paths: ['src/auth/', 'src/payments/'], to: 'critical' },
+        ],
+      },
+      'api-docs': {
+        reviewProfile: 'standard',
+        reviewLanes: ['correctness', 'tests'],
+        addChecks: ['pnpm docs:check'],
+        reason: 'The public API docs changed: the docs check too.',
+      },
+      critical: {
+        implementerEffort: 'xhigh',
+        reviewProfile: 'critical-opus',
+        reviewLanes: 'all',
+        addChecks: ['pnpm docs:check', 'pnpm test'],
+        reason: 'Auth and payments: every lane at the highest effort and the tests.',
+      },
+    }),
+  );
+
+  // The routing record has only rules; other keys are reserved.
+  for (const [label, routing] of [
+    ['routing not a record', []],
+    ['routing without rules', {}],
+    ['routing with a reserved key', { rules: { implementation: { reason: ROUTING_REASON } }, coordinator: {} }],
+    ['routing with rules at the top level', { implementation: { reason: ROUTING_REASON } }],
+    ['rules not a record', { rules: [] }],
+  ]) {
+    assert.throws(
+      () => internal.resolveRunnerProfile({ ...LANE_PROFILE, routing }),
+      (error) => error.code === 'INVALID_CONFIGURATION',
+      label,
+    );
+  }
+
+  const { implementer } = internal.resolveRunnerProfile(TEST_PROFILE);
+  const narrowEfforts = { ...LANE_PROFILE, implementer: { ...implementer, effort: 'high', allowedEfforts: ['high'] } };
+  const rule = (fields) => ({ implementation: { reason: ROUTING_REASON, ...fields } });
+  const escalation = (from, to, entry = { paths: ['implementation.txt'], to: 'critical' }) => ({
+    implementation: { reason: ROUTING_REASON, ...from, escalate: [entry] },
+    critical: { reason: 'Escalated.', ...to },
+  });
+  const invalid = [
+    // Shape and reason.
+    ['empty rules', {}],
+    ['not a record', []],
+    // A name that is no class is an escalation rule; nothing escalates to it.
+    ['unreferenced escalation rule', { 'no-such-class': { reason: ROUTING_REASON } }],
+    ['class name typo', { ...rule({}), implementaton: { addChecks: ['pnpm lint'], reason: ROUTING_REASON } }],
+    ['escalation rule with escalate', {
+      implementation: { reason: ROUTING_REASON, escalate: [{ paths: ['a'], to: 'auth-review' }] },
+      'auth-review': { reason: 'x', escalate: [{ paths: ['b'], to: 'critical' }] },
+      critical: { reason: 'x' },
+    }],
+    ['escalation rule with an implementer effort', {
+      implementation: { reason: ROUTING_REASON, escalate: [{ paths: ['a'], to: 'auth-review' }] },
+      'auth-review': { implementerEffort: 'xhigh', reason: 'x' },
+    }],
+    ['escalation rule looser than its source', {
+      implementation: { addChecks: ['pnpm lint'], reason: ROUTING_REASON, escalate: [{ paths: ['a'], to: 'auth-review' }] },
+      'auth-review': { reason: 'x' },
+    }],
+    ['escalation rules not comparable', {
+      implementation: {
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['a'], to: 'lint-review' }, { paths: ['b'], to: 'test-review' }],
+      },
+      'lint-review': { addChecks: ['pnpm lint'], reason: 'x' },
+      'test-review': { addChecks: ['pnpm test'], reason: 'x' },
+    }],
+    ['invalid rule name', {
+      implementation: { reason: ROUTING_REASON, escalate: [{ paths: ['a'], to: 'Auth_Review' }] },
+      Auth_Review: { reason: 'x' },
+    }],
+    ['missing reason', { implementation: {} }],
+    ['empty reason', rule({ reason: '  ' })],
+    ['reason over 500', rule({ reason: 'x'.repeat(501) })],
+    ['reason with a newline', rule({ reason: 'two\nlines' })],
+    ['getter', { implementation: Object.defineProperty({}, 'reason', { get: () => 'x', enumerable: true }) }],
+    // Nothing outside the profile: provider, model, effort, profile, lanes, checks.
+    ['provider', rule({ provider: 'claude' })],
+    ['model', rule({ model: 'claude-opus-5' })],
+    ['effort outside the provider', rule({ implementerEffort: 'low' })],
+    ['effort outside allowedEfforts', rule({ implementerEffort: 'max' }), narrowEfforts],
+    ['unknown review profile', rule({ reviewProfile: 'missing' })],
+    ['review profile not a string', rule({ reviewProfile: 1 })],
+    ['lanes without profile lanes', rule({ reviewLanes: 'all' }), TEST_PROFILE],
+    ['unknown lane', rule({ reviewLanes: ['correctness', 'missing'] })],
+    ['empty lane list', rule({ reviewLanes: [] })],
+    ['duplicate lane', rule({ reviewLanes: ['tests', 'tests'] })],
+    ['lanes not all', rule({ reviewLanes: 'ALL' })],
+    ['unknown check', rule({ addChecks: ['pnpm deploy'] })],
+    ['empty check list', rule({ addChecks: [] })],
+    ['duplicate check', rule({ addChecks: ['pnpm lint', 'pnpm lint'] })],
+    ['checks not a list', rule({ addChecks: 'pnpm lint' })],
+    // No review switched off, no gate removed, no class rule changed.
+    ['independentReviewRequired', rule({ independentReviewRequired: false })],
+    ['checkSet', rule({ checkSet: 'docs' })],
+    ['docsOnly', rule({ docsOnly: true })],
+    ['checks replaced', rule({ checks: ['git diff --check'] })],
+    ['review profile without review', { 'docs-minor': { reviewProfile: 'economy', reason: 'Docs.' } }],
+    ['lanes without review', { 'docs-minor': { reviewLanes: ['tests'], reason: 'Docs.' } }],
+    // Escalation entries: 1 to 16, paths of the lane dialect, another rule.
+    ['empty escalate', rule({ escalate: [] })],
+    ['17 escalations', rule({ escalate: Array.from({ length: 17 }, (_, index) => ({ paths: [`f${index}`], to: 'critical' })) }), undefined, { critical: { reason: 'x' } }],
+    ['escalation without to', escalation({}, {}, { paths: ['a'] })],
+    ['escalation without paths', escalation({}, {}, { to: 'critical' })],
+    ['escalation extra key', escalation({}, {}, { paths: ['a'], to: 'critical', implementerEffort: 'max' })],
+    ['escalation to itself', escalation({}, {}, { paths: ['a'], to: 'implementation' })],
+    ['escalation to a missing rule', { implementation: { reason: 'x', escalate: [{ paths: ['a'], to: 'critical' }] } }],
+    ['glob path', escalation({}, {}, { paths: ['src/*.ts'], to: 'critical' })],
+    ['parent path', escalation({}, {}, { paths: ['../secrets/'], to: 'critical' })],
+    ['absolute path', escalation({}, {}, { paths: ['/etc/'], to: 'critical' })],
+    ['empty path list', escalation({}, {}, { paths: [], to: 'critical' })],
+    ['duplicate path', escalation({}, {}, { paths: ['a/', './a/'], to: 'critical' })],
+    // An escalation only tightens.
+    ['lower review effort', escalation({ reviewProfile: 'standard' }, { reviewProfile: 'economy' })],
+    ['default profile with other models', escalation({}, { reviewProfile: 'critical-opus' })],
+    ['ambiguous profiles', escalation({ reviewProfile: 'standard' }, { reviewProfile: 'critical' })],
+    ['fewer lanes', escalation({ reviewLanes: ['correctness', 'tests'] }, { reviewLanes: ['correctness'] })],
+    ['fewer lanes than all', escalation({}, { reviewLanes: ['correctness', 'security'] })],
+    ['fewer checks', escalation({ addChecks: ['pnpm lint', 'pnpm test'] }, { addChecks: ['pnpm lint'] })],
+    ['checks dropped', escalation({ addChecks: ['pnpm lint'] }, {})],
+    ['escalate not a list', rule({ escalate: { paths: ['a'], to: 'critical' } }), undefined, { critical: { reason: 'x' } }],
+    ['escalate a string', rule({ escalate: 'critical' }), undefined, { critical: { reason: 'x' } }],
+    // The targets of one rule are pairwise comparable.
+    ['targets with disjoint checks', {
+      implementation: {
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['a'], to: 'docs-contract' }, { paths: ['b'], to: 'critical' }],
+      },
+      'docs-contract': { addChecks: ['pnpm lint'], reason: 'x' },
+      critical: { addChecks: ['pnpm test'], reason: 'x' },
+    }],
+    ['targets with disjoint lanes', {
+      implementation: {
+        reviewLanes: ['tests'],
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['a'], to: 'docs-contract' }, { paths: ['b'], to: 'critical' }],
+      },
+      'docs-contract': { reviewLanes: ['tests', 'security'], reason: 'x' },
+      critical: { reviewLanes: ['tests', 'correctness'], reason: 'x' },
+    }],
+    ['targets lower in one field, higher in another', {
+      implementation: {
+        reviewProfile: 'economy',
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['a'], to: 'docs-contract' }, { paths: ['b'], to: 'critical' }],
+      },
+      'docs-contract': { reviewProfile: 'standard', reason: 'x' },
+      critical: { reviewProfile: 'economy', reviewLanes: 'all', addChecks: ['pnpm lint'], reason: 'x' },
+    }],
+  ];
+  for (const [label, routing, base = LANE_PROFILE, extra = {}] of invalid) {
+    const value = Array.isArray(routing) || !routing ? routing : { ...routing, ...extra };
+    assert.throws(
+      () => internal.resolveRunnerProfile(routingProfile(value, base)),
+      (error) => error.code === 'INVALID_CONFIGURATION',
+      label,
+    );
+  }
+  // The comparison of profiles follows the reviewer provider's efforts.
+  internal.resolveRunnerProfile(
+    routingProfile(escalation({ reviewProfile: 'economy' }, { reviewProfile: 'standard' })),
+  );
+  internal.resolveRunnerProfile(
+    routingProfile(escalation({ reviewProfile: 'standard' }, { reviewProfile: 'critical-opus' })),
+  );
+  // Ordered targets of one rule are accepted.
+  internal.resolveRunnerProfile(routingProfile(MILD_AND_STRICT_RULES, TEST_PROFILE));
+});
+
+test('routing: a class rule sets the implementer effort, the review profile, the lanes and added checks; report and ledger show it', async () => {
+  const directory = await createRepository();
+  const writerCalls = [];
+  const reviewCalls = [];
+  const runner = createMockRunner();
+  try {
+    const { report } = await runFixture(directory, {
+      runner,
+      codexRound: recordingWriter(directory, writerCalls),
+      claudeReview: async (options) => {
+        reviewCalls.push(options);
+        return approveReview();
+      },
+      workflow: {
+        profile: routingProfile({
+          implementation: {
+            implementerEffort: 'xhigh',
+            reviewProfile: 'standard',
+            reviewLanes: ['tests', 'correctness'],
+            addChecks: ['pnpm lint'],
+            reason: ROUTING_REASON,
+          },
+        }),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.schemaVersion, 1);
+    const expected = {
+      class: 'implementation',
+      rule: 'implementation',
+      escalatedBy: null,
+      applied: {
+        implementerEffort: 'xhigh',
+        reviewProfile: 'standard',
+        reviewLanes: ['correctness', 'tests'],
+        addChecks: ['pnpm lint'],
+      },
+      overriddenBy: [],
+      reason: ROUTING_REASON,
+    };
+    assert.deepEqual(report.routing, expected);
+    assert.deepEqual(writerCalls.map(({ solEffort }) => solEffort), ['xhigh']);
+    assert.ok(writerCalls[0].checks.includes('pnpm lint'));
+    assert.deepEqual(reviewCalls.map(({ lane }) => lane.id), ['correctness', 'tests']);
+    assert.ok(reviewCalls.every(({ model, effort }) => model === 'claude-opus-5' && effort === 'high'));
+    assert.ok(ranGate(runner, 'pnpm lint'));
+    assert.deepEqual(report.quality.effectiveGates, [...TEST_GATES.checkSets.base, 'pnpm lint']);
+    assert.deepEqual(report.reviewer.lanes.map(({ id, profile }) => [id, profile]), [
+      ['correctness', 'standard'],
+      ['tests', 'standard'],
+    ]);
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    const routingEvents = entries.filter(({ type }) => type === 'routing');
+    assert.deepEqual(routingEvents.map(({ data }) => data), [{ round: null, ...expected }]);
+    // Recorded after the preflight's events, before the writer's round.
+    const types = entries.map(({ type }) => type);
+    assert.ok(types.indexOf('routing') > types.indexOf('fingerprints'));
+    assert.ok(types.indexOf('routing') < types.indexOf('writer-round'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: a candidate path escalates the gates and the review without following the target\'s entries; the implementer effort stays', async () => {
+  const directory = await createRepository();
+  const writerCalls = [];
+  const reviewCalls = [];
+  const runner = createMockRunner();
+  try {
+    const { report } = await runFixture(directory, {
+      runner,
+      codexRound: recordingWriter(directory, writerCalls),
+      claudeReview: async (options) => {
+        reviewCalls.push(options);
+        return approveReview();
+      },
+      workflow: {
+        profile: routingProfile({
+          implementation: {
+            implementerEffort: 'medium',
+            reviewProfile: 'standard',
+            reviewLanes: ['correctness'],
+            reason: ROUTING_REASON,
+            escalate: [
+              { paths: ['src/'], to: 'docs-contract' },
+              { paths: ['apps/', 'implementation.txt'], to: 'critical' },
+            ],
+          },
+          critical: { ...ESCALATED_RULE, escalate: [{ paths: ['implementation.txt'], to: 'docs-contract' }] },
+          'docs-contract': { addChecks: ['pnpm lint', 'pnpm test', 'pnpm build'], reviewProfile: 'critical-opus', reason: 'Never reached.' },
+        }),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.deepEqual(report.routing, {
+      class: 'implementation',
+      rule: 'critical',
+      escalatedBy: { path: 'implementation.txt', to: 'critical' },
+      applied: {
+        implementerEffort: 'medium',
+        reviewProfile: 'critical-opus',
+        reviewLanes: REVIEW_LANE_IDS,
+        addChecks: ['pnpm lint', 'pnpm test'],
+      },
+      overriddenBy: [],
+      reason: ESCALATED_RULE.reason,
+    });
+    assert.deepEqual(writerCalls.map(({ solEffort }) => solEffort), ['medium']);
+    assert.deepEqual(reviewCalls.map(({ lane }) => lane.id), REVIEW_LANE_IDS);
+    assert.ok(reviewCalls.every(({ effort }) => effort === 'xhigh'));
+    assert.ok(ranGate(runner, 'pnpm lint'));
+    assert.ok(ranGate(runner, 'pnpm test'));
+    assert.equal(ranGate(runner, 'pnpm build'), false);
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    const routingEvents = entries.filter(({ type }) => type === 'routing').map(({ data }) => data);
+    assert.deepEqual(
+      routingEvents.map(({ round, rule, escalatedBy }) => [round, rule, escalatedBy]),
+      [
+        [null, 'implementation', null],
+        [1, 'critical', { path: 'implementation.txt', to: 'critical' }],
+      ],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: paths that do not match the candidate leave the class rule', async () => {
+  const directory = await createRepository();
+  const runner = createMockRunner();
+  try {
+    const { report } = await runFixture(directory, {
+      runner,
+      workflow: {
+        profile: routingProfile(
+          {
+            implementation: {
+              reason: ROUTING_REASON,
+              // A path without a trailing slash is an exact file, never a prefix.
+              escalate: [{ paths: ['src/', 'implementation', 'implementation.txt/'], to: 'critical' }],
+            },
+            critical: { addChecks: ['pnpm lint'], reason: 'Escalated.' },
+          },
+          TEST_PROFILE,
+        ),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.deepEqual(report.routing, {
+      class: 'implementation',
+      rule: 'implementation',
+      escalatedBy: null,
+      applied: {
+        implementerEffort: TEST_GATES.implementer.effort,
+        reviewProfile: TEST_GATES.reviewer.defaultProfile,
+        reviewLanes: null,
+        addChecks: [],
+      },
+      overriddenBy: [],
+      reason: ROUTING_REASON,
+    });
+    assert.equal(ranGate(runner, 'pnpm lint'), false);
+    assert.deepEqual(report.quality.effectiveGates, TEST_GATES.checkSets.base);
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    assert.equal(entries.filter(({ type }) => type === 'routing').length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: options win over the rule, a lower value too, and the report names them in overriddenBy', async () => {
+  const rules = {
+    implementation: {
+      implementerEffort: 'xhigh',
+      reviewProfile: 'standard',
+      reason: ROUTING_REASON,
+    },
+  };
+  for (const [options, expectedEffort, expectedProfile, overriddenBy] of [
+    [{ implementerEffort: 'medium', reviewProfile: 'economy' }, 'medium', 'economy', ['--implementer-effort', '--review-profile']],
+    [{ solEffort: 'max' }, 'max', 'standard', ['--implementer-effort']],
+    [{ implementerEffort: 'xhigh', reviewProfile: 'standard' }, 'xhigh', 'standard', []],
+    [{ reviewProfile: 'critical-opus' }, 'xhigh', 'critical-opus', ['--review-profile']],
+  ]) {
+    const directory = await createRepository();
+    const writerCalls = [];
+    const reviewCalls = [];
+    try {
+      const { report } = await runFixture(directory, {
+        codexRound: recordingWriter(directory, writerCalls),
+        claudeReview: async (reviewOptions) => {
+          reviewCalls.push(reviewOptions);
+          return approveReview();
+        },
+        workflow: { profile: routingProfile(rules, TEST_PROFILE), ...options },
+      });
+      const label = JSON.stringify(options);
+      assert.equal(report.status, 'APPROVE', label);
+      assert.equal(writerCalls[0].solEffort, expectedEffort, label);
+      assert.equal(reviewCalls[0].effort, TEST_GATES.reviewer.profiles[expectedProfile][0].effort, label);
+      assert.equal(report.routing.applied.implementerEffort, expectedEffort, label);
+      assert.equal(report.routing.applied.reviewProfile, expectedProfile, label);
+      assert.deepEqual(report.routing.overriddenBy, overriddenBy, label);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  // An option for a value the rule does not set overrides only the profile.
+  const directory = await createRepository();
+  try {
+    const { report } = await runFixture(directory, {
+      workflow: {
+        profile: routingProfile({ implementation: { reason: ROUTING_REASON } }, TEST_PROFILE),
+        implementerEffort: 'medium',
+        reviewProfile: 'economy',
+      },
+    });
+    assert.deepEqual(report.routing.overriddenBy, []);
+    assert.equal(report.routing.applied.implementerEffort, 'medium');
+    assert.equal(report.routing.applied.reviewProfile, 'economy');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: review only applies the rule and escalates by the working tree in the preflight', async () => {
+  const directory = await createRepository();
+  const reviewCalls = [];
+  const runner = createMockRunner();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    const { report } = await runReviewOnlyFixture(directory, {
+      runner,
+      claudeReview: async (options) => {
+        reviewCalls.push(options);
+        return approveReview();
+      },
+      workflow: {
+        profile: routingProfile({
+          implementation: {
+            implementerEffort: 'xhigh',
+            reviewProfile: 'standard',
+            reviewLanes: ['tests'],
+            reason: ROUTING_REASON,
+            escalate: [{ paths: ['implementation.txt'], to: 'critical' }],
+          },
+          critical: { ...ESCALATED_RULE },
+        }),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.runMode, 'review-only');
+    assert.deepEqual(report.routing.escalatedBy, { path: 'implementation.txt', to: 'critical' });
+    assert.deepEqual(report.routing.applied, {
+      implementerEffort: null,
+      reviewProfile: 'critical-opus',
+      reviewLanes: REVIEW_LANE_IDS,
+      addChecks: ['pnpm lint', 'pnpm test'],
+    });
+    assert.deepEqual(reviewCalls.map(({ lane }) => lane.id), REVIEW_LANE_IDS);
+    assert.ok(ranGate(runner, 'pnpm test'));
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    assert.deepEqual(
+      entries.filter(({ type }) => type === 'routing').map(({ data }) => [data.round, data.rule]),
+      [[null, 'critical']],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: a later round escalates further up; round 1 keeps the class rule and a mild target never pins the run', async () => {
+  const directory = await createRepository();
+  const reviewCalls = [];
+  const runner = createMockRunner();
+  try {
+    const { report } = await runFixture(directory, {
+      runner,
+      codexRound: async (options) => {
+        await writeFile(join(directory, 'implementation.txt'), `runda ${options.round}\n`);
+        if (options.round === 2) {
+          await mkdir(join(directory, 'docs'), { recursive: true });
+          await writeFile(join(directory, 'docs', 'guide.md'), '# Guide\n');
+        }
+        if (options.round === 3) {
+          await mkdir(join(directory, 'src', 'auth'), { recursive: true });
+          await writeFile(join(directory, 'src', 'auth', 'login.txt'), 'login\n');
+        }
+        return completedCodex(options.round, {}, options.findings);
+      },
+      claudeReview: async (options) => {
+        reviewCalls.push(options);
+        return reviewCalls.length < 3 ? requestChanges(reviewCalls.length) : approveReview();
+      },
+      workflow: { profile: routingProfile(MILD_AND_STRICT_RULES, TEST_PROFILE) },
+    });
+    assert.equal(report.status, 'APPROVE', report.error);
+    assert.equal(report.rounds.length, 3);
+    // economy (class rule), standard (mild), critical-opus (strict).
+    assert.deepEqual(reviewCalls.map(({ effort }) => effort), ['medium', 'high', 'xhigh']);
+    // routing.rule names the escalation rule in effect, not a class.
+    assert.equal(report.routing.class, 'implementation');
+    assert.deepEqual(report.routing.escalatedBy, { path: 'src/auth/login.txt', to: 'auth-review' });
+    assert.equal(report.routing.rule, 'auth-review');
+    assert.equal(report.routing.reason, MILD_AND_STRICT_RULES['auth-review'].reason);
+    assert.equal(report.quality.taskClass, 'implementation');
+    assert.deepEqual(report.routing.applied.addChecks, ['pnpm lint', 'pnpm test']);
+    assert.deepEqual(
+      report.rounds.map(({ gates }) => gates.gates.map(({ name }) => name).filter((name) => name === 'pnpm lint' || name === 'pnpm test')),
+      [[], ['pnpm lint'], ['pnpm lint', 'pnpm test']],
+    );
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    assert.deepEqual(
+      entries.filter(({ type }) => type === 'routing').map(({ data }) => [data.round, data.rule, data.escalatedBy]),
+      [
+        [null, 'implementation', null],
+        [2, 'docs-contract', { path: 'docs/guide.md', to: 'docs-contract' }],
+        [3, 'auth-review', { path: 'src/auth/login.txt', to: 'auth-review' }],
+      ],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: --review-profile also wins over an escalation, which still adds its checks; overriddenBy names it', async () => {
+  const directory = await createRepository();
+  const reviewCalls = [];
+  const runner = createMockRunner();
+  try {
+    const { report } = await runFixture(directory, {
+      runner,
+      claudeReview: async (options) => {
+        reviewCalls.push(options);
+        return approveReview();
+      },
+      workflow: {
+        profile: routingProfile(
+          {
+            implementation: {
+              reviewProfile: 'standard',
+              reason: ROUTING_REASON,
+              escalate: [{ paths: ['implementation.txt'], to: 'critical' }],
+            },
+            critical: { reviewProfile: 'critical-opus', addChecks: ['pnpm lint'], reason: 'Escalated.' },
+          },
+          TEST_PROFILE,
+        ),
+        reviewProfile: 'economy',
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.deepEqual(reviewCalls.map(({ effort }) => effort), ['medium']);
+    assert.equal(report.routing.rule, 'critical');
+    assert.equal(report.routing.applied.reviewProfile, 'economy');
+    assert.deepEqual(report.routing.overriddenBy, ['--review-profile']);
+    assert.ok(ranGate(runner, 'pnpm lint'));
+    const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
+    assert.deepEqual(
+      entries.filter(({ type }) => type === 'routing').map(({ data }) => [data.round, data.rule, data.overriddenBy]),
+      [
+        [null, 'implementation', ['--review-profile']],
+        [1, 'critical', ['--review-profile']],
+      ],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: a rule with only a reason gives the writer and reviewer processes the same argv and prompts as no routing', async () => {
+  const run = async (profile) => {
+    const directory = await createRepository();
+    const real = realpathSync(directory);
+    const processes = [];
+    // Repository and temporary paths differ between the two runs.
+    const normalize = (text) =>
+      String(text)
+        .replaceAll(real, '<repo>')
+        .replaceAll(directory, '<repo>')
+        .replace(/[^\s"'=]*example-agent-review-[^\s"'/]*/g, '<temp>');
+    const runner = createMockRunner({
+      onRun: async (program, args, options) => {
+        if (!['codex', 'claude'].includes(program) || args[0] === '--version') return null;
+        processes.push({ program, args: args.map(normalize), input: normalize(options.input ?? '') });
+        if (program === 'claude')
+          return result(JSON.stringify({ structured_output: approveReview().review }));
+        await writeFile(join(directory, 'implementation.txt'), 'runda 1\n');
+        await writeFile(args[args.indexOf('-o') + 1], JSON.stringify(completedCodex(1).report));
+        return result(`${JSON.stringify({ type: 'thread.started', thread_id: TEST_SESSION_ID })}\n`);
+      },
+    });
+    try {
+      const { report } = await runFixture(directory, {
+        runner,
+        codexRound: internal.runCodexRound,
+        claudeReview: internal.runClaudeReview,
+        workflow: { profile },
+      });
+      assert.equal(report.status, 'APPROVE', report.error);
+      return processes;
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  };
+  const plain = await run(TEST_PROFILE);
+  assert.deepEqual(plain.map(({ program }) => program), ['codex', 'claude']);
+  assert.ok(plain.every(({ input }) => input.length > 0));
+  const reasonOnly = await run(routingProfile({ implementation: { reason: ROUTING_REASON } }, TEST_PROFILE));
+  assert.deepEqual(reasonOnly, plain);
+});
+
+test('routing: the dry-run plan shows the routing and its gates; a plan without routing has no field', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'already changed\n');
+    const profile = routingProfile(
+      {
+        implementation: { reason: ROUTING_REASON, escalate: [{ paths: ['implementation.txt'], to: 'critical' }] },
+        critical: { addChecks: ['pnpm lint'], reason: 'Escalated.' },
+      },
+      TEST_PROFILE,
+    );
+    const { report } = await runFixture(directory, { workflow: { profile, dryRun: true } });
+    assert.equal(report.status, 'DRY_RUN_OK');
+    assert.equal(report.routing.rule, 'critical');
+    assert.deepEqual(report.routing.escalatedBy, { path: 'implementation.txt', to: 'critical' });
+    assert.deepEqual(report.checks, [...TEST_GATES.checkSets.base, 'pnpm lint']);
+    const plain = await runFixture(directory, { workflow: { dryRun: true, randomId: '9999abcd' } });
+    assert.equal('routing' in plain.report, false);
+    assert.deepEqual(plain.report.checks, TEST_GATES.checkSets.base);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('routing: a resumed run computes the routing again and reports the fields that differ from the checkpoint', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  const profile = routingProfile(
+    {
+      implementation: {
+        implementerEffort: 'xhigh',
+        reason: ROUTING_REASON,
+        escalate: [{ paths: ['implementation.txt'], to: 'critical' }],
+      },
+      critical: { reviewProfile: 'critical', addChecks: ['pnpm lint'], reason: 'Escalated.' },
+    },
+    TEST_PROFILE,
+  );
+  try {
+    const stopped = await stopAtReview(directory, stateDirectory, { workflow: { profile } });
+    assert.equal(stopped.report.checkpoint.resumable, true);
+    assert.equal(stopped.report.routing.rule, 'critical');
+    assert.equal('checkpointDifferences' in stopped.report.routing, false);
+    const saved = JSON.parse(JSON.parse(await readFile(checkpointPath(directory), 'utf8')).payload);
+    assert.deepEqual(saved.routing, {
+      rule: 'critical',
+      escalatedBy: { path: 'implementation.txt', to: 'critical' },
+      applied: stopped.report.routing.applied,
+      overriddenBy: [],
+    });
+    const runner = createMockRunner();
+    const { report, codexCalls } = await resumeRun(directory, stateDirectory, {
+      runner,
+      workflow: { profile, implementerEffort: 'medium' },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.resumedFrom, CHECKPOINT_RUN_ID);
+    assert.equal(codexCalls, 0);
+    assert.equal(report.routing.rule, 'critical');
+    assert.deepEqual(report.routing.escalatedBy, saved.routing.escalatedBy);
+    assert.deepEqual(report.routing.overriddenBy, ['--implementer-effort']);
+    assert.deepEqual(report.routing.checkpointDifferences, ['applied.implementerEffort', 'overriddenBy']);
+    assert.ok(ranGate(runner, 'pnpm lint'));
+    const entries = await ledgerEntries(directory, RESUMED_RUN_ID);
+    const [event] = entries.filter(({ type }) => type === 'routing');
+    assert.deepEqual(event.data.checkpointDifferences, ['applied.implementerEffort', 'overriddenBy']);
+    assert.equal((await verifyLedger(directory, stateDirectory, RESUMED_RUN_ID)).status, 'ok');
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+test('routing: without routing the run, its report, ledger, checkpoint and agent inputs are unchanged; analysis mode ignores it', async () => {
+  const run = async (profile) => {
+    const directory = await createRepository();
+    const stateDirectory = await createStateDirectory();
+    const writerCalls = [];
+    const reviewCalls = [];
+    try {
+      const { report } = await runFixture(directory, {
+        codexRound: recordingWriter(directory, writerCalls),
+        claudeReview: async (options) => {
+          reviewCalls.push(options);
+          return approveReview();
+        },
+        workflow: { profile, checkpoint: true, stateDirectory },
+      });
+      const payload = JSON.parse(JSON.parse(await readFile(checkpointPath(directory), 'utf8')).payload);
+      const types = (await ledgerEntries(directory, CHECKPOINT_RUN_ID)).map(({ type }) => type);
+      const pick = ({ round, checks, solEffort, codexModel, taskMode }) => ({ round, checks, solEffort, codexModel, taskMode });
+      return {
+        report,
+        payload,
+        types,
+        writer: writerCalls.map(pick),
+        review: reviewCalls.map(({ model, effort, profile: name, lane }) => ({ model, effort, profile: name, lane })),
+      };
+    } finally {
+      await removeCheckpointFixture(directory, stateDirectory);
+    }
+  };
+  const plain = await run(TEST_PROFILE);
+  assert.equal('routing' in plain.report, false);
+  assert.equal('routing' in plain.payload, false);
+  assert.equal(plain.types.includes('routing'), false);
+  // A rule with only a reason changes nothing but the routing field and event.
+  const reasonOnly = await run(routingProfile({ implementation: { reason: ROUTING_REASON } }, TEST_PROFILE));
+  assert.deepEqual(reasonOnly.writer, plain.writer);
+  assert.deepEqual(reasonOnly.review, plain.review);
+  const { routing, ...rest } = reasonOnly.report;
+  assert.equal(routing.rule, 'implementation');
+  for (const key of ['quality', 'checks', 'sol', 'review', 'implementer', 'reviewer', 'publicationApproved', 'status']) {
+    assert.deepEqual(rest[key], plain.report[key], key);
+  }
+  assert.deepEqual(reasonOnly.types.filter((type) => type !== 'routing'), plain.types);
+  // A class without a rule is reported with rule null and the profile's values.
+  const otherClass = await run(routingProfile({ critical: { addChecks: ['pnpm lint'], reason: ROUTING_REASON } }, TEST_PROFILE));
+  assert.equal(otherClass.report.routing.rule, null);
+  assert.equal(otherClass.report.routing.reason, null);
+  assert.deepEqual(otherClass.report.routing.applied.addChecks, []);
+  assert.deepEqual(otherClass.writer, plain.writer);
+
+  const directory = await createRepository();
+  try {
+    await configureAnalysisTask(directory);
+    const { report } = await runAnalysisFixture(directory, {
+      workflow: {
+        profile: routingProfile(
+          { implementation: { implementerEffort: 'max', addChecks: ['pnpm lint'], reason: ROUTING_REASON } },
+          TEST_PROFILE,
+        ),
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.equal('routing' in report, false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('runner: processes of one concurrency group run together, never with another process, and time out alone', async () => {
   const runner = createProcessRunner({ output: { write() {} } });
   const group = { concurrencyGroup: 'review-lanes' };

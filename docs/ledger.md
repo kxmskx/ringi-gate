@@ -49,6 +49,7 @@ or paths outside the repository.
 | `preflight` | first event, when the run directory is created | `runId`, `mac` (`"hmac-sha256"` or `null`), `macUnavailable` (only without a key: `no-key`, `key-unsafe` or `no-state-directory`), `taskMode`, `runMode` (only `review-only`), `branch`, `head`, `task` (`path`, `sha256`, `mode`) |
 | `fingerprints` | after `preflight` | `runner` (`report.runner.sha256`), `projectProfile` (`report.projectProfile.sha256` or `null`) |
 | `resume` | a resumed run, after `fingerprints` | `resumedFrom`, `phase` and `round` of the checkpoint, `previousLedger` (`path`, `events`, `headHash` of the ledger it continues) |
+| `routing` | with [`routing`](profile.md#routing) in the implementation mode: after `fingerprints` (and `resume`), and after each writer round that escalated to a stricter rule | `round` (`null` in the preflight), then `report.routing`: `class`, `rule`, `escalatedBy`, `applied`, `overriddenBy`, `reason`, `checkpointDifferences` (resumed runs only) |
 | `writer-round` | after the writer's round passed its checks | `round`, `status`, `changes` and `findingResponses` (counts) |
 | `gate` | after each gate | `round`, `index`, `name`, `passed` |
 | `integrity` | analysis mode, before and after the review | `round`, `checks` (`name`, `status`) |
@@ -64,7 +65,8 @@ After `CLEANUP_FAILED` at the end of an approved run, a `stop` and a new
 `result` follow the approved result.
 
 The `review-lane` event is new while `ledgerVersion` stays the same: a
-`ringi verify` older than review lanes rejects a ledger that has it.
+`ringi verify` older than review lanes rejects a ledger that has it. The
+same holds for the `routing` event and a `ringi verify` older than routing.
 
 ## Key and `mac`
 

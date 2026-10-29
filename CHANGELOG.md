@@ -5,6 +5,48 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Added
+
+- Risk routing, part 1: optional `routing: { rules }` in the profile,
+  deterministic named rules. A rule named after a task class is that class's
+  rule; any other name is an escalation rule, used only as the target of an
+  escalation, without `escalate` or `implementerEffort` of its own, and some
+  rule must escalate to it (so a misspelt class name is
+  `INVALID_CONFIGURATION`). Any key of `routing` other than `rules` is
+  `INVALID_CONFIGURATION`, reserved for later options. A rule may set
+  `implementerEffort` (from `implementer.allowedEfforts`), `reviewProfile`
+  (from `reviewer.profiles`), `reviewLanes` (ids of the profile's lanes or
+  `'all'`) and `addChecks` (checks added to the class's set, never replacing
+  one), and must have a `reason` (up to 500 characters). `escalate` (1 to 16
+  entries `{ paths, to }`, the path dialect and validator of lane `paths`)
+  switches the gates and the review to the strictest matching rule when the
+  candidate touches a path; every entry is checked against the whole
+  candidate in the preflight and after each writer round, routing only moves
+  up and a target's own entries are never followed; the writer's effort
+  stays, and a lane with its own `profile` keeps it. Profile validation
+  refuses, with `INVALID_CONFIGURATION`, any value outside the profile, any
+  key that would change a class, switch the review off or replace checks, an
+  escalation that lowers the review effort (by the order of the reviewer
+  provider's efforts), drops a lane or drops an added check, and targets of
+  one rule that are not pairwise comparable; review profiles that cannot be
+  compared (other models or attempts) cannot be escalated between. Authors
+  of `providerModules`: the module's `efforts` must now be listed from the
+  lowest to the highest, since routing compares review efforts by that
+  order; the contract does not check the order, and the built-in modules
+  already list theirs that way. `--implementer-effort` and
+  `--review-profile` win over the rule, also below it, and the report lists
+  them in `routing.overriddenBy`. The report (also with `--review-only`,
+  `--dry-run` and `--resume`) adds `routing` (`class`, `rule`,
+  `escalatedBy`, `applied`, `overriddenBy`, `reason`, and
+  `checkpointDifferences` in a resumed run, which computes the routing again
+  and does not stop on a difference); the ledger adds a `routing` event and
+  a checkpoint stores the routing. The `analysis` mode ignores routing. A
+  `ringi verify` older than routing rejects a ledger with a `routing` event.
+  `schemaVersion` stays 1 and a profile without `routing` runs exactly as
+  before.
+
 ## 0.2.5 — 2026-10-29
 
 ### Added

@@ -972,6 +972,59 @@ const MAX_REVIEW_LANE_PATH_LENGTH = 4_096;
 const MAX_UNCOVERED_FILES_LISTED = 20;
 const REVIEW_LANE_PATH_REFUSED = /[*?[{\\\u0000-\u001f\u007f-\u009f]/;
 
+// Routing (routing.rules): optional rules, each named after a task class
+// (the class's rule) or an escalation rule (only a target). A rule only picks
+// what the profile already allows (an implementer effort of allowedEfforts,
+// a review profile, review lanes of the profile, checks added to the class's
+// set) and has a reason. Its escalate entries name another rule that applies
+// to the gates and the review when the candidate touches one of their paths
+// (the paths of review lanes, same validator); the strictest matching
+// target applies and the routing only moves up, the target's own escalate
+// is never followed, and every target may only tighten.
+const ROUTING_RULE_KEYS = new Set([
+  'implementerEffort',
+  'reviewProfile',
+  'reviewLanes',
+  'addChecks',
+  'reason',
+  'escalate',
+]);
+const ROUTING_ESCALATION_KEYS = new Set(['paths', 'to']);
+// routing.rules is the only key; others are reserved for later options.
+const ROUTING_KEYS = new Set(['rules']);
+const MAX_ROUTING_ESCALATIONS = 16;
+const MAX_ROUTING_REASON_LENGTH = 500;
+const ROUTING_ALL_LANES = 'all';
+
+// True when routing rule `to` is at least as strict as rule `from`: its
+// review effort is not lower, its lanes and added checks are supersets.
+// Review profiles (defaultProfile without reviewProfile) compare only with
+// the same models in the same attempts, by the order of the reviewer
+// provider's efforts (lowest first); any other pair is not comparable.
+// scale: { profiles, defaultProfile, efforts, laneIds }.
+function routingNotLooser(scale, from, to) {
+  const rank = (effort) => scale.efforts.indexOf(effort);
+  const fromProfile = from.reviewProfile ?? scale.defaultProfile;
+  const toProfile = to.reviewProfile ?? scale.defaultProfile;
+  const before = scale.profiles[fromProfile];
+  const after = scale.profiles[toProfile];
+  const lanesOf = (rule) =>
+    rule.reviewLanes === undefined || rule.reviewLanes === ROUTING_ALL_LANES
+      ? (scale.laneIds ?? [])
+      : rule.reviewLanes;
+  return (
+    (fromProfile === toProfile ||
+      (before.length === after.length &&
+        before.every(
+          (attempt, index) =>
+            attempt.model === after[index].model &&
+            rank(after[index].effort) >= rank(attempt.effort),
+        ))) &&
+    lanesOf(from).every((id) => lanesOf(to).includes(id)) &&
+    (from.addChecks ?? []).every((check) => (to.addChecks ?? []).includes(check))
+  );
+}
+
 // A changed file name as one JSON string that cannot start a new line:
 // JSON.stringify leaves U+0085, U+2028 and U+2029 as they are.
 function fileNameLine(file) {
@@ -5594,6 +5647,7 @@ const RUNNER_PROFILE_KEYS = new Set([
   'createPresenters',
   'providerModules',
   'reviewLanes',
+  'routing',
 ]);
 
 // The locale of a profile for its messages, read before the profile is
@@ -6091,6 +6145,127 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
         });
       }),
     );
+  }
+
+  // Routing: optional, absent from the default profile; routing.rules is
+  // its only key (others are reserved). A rule named after a task class is
+  // that class's rule; any other name is an escalation rule, used only as
+  // a target: it has no escalate of its own and no implementer effort (the
+  // writer keeps the class's), and some rule must escalate to it. Every
+  // value comes from the profile's own lists; a review setting needs a
+  // class with review (or an escalation rule), a lane list review lanes.
+  if (Object.hasOwn(fields, 'routing')) {
+    const routing = record(resolved.routing, ROUTING_KEYS);
+    const ruleEntries = Object.entries(record(routing.rules));
+    if (ruleEntries.length === 0) invalid();
+    const laneIds = resolved.reviewLanes?.map(({ id }) => id);
+    const rules = {};
+    for (const [name, value] of ruleEntries) {
+      const classRule = Object.hasOwn(taskClasses, name);
+      if (
+        name.length > MAX_TASK_CLASS_NAME_LENGTH ||
+        !TASK_CLASS_NAME.test(name)
+      )
+        invalid();
+      const rule = record(value, ROUTING_RULE_KEYS);
+      const reviewed =
+        !classRule || taskClasses[name].independentReviewRequired;
+      if (
+        !text(rule.reason, MAX_ROUTING_REASON_LENGTH) ||
+        (!classRule &&
+          (Object.hasOwn(rule, 'escalate') ||
+            Object.hasOwn(rule, 'implementerEffort'))) ||
+        (Object.hasOwn(rule, 'implementerEffort') &&
+          !allowedEfforts.includes(rule.implementerEffort)) ||
+        (Object.hasOwn(rule, 'reviewProfile') &&
+          (!reviewed ||
+            typeof rule.reviewProfile !== 'string' ||
+            !Object.hasOwn(profiles, rule.reviewProfile))) ||
+        (Object.hasOwn(rule, 'reviewLanes') && (!reviewed || !laneIds))
+      )
+        invalid();
+      const definition = {};
+      if (Object.hasOwn(rule, 'implementerEffort'))
+        definition.implementerEffort = rule.implementerEffort;
+      if (Object.hasOwn(rule, 'reviewProfile'))
+        definition.reviewProfile = rule.reviewProfile;
+      if (Object.hasOwn(rule, 'reviewLanes')) {
+        if (rule.reviewLanes === ROUTING_ALL_LANES) {
+          definition.reviewLanes = ROUTING_ALL_LANES;
+        } else {
+          const ids = uniqueList(rule.reviewLanes, (id) => laneIds.includes(id));
+          if (ids.length === 0) invalid();
+          definition.reviewLanes = ids;
+        }
+      }
+      if (Object.hasOwn(rule, 'addChecks')) {
+        const names = uniqueList(
+          rule.addChecks,
+          (check) => typeof check === 'string' && Object.hasOwn(checks, check),
+        );
+        if (names.length === 0) invalid();
+        definition.addChecks = names;
+      }
+      definition.reason = rule.reason;
+      if (Object.hasOwn(rule, 'escalate')) {
+        const entries = list(rule.escalate);
+        if (entries.length === 0 || entries.length > MAX_ROUTING_ESCALATIONS)
+          invalid();
+        definition.escalate = Object.freeze(
+          entries.map((entry) => {
+            const escalation = record(entry, ROUTING_ESCALATION_KEYS);
+            const paths = normalizeReviewLanePaths(list(escalation.paths));
+            if (
+              paths === undefined ||
+              typeof escalation.to !== 'string' ||
+              escalation.to === name
+            )
+              invalid();
+            return Object.freeze({ paths, to: escalation.to });
+          }),
+        );
+      }
+      rules[name] = Object.freeze(definition);
+    }
+    // An escalation only tightens: every target is at least as strict as
+    // the rule (routingNotLooser), and the targets of one rule are pairwise
+    // comparable, so the strictest matching target is always defined.
+    const scale = {
+      profiles,
+      defaultProfile,
+      efforts: reviewAdapter.efforts,
+      laneIds,
+    };
+    const escalationTargets = new Set(
+      Object.values(rules).flatMap((rule) =>
+        (rule.escalate ?? []).map(({ to }) => to),
+      ),
+    );
+    if (
+      Object.keys(rules).some(
+        (name) =>
+          !Object.hasOwn(taskClasses, name) && !escalationTargets.has(name),
+      )
+    )
+      invalid();
+    for (const rule of Object.values(rules)) {
+      const targets = [...new Set((rule.escalate ?? []).map(({ to }) => to))];
+      if (
+        !targets.every(
+          (to) =>
+            Object.hasOwn(rules, to) &&
+            routingNotLooser(scale, rule, rules[to]) &&
+            targets.every(
+              (other) =>
+                !Object.hasOwn(rules, other) ||
+                routingNotLooser(scale, rules[to], rules[other]) ||
+                routingNotLooser(scale, rules[other], rules[to]),
+            ),
+        )
+      )
+        invalid();
+    }
+    resolved.routing = Object.freeze({ rules: Object.freeze(rules) });
   }
   return Object.freeze(resolved);
 }
@@ -10331,6 +10506,26 @@ async function runWorkflow(options) {
   let selectedSolEffort = null;
   let selectedTaskMode = null;
   let quality;
+  // Routing of the run (a profile with routing, implementation mode): set
+  // in the preflight, raised after a round by the strictest matching
+  // escalation (never lowered); report field routing.
+  let routing;
+  const routingReport = () => ({
+    class: routing.class,
+    rule: routing.rule,
+    escalatedBy: routing.escalatedBy && { ...routing.escalatedBy },
+    applied: {
+      ...routing.applied,
+      reviewLanes: routing.applied.reviewLanes && [...routing.applied.reviewLanes],
+      addChecks: [...routing.applied.addChecks],
+    },
+    overriddenBy: [...routing.overriddenBy],
+    reason: routing.reason,
+    ...(routing.checkpointDifferences
+      ? { checkpointDifferences: [...routing.checkpointDifferences] }
+      : {}),
+  });
+  const routingFields = () => (routing ? { routing: routingReport() } : {});
   // The roles' warnings from the preflight's version check (UNPROBED_VERSION).
   let agentVersionWarnings;
   // Until the profile is resolved, the core defaults describe the roles.
@@ -10345,8 +10540,11 @@ async function runWorkflow(options) {
   // INVALID_REVIEW_PROFILE_NAME is reserved, so it never names a profile.
   const reportReviewProfile = () => {
     const { reviewer } = roles();
-    const name =
-      reviewProfile === undefined ? reviewer.defaultProfile : reviewProfile;
+    const name = routing
+      ? routing.reviewProfile
+      : reviewProfile === undefined
+        ? reviewer.defaultProfile
+        : reviewProfile;
     return typeof name === 'string' && Object.hasOwn(reviewer.profiles, name)
       ? name
       : INVALID_REVIEW_PROFILE_NAME;
@@ -10600,7 +10798,8 @@ async function runWorkflow(options) {
       optionEffort === undefined ? implementer.effort : optionEffort,
       implementer.allowedEfforts,
     );
-    const reviewPolicy = resolveReviewProfile(
+    // Routing may replace the policy (applyRouting).
+    let reviewPolicy = resolveReviewProfile(
       reviewProfile === undefined ? reviewer.defaultProfile : reviewProfile,
       reviewer,
     );
@@ -10632,8 +10831,9 @@ async function runWorkflow(options) {
       provider: implementer.provider,
     };
     const reviewerActor = { actor: 'reviewer', provider: reviewer.provider };
-    // Review lanes of the profile (undefined: a single reviewer).
-    const { reviewLanes } = selectedProfile;
+    // Review lanes of the profile (undefined: a single reviewer); routing
+    // may keep a part of them (applyRouting).
+    let { reviewLanes } = selectedProfile;
     const cwd = await resolveRepositoryRoot({
       runner,
       repositoryRoot,
@@ -10717,6 +10917,117 @@ async function runWorkflow(options) {
         profile: selectedProfile,
         protectedPaths: projectProfileReport?.files.map(({ path }) => path),
       });
+    // Routing (implementation mode): the class's rule over the profile's
+    // defaults, the options over the rule. The implementer effort comes from
+    // the class's rule only; an escalation (the candidate now or after a
+    // writer round) sets the gates and the review, and only ever upwards.
+    const routingRules =
+      selectedTaskMode === 'implementation'
+        ? selectedProfile.routing?.rules
+        : undefined;
+    const classRule =
+      routingRules && Object.hasOwn(routingRules, task.taskClass)
+        ? routingRules[task.taskClass]
+        : undefined;
+    const classChecks = [...task.checks];
+    const applyRouting = (escalatedBy) => {
+      const ruleName = escalatedBy?.to ?? (classRule ? task.taskClass : null);
+      const rule = ruleName === null ? undefined : routingRules[ruleName];
+      task.checks = [...new Set([...classChecks, ...(rule?.addChecks ?? [])])];
+      quality = { ...quality, effectiveGates: [...task.checks] };
+      if (reviewProfile === undefined)
+        reviewPolicy = resolveReviewProfile(
+          rule?.reviewProfile ?? reviewer.defaultProfile,
+          reviewer,
+        );
+      if (selectedProfile.reviewLanes)
+        reviewLanes =
+          rule?.reviewLanes === undefined ||
+          rule.reviewLanes === ROUTING_ALL_LANES
+            ? selectedProfile.reviewLanes
+            : selectedProfile.reviewLanes.filter(({ id }) =>
+                rule.reviewLanes.includes(id),
+              );
+      const reviewed = quality.independentReviewRequired;
+      routing = {
+        class: task.taskClass,
+        rule: ruleName,
+        escalatedBy: escalatedBy ?? null,
+        applied: {
+          implementerEffort: reviewOnly ? null : selectedSolEffort,
+          reviewProfile: reviewed ? reviewPolicy.profile : null,
+          reviewLanes:
+            reviewed && reviewLanes ? reviewLanes.map(({ id }) => id) : null,
+          addChecks: [...(rule?.addChecks ?? [])],
+        },
+        // The options that replaced a value of the rule (lower or higher).
+        overriddenBy: [
+          ...(!reviewOnly &&
+          optionEffort !== undefined &&
+          classRule?.implementerEffort !== undefined &&
+          optionEffort !== classRule.implementerEffort
+            ? ['--implementer-effort']
+            : []),
+          ...(reviewed &&
+          reviewProfile !== undefined &&
+          rule?.reviewProfile !== undefined &&
+          reviewProfile !== rule.reviewProfile
+            ? ['--review-profile']
+            : []),
+        ],
+        reason: rule?.reason ?? null,
+        reviewProfile: reviewPolicy.profile,
+        checkpointDifferences: routing?.checkpointDifferences,
+      };
+    };
+    // Escalation: every escalate entry of the class's rule is checked
+    // against the whole candidate (relative to HEAD). Of the matching
+    // entries the strictest target wins (the first in list order among
+    // equally strict ones), with the entry's first changed file in sorted
+    // order. The routing only moves up: a target that is not stricter than
+    // the one in effect changes nothing, and the targets' own entries are
+    // never followed. Returns the new escalation, or null.
+    const routingScale = {
+      profiles: reviewer.profiles,
+      defaultProfile: reviewer.defaultProfile,
+      efforts: roleProvider(reviewer, 'reviewer').efforts,
+      laneIds: selectedProfile.reviewLanes?.map(({ id }) => id),
+    };
+    const stricterRule = (from, to) =>
+      routingNotLooser(routingScale, routingRules[from], routingRules[to]) &&
+      !routingNotLooser(routingScale, routingRules[to], routingRules[from]);
+    const routingEscalation = async (stage) => {
+      if (!classRule?.escalate) return null;
+      const paths = await readCandidatePaths({ runner, cwd, stage });
+      let strictest = null;
+      for (const { paths: escalationPaths, to } of classRule.escalate) {
+        const path = paths.find((file) =>
+          reviewLanePathsMatch(escalationPaths, file),
+        );
+        if (
+          path !== undefined &&
+          (strictest === null || stricterRule(strictest.to, to))
+        )
+          strictest = { path, to };
+      }
+      const current = routing.escalatedBy?.to;
+      return strictest &&
+        (current === undefined || stricterRule(current, strictest.to))
+        ? strictest
+        : null;
+    };
+    // The routing compared with a checkpoint (resume).
+    const routingCheckpoint = () => {
+      const { rule, escalatedBy, applied, overriddenBy } = routingReport();
+      return { rule, escalatedBy, applied, overriddenBy };
+    };
+    if (routingRules) {
+      if (classRule?.implementerEffort !== undefined && optionEffort === undefined)
+        selectedSolEffort = classRule.implementerEffort;
+      applyRouting(null);
+      const escalatedBy = await routingEscalation('preflight');
+      if (escalatedBy) applyRouting(escalatedBy);
+    }
     await assertRequiredGates({
       runner,
       cwd,
@@ -10958,6 +11269,37 @@ async function runWorkflow(options) {
         last: undefined,
       };
     }
+    // A resumed run computes its routing again; the fields that differ
+    // from the checkpoint's routing are reported, not a stop (the profile
+    // itself is checked above).
+    if (routing && resumeFrom) {
+      const saved = resumeFrom.routing;
+      const current = routingCheckpoint();
+      const value = (source, path) =>
+        path.reduce(
+          (object, key) =>
+            isPlainObject(object) && Object.hasOwn(object, key)
+              ? object[key]
+              : undefined,
+          source,
+        );
+      routing.checkpointDifferences = [
+        'rule',
+        'escalatedBy',
+        'applied.implementerEffort',
+        'applied.reviewProfile',
+        'applied.reviewLanes',
+        'applied.addChecks',
+        'overriddenBy',
+      ].filter((field) => {
+        const path = field.split('.');
+        const before = value(saved, path);
+        return (
+          before === undefined ||
+          JSON.stringify(before) !== JSON.stringify(value(current, path))
+        );
+      });
+    }
 
     const copyInputMetadata = () => ({
       branch,
@@ -11061,6 +11403,7 @@ async function runWorkflow(options) {
                 ],
         maxRounds: roundLimit,
         mutations: msg('plan.noMutations'),
+        ...routingFields(),
         ...projectProfileFields(),
         ...runnerFields(),
       };
@@ -11119,6 +11462,9 @@ async function runWorkflow(options) {
         'preflight',
       );
     }
+    // round: null for the preflight's routing, the round of an escalation.
+    if (routing)
+      await record('routing', { round: null, ...routingReport() }, 'preflight');
     const [gitPath, pnpmPath, corepackPath] = await Promise.all([
       findExecutable('git'),
       findExecutable('pnpm'),
@@ -11189,6 +11535,7 @@ async function runWorkflow(options) {
           pending,
           identities: [...knownFindingIdentities],
         },
+        ...(routing ? { routing: routingCheckpoint() } : {}),
         stop: null,
         ...fields,
       };
@@ -11860,6 +12207,17 @@ async function runWorkflow(options) {
           },
           'post-implementer',
         );
+        if (routing) {
+          const escalatedBy = await routingEscalation('post-implementer');
+          if (escalatedBy) {
+            applyRouting(escalatedBy);
+            await record(
+              'routing',
+              { round, ...routingReport() },
+              'post-implementer',
+            );
+          }
+        }
         if (checkpointContext) {
           await saveCheckpoint({
             phase: 'implementer',
@@ -12144,6 +12502,7 @@ async function runWorkflow(options) {
           approvalMeaning:
             msg('report.docsApproval'),
           nextStep: quality.remainingAssurance,
+          ...routingFields(),
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
@@ -12535,6 +12894,7 @@ async function runWorkflow(options) {
             : {}),
           nextStep:
             msg('report.nextStep'),
+          ...routingFields(),
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
@@ -12627,6 +12987,7 @@ async function runWorkflow(options) {
       ...(analysisArtifacts.length > 0
         ? { analysisArtifacts: publicAnalysisArtifacts() }
         : {}),
+      ...routingFields(),
       ...projectProfileFields(),
       ...runnerFields(),
     };
@@ -12829,6 +13190,7 @@ async function runWorkflow(options) {
             ...(analysisArtifacts.length > 0
               ? { analysisArtifacts: publicAnalysisArtifacts() }
               : {}),
+            ...routingFields(),
             ...projectProfileFields(),
             ...runnerFields(),
             ...ledgerFields(),

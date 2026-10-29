@@ -214,6 +214,7 @@ export const PROFILE = {
   reviewer: { /* provider and review profiles of the reviewer */ },
   locale: 'en',                     // language of messages, prompts and the default task schema
   // reviewLanes: optional list of parallel review lanes
+  // routing: optional { rules }: per task class and for escalation (effort, review profile, lanes, added checks)
   // providerModules: optional list of provider module objects
   // createPresenters: optional function returning presentation hooks
 };
@@ -878,6 +879,141 @@ many reviews as there are lanes. The report shows the size of each lane's
 prompt (`contextBytes`) and the number of changed files in the diff it
 starts from (`diffFiles`).
 
+### `routing`
+
+Optional. Deterministic rules that pick, per task class, settings the
+profile already allows. Without `routing` a run is unchanged: the same
+gates, efforts, review profile, lanes, prompts and report. `routing` is a
+record with the single key `rules`; any other key is `INVALID_CONFIGURATION`
+(other keys are reserved for later options of routing). `rules` is a
+record of at least one named rule:
+
+- a rule named after a class in `taskClasses` is that class's rule;
+- a rule with any other name is an **escalation rule**: it applies only as
+  the target (`to`) of an escalation, never to a class by itself. It has no
+  `escalate` of its own (no chains) and no `implementerEffort` (an
+  escalation keeps the writer's effort), and at least one rule must
+  escalate to it, so a misspelt class name is `INVALID_CONFIGURATION`
+  instead of a rule that never applies. Its `reviewProfile` and
+  `reviewLanes` take effect only for a run of a class with review; when a
+  class without review escalates to it, only its `addChecks` apply.
+
+Rule names follow class names: lowercase letters and digits in groups
+joined by `-`, at most 64 characters. Each rule has these keys, all
+optional except `reason`:
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `implementerEffort` | string | An effort in `implementer.allowedEfforts`. Not in an escalation rule. |
+| `reviewProfile` | string | A name in `reviewer.profiles`. In a class's rule only for a class with `independentReviewRequired: true`. |
+| `reviewLanes` | string[] or `'all'` | Ids of the profile's `reviewLanes` (1 or more, unique), or `'all'`. Only with `reviewLanes` in the profile, and in a class's rule only for a class with review. Without it, every lane runs. |
+| `addChecks` | string[] | Names in `checks` (1 or more, unique) added to the class's check set and the task's checks. They never replace a check. |
+| `reason` | string | 1 to 500 characters without control characters; copied to the report. |
+| `escalate` | object[] | 1 to 16 entries `{ paths, to }`, see below. Not in an escalation rule. |
+
+`paths` of an escalation entry has the dialect and the validator of the
+`paths` of a review lane (see [`reviewLanes`](#reviewlanes)): 1 to 32
+relative POSIX paths, an entry ending with `/` is a directory prefix, any
+other entry an exact file, no glob patterns. `to` names another rule in
+`rules`: the rule of another class or an escalation rule. When the candidate (the changes relative to `HEAD`, new files
+included) touches a path of an entry, rule `to` applies to the gates and
+the review; the implementer effort stays the one of the class's rule,
+since the writer already ran with it. The candidate is checked in the
+preflight and after each writer round, always against every entry of the
+class's rule and the whole candidate. Of the entries that match, the
+strictest target applies (among equally strict targets, the first in list
+order), and `escalatedBy` names its first changed file in sorted order.
+Routing only moves up: a later round switches to a stricter target, never
+to a looser or equally strict one, so a change to a path of a mild entry in
+an early round cannot keep a stricter entry from applying later. There are
+no chains: the escalate entries of a target are never followed.
+
+The invariants hold whatever a rule declares; any breach is
+`INVALID_CONFIGURATION` in preflight:
+
+- A rule picks nothing outside the profile: no provider, no model, an
+  effort only from `allowedEfforts`, a review profile only from
+  `reviewer.profiles`, lanes only from `reviewLanes`, checks only from
+  `checks`. Whatever costs more must be allowed by the profile first.
+- A rule cannot switch the review off, remove a gate or change a class:
+  keys such as `independentReviewRequired`, `checkSet`, `docsOnly`,
+  `checks`, `provider` or `model` are refused, like any unknown key, and
+  `addChecks` only adds.
+- An escalation only tightens. Every target is at least as strict as the
+  rule that escalates, where rule B is at least as strict as rule A when:
+  - the review effort is not lower: the two review profiles (a rule
+    without `reviewProfile` uses `defaultProfile`) must be the same, or have
+    the same number of attempts with the same model in each attempt and an
+    effort in each attempt that is not lower in the order of the reviewer
+    provider's efforts (for example `economy` to `standard`). Any other pair,
+    such as profiles with other models, cannot be compared and is refused;
+  - its lanes are a superset (a rule without `reviewLanes` has every lane);
+  - its `addChecks` are a superset.
+- The targets of one rule are pairwise comparable by the same relation, so
+  the strictest matching target is always defined. Two targets where each
+  is stricter in another field (for example one adds `pnpm lint`, the other
+  `pnpm test`) are refused.
+
+Precedence: `--implementer-effort` and `--review-profile` (see
+[cli.md](cli.md)) win over the rule, and the rule wins over the profile's
+`implementer.effort` and `reviewer.defaultProfile`. An option that sets a
+value lower than the rule's is allowed, as a human decision; the report
+lists such options in `routing.overriddenBy`.
+
+A review lane with its own `profile` keeps it: the review profile of a rule,
+of an escalation and of `--review-profile` applies to the lanes that name
+none, as `--review-profile` does without routing. To raise the review of
+such a lane, name it in `reviewLanes` of a stricter rule only if its own
+profile already fits, or leave `profile` out of the lane.
+
+Routing applies in the `implementation` task mode, also with
+`--review-only` and when a run resumes. The `analysis` mode has no gates
+and only the default class, so routing does not apply there and its report
+has no `routing` field. A required gate rule (`requiredGateRules`) is
+satisfied by a check that `addChecks` adds, since that check runs.
+
+```js
+routing: {
+  rules: {
+    // The rule of class implementation.
+    implementation: {
+      reviewProfile: 'standard',
+      reviewLanes: ['correctness', 'tests'],
+      reason: 'Ordinary changes: two lanes at the standard effort.',
+      escalate: [
+        { paths: ['docs/api/'], to: 'api-docs' },
+        { paths: ['src/auth/', 'src/payments/'], to: 'critical' },
+      ],
+    },
+    // An escalation rule: no class has this name.
+    'api-docs': {
+      reviewProfile: 'standard',
+      reviewLanes: ['correctness', 'tests'],
+      addChecks: ['pnpm docs:check'],
+      reason: 'The public API docs changed: the docs check too.',
+    },
+    // The rule of class critical, also a target of implementation.
+    critical: {
+      implementerEffort: 'xhigh',
+      reviewProfile: 'critical-opus',
+      reviewLanes: 'all',
+      addChecks: ['pnpm docs:check', 'pnpm test'],
+      reason: 'Auth and payments: every lane at the highest effort and the tests.',
+    },
+  },
+},
+```
+
+Here a task of class `implementation` gets two lanes with `standard`. When
+its candidate touches `docs/api/`, the escalation rule `api-docs` adds
+`pnpm docs:check`. When it touches `src/auth/` or `src/payments/` (also
+after `docs/api/` in an earlier round, since `critical` is stricter), its
+gates add `pnpm docs:check` and `pnpm test` and every lane runs, each lane
+without its own `profile` with `critical-opus`, while its writer keeps the
+profile's effort. A task of class `critical` always gets the `critical`
+rule, including `xhigh` for its writer. `critical` adds `pnpm docs:check`
+too, since the two targets of `implementation` must be comparable.
+
 ### `providerModules`
 
 Optional list of provider modules: code objects that describe an agent CLI
@@ -1142,3 +1278,24 @@ of the lanes that reported it, in profile order); `review.runs` has one
 execution per lane and round, each with its `lane`. A run stopped by a lane
 has `lane` (the lane's id) next to `code`. A run without `reviewLanes` has
 none of these fields and is unchanged, so `schemaVersion` stays 1.
+
+A run in the `implementation` mode with [`routing`](#routing) adds
+`routing` to the report (`APPROVE`, `STOPPED` once the preflight applied
+it, and the dry-run plan):
+
+| Field | Value |
+| --- | --- |
+| `class` | The task class. |
+| `rule` | The name of the rule in effect: the class's own, or after an escalation its target (the rule of another class or an escalation rule); `null` when the class has no rule. |
+| `escalatedBy` | `{ path, to }` of the escalation in effect (the last one, since routing only moves up): the changed file that matched and the rule it escalated to; `null` without an escalation. |
+| `applied` | The values in effect: `implementerEffort` (`null` with `--review-only`), `reviewProfile` and `reviewLanes` (lane ids; `null` for a class without review, `reviewLanes` also `null` without lanes in the profile) and `addChecks` of the rule. `reviewProfile` is the profile of the single reviewer and of every lane without its own `profile`; a lane with its own `profile` keeps it, as `reviewer.lanes[].profile` shows. |
+| `overriddenBy` | The options that replaced a value the rule sets: `--implementer-effort`, `--review-profile` (empty when none did). |
+| `reason` | The rule's `reason`, or `null`. |
+| `checkpointDifferences` | Only in a resumed run: the fields of the routing computed again that differ from the checkpoint's (`rule`, `escalatedBy`, `applied.implementerEffort`, `applied.reviewProfile`, `applied.reviewLanes`, `applied.addChecks`, `overriddenBy`); empty when none differs. |
+
+`quality.effectiveGates` and `rounds[].gates` include the added checks. The
+ledger records a `routing` event with the same fields and `round`: `null`
+for the preflight, the round number for each escalation after a writer round
+(see [ledger.md](ledger.md)). A checkpoint stores the routing it was made
+with. A run without `routing` has none of these fields and is unchanged, so
+`schemaVersion` stays 1.

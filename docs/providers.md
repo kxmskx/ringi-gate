@@ -48,7 +48,7 @@ profile either way).
 | `program` | Bare executable name (no path), found on `PATH`. Not a reserved name: shells and interpreters (also with a version suffix, after a hyphen or underscore too, such as `python3.12`, `perl5.34` or `bash-5.2`), `java` and `jshell`, programs that run another program (`env`, `nohup`, `timeout`, `busybox`, `sudo`, `arch`, `sandbox-exec`, `tmux`, `screen`, `find`, `expect`, `strace` and similar), job schedulers (`crontab`, `at`, `batch`), `Rscript` and `swift`, editors (`vi`, `vim`, `emacs`, `nano` and similar), network clients (`ssh`, `curl` and similar) and the guarded tools (`git`, `pnpm`, `npm` and similar). The list is best effort, not proof that a program cannot run arbitrary code. |
 | `versionArgs` | 1–4 arguments of the preflight version check, without forbidden arguments (below). |
 | `roles` | `['implementer']`, `['reviewer']` or both; a role object must be present exactly for each listed role. |
-| `efforts` | 1–8 effort names the module accepts; the profile's efforts must come from this list. |
+| `efforts` | 1–8 effort names the module accepts, from the lowest to the highest; the profile's efforts must come from this list, and an escalation of [`routing`](profile.md#routing) compares review efforts by this order. |
 | `isValidModel(model)` | Returns `true` for model IDs the CLI accepts. The core also applies its own model rule (1–128 ASCII letters, digits, `.`, `_`, `-`, starting with a letter or digit). |
 | `implementer` | Role object (below). |
 | `reviewer` | Role object (below). |

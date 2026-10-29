@@ -163,11 +163,23 @@ Everything below "Planned" is a plan, not a feature. The
   reviewers when a changed file belongs to no lane. The report and the
   ledger measure each lane's prompt size and diff files. See
   [docs/profile.md](docs/profile.md#context-packages-paths).
+- Risk routing, part 1 (opt-in). `routing.rules` in the profile picks, per
+  task class, the implementer effort, the review profile, the review lanes
+  and added checks, all from the profile's own lists and with a reason, and
+  escalates to the strictest matching rule (of another class or an
+  escalation rule), only ever upwards, when the candidate touches named
+  paths. Other keys of `routing` are reserved for part 2.
+  The options still win; the report and the ledger show the routing. See
+  [docs/profile.md](docs/profile.md#routing).
 
 ## Planned (not implemented)
 
 - Token and cost measurements of review lanes, once a reviewer provider
   reports them to the runner.
+- Risk routing, part 2 (open decision): a model as coordinator that
+  proposes a routing within the profile's rules, only if measurements of
+  part 1 show a gain. Expensive and publication decisions stay with a
+  human.
 
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).

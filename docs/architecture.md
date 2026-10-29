@@ -409,6 +409,11 @@ flowchart TD
    a temporary directory, together with the full diff against HEAD, the
    trusted gate report and the repository instructions. The copy is made
    read-only and hashed; the working tree must not change while it is taken.
+   The runner's files go into `.review-context/`, a reserved name: a
+   working-tree path with that segment stops the run with `PATH_ESCAPE`
+   when the repository paths are listed, before any snapshot, and the
+   directory and its files are created only as new entries, never through
+   a symbolic link.
 6. **Independent review.** The reviewer returns a structured verdict with
    findings (`BLOCKER`, `HIGH`, `MEDIUM`, `LOW`). The runner computes the
    result itself: any finding of any severity means another writer round.

@@ -464,6 +464,9 @@ const SNAPSHOT_EXCLUDED_SEGMENTS = new Set([
   'playwright-report',
   'test-results',
 ]);
+// The core's own context directory in a review snapshot. It is reserved: a
+// working-tree path with this segment stops the run before any snapshot.
+const REVIEW_CONTEXT_DIRECTORY = '.review-context';
 // Task sections come from the profile's taskSchema. The core reads three of
 // them (task class, required checks, review files); a schema declares each
 // under its Polish or English canonical name. When a schema declares both,
@@ -6271,9 +6274,23 @@ async function listRepositoryPaths(runner, cwd, stage) {
     { cwd, stage, exactStdoutLimitBytes: MAX_GIT_PATH_LIST_BYTES },
     msg('repo.filesUnreadable'),
   );
-  return parseNullSeparated(result.stdout)
+  const paths = parseNullSeparated(result.stdout)
     .filter((path) => !isSnapshotExcludedPath(path))
     .sort();
+  // Compared without case: on a case-insensitive file system another case
+  // would land in the same snapshot directory.
+  const reserved = paths.find((path) =>
+    path
+      .split('/')
+      .some((segment) => asciiLowerCase(segment) === REVIEW_CONTEXT_DIRECTORY),
+  );
+  if (reserved !== undefined) {
+    throw new AgentWorkflowError(
+      msg('repo.reviewContextReserved', { path: JSON.stringify(reserved) }),
+      { code: 'PATH_ESCAPE', stage },
+    );
+  }
+  return paths;
 }
 
 async function inspectRepositoryPath(root, path) {
@@ -6732,6 +6749,49 @@ async function makeWritableForCleanup(path) {
   }
 }
 
+// Not recursive: the copied tree never has .review-context
+// (listRepositoryPaths), so an existing entry stops the run instead of
+// being written through.
+async function createReviewContextDirectory(snapshotRoot) {
+  try {
+    await mkdir(join(snapshotRoot, REVIEW_CONTEXT_DIRECTORY), { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    throw new AgentWorkflowError(
+      msg('repo.reviewContextReserved', {
+        path: JSON.stringify(REVIEW_CONTEXT_DIRECTORY),
+      }),
+      { code: 'PATH_ESCAPE', stage: 'snapshot' },
+    );
+  }
+}
+
+// A context file is always new ('wx') and never written through a symlink.
+async function writeReviewContextFile(snapshotRoot, path, content) {
+  let handle;
+  try {
+    handle = await open(
+      join(snapshotRoot, path),
+      fsConstants.O_WRONLY |
+        fsConstants.O_CREAT |
+        fsConstants.O_EXCL |
+        (fsConstants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+  } catch (error) {
+    if (!['EEXIST', 'ELOOP'].includes(error?.code)) throw error;
+    throw new AgentWorkflowError(
+      msg('repo.reviewContextReserved', { path: JSON.stringify(path) }),
+      { code: 'PATH_ESCAPE', stage: 'snapshot' },
+    );
+  }
+  try {
+    await handle.writeFile(content);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function writeAnalysisPackageFile({
   snapshotRoot,
   packagePath,
@@ -6746,7 +6806,7 @@ async function writeAnalysisPackageFile({
   }
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  await writeFile(target, bytes, { mode: 0o600, flag: 'wx' });
+  await writeReviewContextFile(snapshotRoot, packagePath, bytes);
   return {
     packagePath,
     sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -6774,7 +6834,8 @@ async function createAnalysisReviewSnapshot({
     stage: 'snapshot',
   });
   const snapshotRoot = join(tempRoot, `claude-review-${round}`);
-  await mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
+  await mkdir(snapshotRoot, { mode: 0o700 });
+  await createReviewContextDirectory(snapshotRoot);
   const instructionsPath = '.review-context/repository-instructions.md';
   const originalTaskPath = '.review-context/original-task.md';
   const analysisArtifactPath = '.review-context/analysis-artifact.md';
@@ -7032,7 +7093,7 @@ export async function createReviewSnapshot({
     stage: 'snapshot',
   });
   const snapshotRoot = join(tempRoot, `claude-review-${round}`);
-  await mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
+  await mkdir(snapshotRoot, { mode: 0o700 });
   const copiedHash = await copyManifestToSnapshot({
     manifest: before,
     sourceRoot: repositoryRoot,
@@ -7060,37 +7121,39 @@ export async function createReviewSnapshot({
     );
   }
 
-  const contextDirectory = join(snapshotRoot, '.review-context');
-  await mkdir(contextDirectory, { recursive: true, mode: 0o700 });
+  await createReviewContextDirectory(snapshotRoot);
   const instructionsPath = '.review-context/instructions-and-task.md';
   const diffPath = '.review-context/full.diff';
   const gatesPath = '.review-context/trusted-gates.json';
-  await writeFile(
-    join(snapshotRoot, instructionsPath),
+  await writeReviewContextFile(
+    snapshotRoot,
+    instructionsPath,
     `# Instrukcje repozytorium\n\n${repositoryInstructions}\n\n# Oryginalne zadanie (${task.path})\n\n${task.markdown}\n`,
-    { mode: 0o600 },
   );
-  await writeFile(join(snapshotRoot, diffPath), diffBefore, { mode: 0o600 });
+  await writeReviewContextFile(snapshotRoot, diffPath, diffBefore);
   // The part of the full diff for each review lane with paths, next to it:
   // read-only and counted in the snapshot hash like the full diff.
   if (profile?.reviewLanes?.some((lane) => lane.paths !== undefined)) {
     const { packages } = reviewLanePackages(profile.reviewLanes, diffBefore);
     for (const lanePackage of packages.values()) {
-      await writeFile(join(snapshotRoot, lanePackage.diffPath), lanePackage.diff, {
-        mode: 0o600,
-      });
+      await writeReviewContextFile(
+        snapshotRoot,
+        lanePackage.diffPath,
+        lanePackage.diff,
+      );
     }
   }
-  await writeFile(
-    join(snapshotRoot, gatesPath),
+  await writeReviewContextFile(
+    snapshotRoot,
+    gatesPath,
     `${JSON.stringify(gateReport, null, 2)}\n`,
-    { mode: 0o600 },
   );
   let correctionContextPath;
   if (round > 1) {
     correctionContextPath = '.review-context/correction-context.json';
-    await writeFile(
-      join(snapshotRoot, correctionContextPath),
+    await writeReviewContextFile(
+      snapshotRoot,
+      correctionContextPath,
       `${redactSensitive(
         JSON.stringify(
           {
@@ -7101,7 +7164,6 @@ export async function createReviewSnapshot({
           2,
         ),
       )}\n`,
-      { mode: 0o600 },
     );
   }
   await makeReadOnly(snapshotRoot);
@@ -12759,6 +12821,8 @@ export const internal = {
   allowedPnpmInvocations,
   parsePinnedPnpmSpecification,
   readRepositoryManifest,
+  createReviewContextDirectory,
+  writeReviewContextFile,
   readAnalysisMutationFingerprint,
   readPinnedPnpmVersion,
   readOptionalLocalDockerHost,

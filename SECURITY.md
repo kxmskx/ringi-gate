@@ -88,6 +88,15 @@ on.
   the names of the changed files, each a JSON string on its own line with
   U+0085, U+2028 and U+2029 escaped too. File names are working tree
   content and stay untrusted.
+- `.review-context` is reserved: the runner writes the review context (full
+  diff, trusted gate report, task and instructions, correction context,
+  lane diffs) into that directory of the snapshot. A working-tree path with
+  a `.review-context` segment (compared without case, outside the excluded
+  directories) stops the run with `PATH_ESCAPE` before any snapshot or
+  reviewer. The runner creates the directory and each file in it only as
+  new entries (no `recursive`, `O_CREAT | O_EXCL` with `O_NOFOLLOW`), so an
+  existing entry or a symbolic link stops the run instead of being written
+  through.
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
 - Checkpoints are opt-in. With `--checkpoint` or `--resume`, state carried

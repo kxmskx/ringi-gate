@@ -100,6 +100,23 @@ is published by hand, without provenance; later versions are published by
   (exit code `1`): it was written without the key or its `mac` fields were
   removed.
 
+### Security
+
+- `.review-context` is reserved for the review context the runner writes
+  into the reviewer's snapshot (full diff, trusted gate report, task and
+  instructions, correction context, lane diffs). In earlier versions a
+  `.review-context` entry in the working tree (a directory, files or
+  symbolic links, written by the writer or present in the repository) could
+  add files to that context or redirect the runner's writes, so the
+  reviewer could see a context the runner did not write, and the snapshot
+  checks did not detect it. Now any path with a `.review-context` segment
+  (compared without case, outside the excluded directories such as
+  `node_modules`) stops the run with `PATH_ESCAPE` before any snapshot or
+  reviewer, in implementation, analysis and review-only runs and after a
+  resume. The runner creates the context directory and each context file
+  only as new entries and never through a symbolic link. A repository
+  without `.review-context` runs as before.
+
 ## 0.2.4 — 2026-10-28
 
 ### Added

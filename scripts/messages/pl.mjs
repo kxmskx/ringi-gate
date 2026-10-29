@@ -339,6 +339,8 @@ export default Object.freeze({
   'repo.pathEscape': 'Ścieżka repozytorium wychodzi poza root.',
   'repo.linkAbsolute': 'Dowiązanie {path} ma cel absolutny.',
   'repo.linkEscape': 'Dowiązanie {path} wychodzi poza repozytorium.',
+  'repo.reviewContextReserved':
+    'Ścieżka {path} używa nazwy .review-context, zarezerwowanej dla kontekstu review w snapshotcie.',
   'repo.unsupportedEntry': 'Nieobsługiwany typ wpisu {path}.',
   'repo.fileTooLarge': 'Plik {path} przekracza limit 8 MiB. Podziel zadanie.',
   'repo.stateTooLarge': 'Stan repozytorium przekracza limit kopii 64 MiB. Podziel zadanie.',

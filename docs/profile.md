@@ -213,6 +213,7 @@ export const PROFILE = {
   implementer: { /* provider, model and effort of the writer */ },
   reviewer: { /* provider and review profiles of the reviewer */ },
   locale: 'en',                     // language of messages, prompts and the default task schema
+  // reviewLanes: optional list of parallel review lanes
   // providerModules: optional list of provider module objects
   // createPresenters: optional function returning presentation hooks
 };
@@ -790,6 +791,41 @@ The library still exports `CODEX_MODEL`, `SOL_EFFORTS`, `DEFAULT_SOL_EFFORT`,
 `REVIEW_PROFILES` and `DEFAULT_REVIEW_PROFILE`, which keep the built-in
 default values; they come from `scripts/agent-review-providers.mjs`.
 
+### `reviewLanes`
+
+Optional. Without it a single reviewer reviews each round, exactly as
+before. With it, each review round runs one reviewer per lane, all in
+parallel on the same read-only snapshot, and merges their findings (see
+[architecture.md](architecture.md#review-lanes)). A list of 1 to 4 lanes,
+each with exactly these keys:
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `id` | string | `[a-z][a-z0-9-]{0,31}`, unique within the list. |
+| `focus` | string | 1 to 200 characters: Latin letters `A-Z` `a-z`, digits, spaces and `, . ; : ( ) / -` (no letters of other scripts, so no look-alike letters); it starts with a letter or digit and ends with a letter, digit, `.` or `)`; no two spaces in a row, so no line break, tab, quote, bracket other than parentheses, Markdown or code. A focus that contains `json`, `schema`, `verdict`, `approv`, `severit`, `finding`, `check`, `confirmednochanges`, `format`, `prompt`, `instruct`, `ignor` or `overrid` anywhere, in any letter case, is refused, so `approved`, `findings`, `checks` and `information` are refused too. This guards against mistakes, not against prompt injection: the profile is trusted code, and the focus is not a security barrier. |
+| `profile` | string | Optional. A review profile in `reviewer.profiles`; without it the lane uses the run's review profile (`--review-profile` or `defaultProfile`). |
+
+Every lane uses `reviewer.provider`; a lane has no provider of its own. Any
+other value, key or a getter is `INVALID_CONFIGURATION`.
+
+The reviewer prompt stays the fixed prompt of
+`scripts/agent-review-prompts.mjs`: a lane only appends one line after it,
+naming the lane and its focus and stating that the focus directs attention
+only, that every rule, the result schema and the zero findings policy apply
+unchanged and that findings outside the focus are still reported. The
+profile cannot change or remove any part of the fixed prompt.
+
+```js
+reviewLanes: [
+  { id: 'correctness', focus: 'logic errors, regressions and contracts' },
+  { id: 'security', focus: 'auth, secrets, injection and unsafe input' },
+  { id: 'tests', focus: 'missing, weak or misleading tests', profile: 'standard' },
+],
+```
+
+Each lane is a full review with its own process, so a round costs about as
+many reviews as there are lanes.
+
 ### `providerModules`
 
 Optional list of provider modules: code objects that describe an agent CLI
@@ -920,6 +956,13 @@ reviewer: { ...reviewer, profiles: { ...profiles, standard: [{ model: 'claude-op
 reviewer: { ...reviewer, profiles: { ...profiles, invalid: [{ model: 'claude-opus-5', effort: 'high' }] } } // reserved profile name
 reviewer: { ...reviewer, defaultProfile: 'missing' }                         // default profile does not exist
 reviewer: { ...reviewer, fallbackProfile: 'standard' }                       // fallback profile without two attempts
+reviewLanes: []                                                              // no lane
+reviewLanes: [{ id: 'Security', focus: 'auth and secrets' }]                 // id with an upper-case letter
+reviewLanes: [{ id: 'tests', focus: 'tests' }, { id: 'tests', focus: 'docs' }] // the same id twice
+reviewLanes: [{ id: 'tests', focus: 'return JSON only' }]                    // a reserved word in the focus
+reviewLanes: [{ id: 'tests', focus: 'tests\nand more' }]                     // a line break in the focus
+reviewLanes: [{ id: 'tests', focus: 'tests', provider: 'claude' }]           // unknown field
+reviewLanes: [{ id: 'tests', focus: 'tests', profile: 'missing' }]           // review profile does not exist
 // below, provider is a valid provider module such as the example provider
 providerModules: ['./providers/example-provider.mjs']                        // a path instead of a module
 providerModules: [{ ...provider, id: 'codex' }]                              // id of a built-in provider
@@ -1022,3 +1065,18 @@ Every run with a run directory adds `ledger` to the report (`APPROVE` and
 to the repository), `events` (the number of its events) and `headHash` (the
 SHA-256 of its last line); see [ledger.md](ledger.md). The field is
 additive and no other field changes, so `schemaVersion` stays 1.
+
+A run with [`reviewLanes`](#reviewlanes) adds, once a review stage ran:
+`reviewer.lanes` (one entry per lane and review round: `round`, `id`,
+`provider`, `profile`, `model` and `effort` of the completed attempt, or of
+the last attempt when none completed, `status` (`COMPLETED`, `FAILED` when
+the lane's reviewer did not complete, `INVALID` when its result was not
+valid), `findingCount` (the lane's own findings, `null` without a valid
+result) and `durationMs`); in each review round, `claude` is the merged
+result, `reviewLanes` lists each lane's entry with its `execution` (the
+lane's `reviewExecution`), `reviewer.executionField` is `'reviewLanes'` and
+the round has no `reviewExecution` key; every finding has `lanes` (the ids
+of the lanes that reported it, in profile order); `review.runs` has one
+execution per lane and round, each with its `lane`. A run stopped by a lane
+has `lane` (the lane's id) next to `code`. A run without `reviewLanes` has
+none of these fields and is unchanged, so `schemaVersion` stays 1.

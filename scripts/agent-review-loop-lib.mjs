@@ -930,6 +930,31 @@ const MAX_REVIEW_PROFILE_NAME_LENGTH = 64;
 // The fallback profile has the planned attempt and one fallback attempt;
 // every other profile has a single attempt.
 const FALLBACK_PROFILE_ATTEMPTS = 2;
+// Review lanes (reviewLanes): 1 to 4 lanes, each a reviewer of its own on
+// the same snapshot. The focus is a short phrase appended to the fixed
+// reviewer prompt: one line of Latin letters A-Z, digits, spaces and plain
+// punctuation, no markup, quotes or brackets other than parentheses, and
+// no stem of a word of the result contract or of format instructions
+// anywhere in a word. This guards against mistakes in a trusted profile;
+// it is not a barrier against prompt injection.
+const REVIEW_LANE_KEYS = new Set(['id', 'focus', 'profile']);
+const MAX_REVIEW_LANES = 4;
+const REVIEW_LANE_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const MAX_REVIEW_LANE_FOCUS_LENGTH = 200;
+const REVIEW_LANE_FOCUS = /^[A-Za-z0-9](?:[A-Za-z0-9 ,.;:()/-]*[A-Za-z0-9.)])?$/;
+const REVIEW_LANE_FOCUS_RESERVED =
+  /json|schema|verdict|approv|severit|finding|check|confirmednochanges|format|prompt|instruct|ignor|overrid/i;
+
+function isReviewLaneFocus(value) {
+  return (
+    typeof value === 'string' &&
+    value.length <= MAX_REVIEW_LANE_FOCUS_LENGTH &&
+    value === value.normalize('NFC') &&
+    REVIEW_LANE_FOCUS.test(value) &&
+    !value.includes('  ') &&
+    !REVIEW_LANE_FOCUS_RESERVED.test(value)
+  );
+}
 
 // Provider modules (scripts/providers/contract.mjs). The built-in modules
 // are always known; a profile adds others with providerModules. Each
@@ -1455,25 +1480,44 @@ export function createProcessRunner({
   processWatchIntervalMs = PROCESS_WATCH_INTERVAL_MS,
   processSurvivalTimeoutMs = 2_000,
 } = {}) {
-  let active;
+  // One process at a time. The only exception is a concurrency group
+  // (options.concurrencyGroup, used by the reviewers of review lanes and the
+  // read-only state checks between them): processes of the same group may
+  // run together, never with a process outside it.
+  const active = new Set();
+  let activeGroup;
   let cancelled = false;
   const abortController = new AbortController();
 
-  function stopActive(signal = 'SIGINT') {
-    if (!active) return;
-    killProcessGroup(active.child, signal);
+  function stopEntry(entry, signal = 'SIGINT') {
+    if (!entry) return;
+    killProcessGroup(entry.child, signal);
     if (signal === 'SIGINT') {
-      active.escalationTimers.push(
-        setTimer(() => killProcessGroup(active?.child, 'SIGTERM'), 1_000),
-        setTimer(() => killProcessGroup(active?.child, 'SIGKILL'), 3_000),
+      entry.escalationTimers.push(
+        setTimer(
+          () => active.has(entry) && killProcessGroup(entry.child, 'SIGTERM'),
+          1_000,
+        ),
+        setTimer(
+          () => active.has(entry) && killProcessGroup(entry.child, 'SIGKILL'),
+          3_000,
+        ),
       );
     }
+  }
+
+  function stopActive(signal = 'SIGINT') {
+    for (const entry of active) stopEntry(entry, signal);
   }
 
   return {
     async run(program, args, options = {}) {
       if (cancelled) return interruptionResult(options.stage);
-      if (active) {
+      if (
+        active.size > 0 &&
+        (options.concurrencyGroup === undefined ||
+          options.concurrencyGroup !== activeGroup)
+      ) {
         throw new AgentWorkflowError(
           msg('process.concurrent'),
           { code: 'CONCURRENT_PROCESS', stage: options.stage },
@@ -1507,9 +1551,15 @@ export function createProcessRunner({
             : undefined,
           live: Boolean(options.liveOutput),
         });
+        let entry;
+        const release = () => {
+          for (const timer of entry?.escalationTimers ?? []) clearTimer(timer);
+          active.delete(entry);
+          if (active.size === 0) activeGroup = undefined;
+        };
         const stdoutExact = options.exactStdoutLimitBytes
           ? createExactCollector(options.exactStdoutLimitBytes, () =>
-              stopActive('SIGINT'),
+              stopEntry(entry, 'SIGINT'),
             )
           : undefined;
         let timeoutTimer;
@@ -1520,7 +1570,9 @@ export function createProcessRunner({
           detached: process.platform !== 'win32',
           stdio: ['pipe', 'pipe', 'pipe'],
         });
-        active = { child, escalationTimers: [] };
+        entry = { child, escalationTimers: [] };
+        active.add(entry);
+        activeGroup = options.concurrencyGroup;
 
         child.stdout?.on('data', (chunk) => {
           options.onStdoutChunk?.(chunk.toString());
@@ -1581,15 +1633,14 @@ export function createProcessRunner({
           if (settled) return;
           settled = true;
           if (timeoutTimer) clearTimer(timeoutTimer);
-          for (const timer of active?.escalationTimers ?? []) clearTimer(timer);
-          active = undefined;
+          release();
           rejectPromise(error);
         });
         child.once('close', (code, signal) => {
           if (settled) return;
           settled = true;
           if (timeoutTimer) clearTimer(timeoutTimer);
-          for (const timer of active?.escalationTimers ?? []) clearTimer(timer);
+          for (const timer of entry.escalationTimers) clearTimer(timer);
           const stdout = stdoutExact
             ? stdoutExact.value()
             : stdoutDiagnostic.flush();
@@ -1624,7 +1675,7 @@ export function createProcessRunner({
             resolvePromise(outcome());
           };
           if (!options.killProcessGroupOnExit) {
-            active = undefined;
+            release();
             settle();
             return;
           }
@@ -1633,7 +1684,7 @@ export function createProcessRunner({
           (processCheck ?? Promise.resolve({ status: 'unavailable' }))
             .catch(() => ({ status: 'unavailable' }))
             .then((check) => {
-              active = undefined;
+              release();
               if (check.status === 'clean') {
                 settle();
                 return;
@@ -1665,7 +1716,7 @@ export function createProcessRunner({
         if (options.timeoutMs) {
           timeoutTimer = setTimer(() => {
             timedOut = true;
-            stopActive('SIGINT');
+            stopEntry(entry, 'SIGINT');
           }, options.timeoutMs);
         }
       });
@@ -1680,7 +1731,7 @@ export function createProcessRunner({
       return cancelled;
     },
     hasActiveProcess() {
-      return Boolean(active);
+      return active.size > 0;
     },
     signal: abortController.signal,
   };
@@ -2652,6 +2703,22 @@ async function removeCoreGitIndex(state) {
 async function refreshCoreGitIndex({ state, runner, cwd, stage }) {
   await removeCoreGitIndex(state);
   state.index = await createCoreGitIndex({ runner, cwd, stage });
+}
+
+// The runner whose processes belong to one concurrency group (see
+// createProcessRunner): the processes of review lanes, which may run
+// together but never with a process outside the group.
+function withConcurrencyGroup(runner, group) {
+  return new Proxy(runner, {
+    get(target, key) {
+      if (key === 'run') {
+        return (program, args, options = {}) =>
+          target.run(program, args, { ...options, concurrencyGroup: group });
+      }
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 // The runner with the private index for Git commands that pass no env of
@@ -5124,9 +5191,11 @@ function claudePrompt({
   analysisArtifactPath,
   integrityPath,
   expectedConfirmation,
+  lane,
 }) {
   return buildClaudePrompt({
     locale: currentLocale(),
+    ...(lane === undefined ? {} : { lane: { id: lane.id, focus: lane.focus } }),
     task,
     taskMode: resolveTaskMode(taskMode),
     instructionsPath,
@@ -5245,6 +5314,7 @@ const RUNNER_PROFILE_KEYS = new Set([
   ...Object.keys(DEFAULT_RUNNER_PROFILE),
   'createPresenters',
   'providerModules',
+  'reviewLanes',
 ]);
 
 // The locale of a profile for its messages, read before the profile is
@@ -5708,6 +5778,36 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
     fallbackProfile,
   });
   ROLE_PROVIDERS.set(resolved.reviewer, reviewAdapter);
+
+  // Review lanes: optional, absent from the default profile. Every lane uses
+  // the reviewer's provider; profile names one of its review profiles (the
+  // run's profile without it).
+  if (Object.hasOwn(fields, 'reviewLanes')) {
+    const lanes = list(resolved.reviewLanes);
+    if (lanes.length === 0 || lanes.length > MAX_REVIEW_LANES) invalid();
+    const ids = new Set();
+    resolved.reviewLanes = Object.freeze(
+      lanes.map((value) => {
+        const lane = record(value, REVIEW_LANE_KEYS);
+        if (
+          typeof lane.id !== 'string' ||
+          !REVIEW_LANE_ID.test(lane.id) ||
+          ids.has(lane.id) ||
+          !isReviewLaneFocus(lane.focus) ||
+          (Object.hasOwn(lane, 'profile') &&
+            (typeof lane.profile !== 'string' ||
+              !Object.hasOwn(profiles, lane.profile)))
+        )
+          invalid();
+        ids.add(lane.id);
+        return Object.freeze({
+          id: lane.id,
+          focus: lane.focus,
+          ...(Object.hasOwn(lane, 'profile') ? { profile: lane.profile } : {}),
+        });
+      }),
+    );
+  }
   return Object.freeze(resolved);
 }
 
@@ -6835,6 +6935,36 @@ function assignFindingIds(findings, knownIdentities = new Map()) {
   });
 }
 
+// The findings of review lanes with their ids (assignFindingIds per lane),
+// in the profile's lane order, merged into one list. One findingId is one
+// finding: its severity is the highest any lane gave, its text comes from
+// the first lane in profile order with that severity, and lanes lists every
+// lane that reported it, in profile order. The list keeps the order in
+// which the findings first appear.
+function mergeLaneFindings(laneFindings) {
+  const rank = (severity) => FINDING_SEVERITIES.indexOf(severity);
+  const merged = new Map();
+  for (const { lane, findings } of laneFindings) {
+    for (const finding of findings) {
+      const current = merged.get(finding.findingId);
+      if (!current) {
+        merged.set(finding.findingId, { ...finding, lanes: [lane] });
+        continue;
+      }
+      const lanes = current.lanes.includes(lane)
+        ? current.lanes
+        : [...current.lanes, lane];
+      merged.set(
+        finding.findingId,
+        rank(finding.severity) < rank(current.severity)
+          ? { ...finding, lanes }
+          : { ...current, lanes },
+      );
+    }
+  }
+  return [...merged.values()];
+}
+
 async function saveJson(path, value) {
   const redacted = redactSensitive(JSON.stringify(value, null, 2));
   await writeFile(path, `${redacted}\n`, { mode: 0o600 });
@@ -7062,6 +7192,20 @@ function asWorkflowError(
     redactSensitive(error instanceof Error ? error.message : String(error)),
     { code: fallbackCode, stage },
   );
+}
+
+// The stop of a review lane: the lane's own code, its id in error.lane (the
+// report's lane field) and in the message.
+function reviewLaneFailure(error, lane, fallbackCode = 'CLAUDE_REVIEW_FAILED') {
+  const failure = asWorkflowError(error, fallbackCode, 'reviewer');
+  if (failure.lane === undefined) {
+    failure.lane = lane;
+    failure.message = msg('reviewer.laneFailed', {
+      lane,
+      message: failure.message,
+    });
+  }
+  return failure;
 }
 
 function appendIntegrityViolation(primaryError, integrityError) {
@@ -8048,10 +8192,27 @@ async function runClaudeReview({
   // A provider module from the profile (runClaudeReviewWithPolicy passes it
   // only for providers that are not built in).
   providerModule,
+  // A review lane of the profile ({ id, focus }); checked again here because
+  // its focus goes into the prompt.
+  lane,
   timeoutMs,
   verbose = false,
 }) {
   const selectedTaskMode = resolveTaskMode(taskMode);
+  if (
+    lane !== undefined &&
+    !(
+      isPlainObject(lane) &&
+      typeof lane.id === 'string' &&
+      REVIEW_LANE_ID.test(lane.id) &&
+      isReviewLaneFocus(lane.focus)
+    )
+  ) {
+    throw new AgentWorkflowError(msg('profile.invalid'), {
+      code: 'INVALID_CONFIGURATION',
+      stage: 'reviewer',
+    });
+  }
   // Only a validated reviewer module named by provider is accepted; anything
   // else is INVALID_CONFIGURATION (roleProvider of no section).
   const adapter =
@@ -8108,6 +8269,7 @@ async function runClaudeReview({
         analysisArtifactPath: snapshot.analysisArtifactPath,
         integrityPath: snapshot.integrityPath,
         expectedConfirmation: snapshot.expectedConfirmation,
+        lane,
       }),
       timeoutMs,
       stage: 'reviewer',
@@ -9690,6 +9852,9 @@ async function runWorkflow(options) {
   const responseHistory = [];
   const rounds = [];
   const reviewRuns = [];
+  // With review lanes: one entry per lane and review round
+  // (report.reviewer.lanes).
+  const reviewLaneAudits = [];
   const solRuns = [];
   const analysisArtifacts = [];
   const publicAnalysisArtifacts = () =>
@@ -9749,13 +9914,18 @@ async function runWorkflow(options) {
       reviewer: {
         ...buildReviewerAudit(reviewer.provider, review),
         ...(reviewerWarnings.length > 0 ? { warnings: reviewerWarnings } : {}),
+        ...(reviewLaneAudits.length > 0
+          ? { lanes: reviewLaneAudits.map((entry) => ({ ...entry })) }
+          : {}),
       },
     };
   };
   // Neutral round fields are small pointers to the alias keys that hold the
   // data, so agent outputs are not serialized twice. reviewerOutput: the key
-  // of the reviewer output in the round, or null when no review ran.
-  const roundRoles = (reviewerOutput) => {
+  // of the reviewer output in the round, or null when no review ran;
+  // reviewerExecution: the key of its execution ('reviewLanes' with review
+  // lanes).
+  const roundRoles = (reviewerOutput, reviewerExecution = 'reviewExecution') => {
     const { implementer, reviewer } = roles();
     return {
       implementer: {
@@ -9766,7 +9936,7 @@ async function runWorkflow(options) {
       reviewer: {
         provider: reviewer.provider,
         outputField: reviewerOutput,
-        executionField: 'reviewExecution',
+        executionField: reviewerExecution,
       },
     };
   };
@@ -9999,6 +10169,8 @@ async function runWorkflow(options) {
       provider: implementer.provider,
     };
     const reviewerActor = { actor: 'reviewer', provider: reviewer.provider };
+    // Review lanes of the profile (undefined: a single reviewer).
+    const { reviewLanes } = selectedProfile;
     const cwd = await resolveRepositoryRoot({
       runner,
       repositoryRoot,
@@ -10566,13 +10738,15 @@ async function runWorkflow(options) {
         `post-${fields.phase}`,
       );
     };
-    // The reviewer's attempts of a round, as reviewExecution lists them.
-    const recordReviewAttempts = async (round, execution) => {
+    // The reviewer's attempts of a round, as reviewExecution lists them; with
+    // review lanes, the attempts of one lane (its id in lane).
+    const recordReviewAttempts = async (round, execution, lane) => {
       for (const attempt of execution?.attempts ?? []) {
         await record(
           'review-attempt',
           {
             round,
+            ...(lane === undefined ? {} : { lane }),
             attempt: attempt.attempt,
             model: attempt.requestedModel,
             effort: attempt.requestedEffort,
@@ -10581,6 +10755,234 @@ async function runWorkflow(options) {
           'reviewer',
         );
       }
+    };
+    // Review lanes of a round: the attempts of each lane, then its
+    // review-lane event (the lane's entry of report.reviewer.lanes).
+    const recordReviewLanes = async (lanes) => {
+      for (const { entry, execution } of lanes) {
+        await recordReviewAttempts(entry.round, execution, entry.id);
+        await record('review-lane', { ...entry }, 'reviewer');
+      }
+    };
+    // The review stage with review lanes: one reviewer process per lane, all
+    // started together (Promise.all, at most MAX_REVIEW_LANES) on the same
+    // read-only snapshot, each with the guarantees of a single reviewer
+    // (runClaudeReviewWithPolicy: read-only tools, no session, isolated
+    // environment, model fallback). The snapshot and the working tree are
+    // checked before the stage, before and after every attempt of every
+    // lane (one check at a time) and after the stage. The stage waits for
+    // every lane. Each lane must return a valid result; otherwise the run
+    // stops with the lane's own code and its id (error.lane), a stop that is
+    // not resumable before a resumable one, then the profile's lane order.
+    const runReviewLaneStage = async ({
+      round,
+      snapshot,
+      analysisArtifact,
+      roundDiagnosticLogs,
+      assertStateStillUnchanged,
+      withImplementerStateViolation,
+    }) => {
+      const laneRunner = withConcurrencyGroup(runner, 'review-lanes');
+      const checkReviewState = () =>
+        assertReviewStateUnchanged({
+          runner: laneRunner,
+          repositoryRoot: cwd,
+          branch,
+          head,
+          snapshot,
+          analysisArtifact,
+        });
+      let stateChecks = Promise.resolve();
+      const serialStateCheck = () => {
+        const check = stateChecks.then(checkReviewState);
+        stateChecks = check.catch(() => {});
+        return check;
+      };
+      try {
+        await checkReviewState();
+      } catch (error) {
+        throw await withImplementerStateViolation(
+          asWorkflowError(error, 'INTEGRITY_CHECK_FAILED', 'reviewer'),
+          'post-review',
+        );
+      }
+      const outcomes = await Promise.all(
+        reviewLanes.map(async (lane) => {
+          const startedAt = monotonicNow();
+          const attemptStarts = new Map();
+          let policy;
+          try {
+            policy = resolveReviewProfile(
+              lane.profile ?? reviewPolicy.profile,
+              reviewer,
+            );
+            const stage = (attempt) => ({
+              id: `round-${round}:reviewer:${lane.id}:${attempt.attempt}`,
+              badge: 'CLAUDE',
+              ...reviewerActor,
+              lane: lane.id,
+              label: msg('stage.reviewLaneAttempt', {
+                lane: lane.id,
+                profile: policy.profile,
+                model: attempt.requestedModel,
+                effort: attempt.requestedEffort,
+                attempt: attempt.attempt,
+              }),
+            });
+            const result = await runClaudeReviewWithPolicy({
+              runner: laneRunner,
+              task,
+              taskMode: selectedTaskMode,
+              snapshot,
+              analysisArtifact,
+              timeoutMs: claudeTimeoutMs,
+              verbose,
+              profile: policy.profile,
+              reviewer,
+              reviewAttempt: claudeReview,
+              lane: { id: lane.id, focus: lane.focus },
+              beforeAttempt: serialStateCheck,
+              afterAttempt: serialStateCheck,
+              onAttemptStart: (attempt) => {
+                attemptStarts.set(attempt.attempt, monotonicNow());
+                emit({
+                  type: 'stage:start',
+                  ...stage(attempt),
+                  model: attempt.requestedModel,
+                  effort: attempt.requestedEffort,
+                  attempt: attempt.attempt,
+                  attemptLimit: policy.attempts.length,
+                });
+              },
+              onAttemptEnd: (attempt) => {
+                emit({
+                  type: 'stage:end',
+                  ...stage(attempt),
+                  status:
+                    attempt.status === 'COMPLETED'
+                      ? 'PASS'
+                      : attempt.status === 'FALLBACK_ELIGIBLE'
+                        ? 'FALLBACK'
+                        : 'FAIL',
+                  durationMs:
+                    monotonicNow() -
+                    (attemptStarts.get(attempt.attempt) ?? monotonicNow()),
+                });
+              },
+            });
+            return {
+              lane,
+              policy,
+              result,
+              execution: result.execution,
+              durationMs: monotonicNow() - startedAt,
+            };
+          } catch (error) {
+            return {
+              lane,
+              policy,
+              failure: reviewLaneFailure(error, lane.id),
+              execution: error?.reviewExecution,
+              durationMs: monotonicNow() - startedAt,
+            };
+          }
+        }),
+      );
+      const failures = [];
+      const lanes = [];
+      const entries = [];
+      const recorded = [];
+      for (const outcome of outcomes) {
+        const { lane, execution } = outcome;
+        let review;
+        let status = outcome.failure ? 'FAILED' : 'COMPLETED';
+        if (outcome.failure) {
+          failures.push(outcome.failure);
+        } else {
+          try {
+            review = validateClaudeReview(outcome.result.review, {
+              taskMode: selectedTaskMode,
+              expectedConfirmation: snapshot.expectedConfirmation,
+              analysisHeadings: snapshot.analysisHeadings,
+            });
+            lanes.push({ lane, review, stderr: outcome.result.stderr });
+          } catch (error) {
+            status = 'INVALID';
+            failures.push(
+              reviewLaneFailure(error, lane.id, 'INVALID_AGENT_OUTPUT'),
+            );
+          }
+        }
+        const lastAttempt = execution?.attempts?.at(-1);
+        const entry = {
+          round,
+          id: lane.id,
+          provider: reviewer.provider,
+          profile: outcome.policy?.profile ?? lane.profile ?? null,
+          model:
+            execution?.completed?.model ?? lastAttempt?.requestedModel ?? null,
+          effort:
+            execution?.completed?.effort ??
+            lastAttempt?.requestedEffort ??
+            null,
+          status,
+          findingCount: review ? review.findings.length : null,
+          durationMs: Math.max(0, Math.round(outcome.durationMs)),
+        };
+        reviewLaneAudits.push(entry);
+        if (execution) reviewRuns.push({ ...execution, lane: lane.id });
+        entries.push({ ...entry, execution: execution ?? null });
+        recorded.push({ entry, execution });
+      }
+      // After the stage, the lanes' failures first.
+      try {
+        await checkReviewState();
+      } catch (error) {
+        failures.push(asWorkflowError(error, 'INTEGRITY_CHECK_FAILED', 'reviewer'));
+      }
+      if (failures.length > 0) {
+        // The stop is recorded next; a failed write here leaves the lanes'
+        // stop code (the report then carries a warning).
+        await recordReviewLanes(recorded).catch(() => {});
+        const primary =
+          failures.find((failure) => !isResumableStop(failure)) ?? failures[0];
+        throw await withImplementerStateViolation(primary, 'post-review');
+      }
+      await recordReviewLanes(recorded);
+      // The same checks as after a single review, before the final report or
+      // the next round's baseline.
+      await assertStateStillUnchanged('post-review');
+      for (const { lane, stderr } of lanes) {
+        const log = await saveDiagnosticLog({
+          runDirectory,
+          relativePath: join('logs', `round-${round}-claude-${lane.id}.log`),
+          label: msg('log.reviewerLaneRound', { round, lane: lane.id }),
+          stderr,
+          stage: 'reviewer',
+        });
+        diagnosticLogs.push(log);
+        roundDiagnosticLogs.push(log);
+      }
+      // The merged result: REQUEST_CHANGES unless every lane approved; the
+      // checks of every lane with its id; findings are merged by the caller.
+      const [first] = lanes;
+      return {
+        lanes,
+        entries,
+        review: {
+          verdict: lanes.every(({ review }) => review.verdict === 'APPROVE')
+            ? 'APPROVE'
+            : 'REQUEST_CHANGES',
+          findings: [],
+          checks: lanes.flatMap(({ lane, review }) =>
+            review.checks.map((check) => `${lane.id}: ${check}`),
+          ),
+          confirmedNoChanges: true,
+          ...(selectedTaskMode === 'analysis'
+            ? { reviewConfirmation: first.review.reviewConfirmation }
+            : {}),
+        },
+      };
     };
 
     for (let round = startRound; round <= roundLimit; round += 1) {
@@ -11234,109 +11636,128 @@ async function runWorkflow(options) {
         status: 'PASS',
         durationMs: monotonicNow() - snapshotStartedAt,
       });
-      const attemptStarts = new Map();
       let claudeResult;
-      try {
-        claudeResult = await runClaudeReviewWithPolicy({
-          runner,
-          task,
-          taskMode: selectedTaskMode,
+      let validatedClaudeReview;
+      // With review lanes: the validated result of each lane, in profile
+      // order, and the lanes' entries of the round report.
+      let laneStage;
+      if (reviewLanes) {
+        laneStage = await runReviewLaneStage({
+          round,
           snapshot,
           analysisArtifact,
-          timeoutMs: claudeTimeoutMs,
-          verbose,
-          profile: reviewPolicy.profile,
-          reviewer,
-          reviewAttempt: claudeReview,
-          beforeAttempt: () =>
-            assertReviewStateUnchanged({
-              runner,
-              repositoryRoot: cwd,
-              branch,
-              head,
-              snapshot,
-              analysisArtifact,
-            }),
-          afterAttempt: () =>
-            assertReviewStateUnchanged({
-              runner,
-              repositoryRoot: cwd,
-              branch,
-              head,
-              snapshot,
-              analysisArtifact,
-            }),
-          onAttemptStart: (attempt) => {
-            const id = `round-${round}:reviewer:${attempt.attempt}`;
-            attemptStarts.set(attempt.attempt, monotonicNow());
-            emit({
-              type: 'stage:start',
-              id,
-              badge: 'CLAUDE',
-              ...reviewerActor,
-              model: attempt.requestedModel,
-              effort: attempt.requestedEffort,
-              attempt: attempt.attempt,
-              attemptLimit: reviewPolicy.attempts.length,
-              label: msg('stage.reviewAttempt', {
-                profile: reviewPolicy.profile,
-                model: attempt.requestedModel,
-                effort: attempt.requestedEffort,
-                attempt: attempt.attempt,
-              }),
-            });
-          },
-          onAttemptEnd: (attempt) => {
-            const id = `round-${round}:reviewer:${attempt.attempt}`;
-            emit({
-              type: 'stage:end',
-              id,
-              badge: 'CLAUDE',
-              ...reviewerActor,
-              label: msg('stage.reviewAttempt', {
-                profile: reviewPolicy.profile,
-                model: attempt.requestedModel,
-                effort: attempt.requestedEffort,
-                attempt: attempt.attempt,
-              }),
-              status:
-                attempt.status === 'COMPLETED'
-                  ? 'PASS'
-                  : attempt.status === 'FALLBACK_ELIGIBLE'
-                    ? 'FALLBACK'
-                    : 'FAIL',
-              durationMs:
-                monotonicNow() -
-                (attemptStarts.get(attempt.attempt) ?? monotonicNow()),
-            });
-          },
+          roundDiagnosticLogs,
+          assertStateStillUnchanged,
+          withImplementerStateViolation,
         });
-        reviewRuns.push(claudeResult.execution);
-      } catch (error) {
-        if (error?.reviewExecution) reviewRuns.push(error.reviewExecution);
-        // The stop is recorded next; a failed write here leaves the review's
-        // error the stop code (the report then carries a warning).
-        await recordReviewAttempts(round, error?.reviewExecution).catch(() => {});
-        throw await withImplementerStateViolation(error, 'post-review');
+        claudeResult = {};
+        validatedClaudeReview = laneStage.review;
+      } else {
+        const attemptStarts = new Map();
+        try {
+          claudeResult = await runClaudeReviewWithPolicy({
+            runner,
+            task,
+            taskMode: selectedTaskMode,
+            snapshot,
+            analysisArtifact,
+            timeoutMs: claudeTimeoutMs,
+            verbose,
+            profile: reviewPolicy.profile,
+            reviewer,
+            reviewAttempt: claudeReview,
+            beforeAttempt: () =>
+              assertReviewStateUnchanged({
+                runner,
+                repositoryRoot: cwd,
+                branch,
+                head,
+                snapshot,
+                analysisArtifact,
+              }),
+            afterAttempt: () =>
+              assertReviewStateUnchanged({
+                runner,
+                repositoryRoot: cwd,
+                branch,
+                head,
+                snapshot,
+                analysisArtifact,
+              }),
+            onAttemptStart: (attempt) => {
+              const id = `round-${round}:reviewer:${attempt.attempt}`;
+              attemptStarts.set(attempt.attempt, monotonicNow());
+              emit({
+                type: 'stage:start',
+                id,
+                badge: 'CLAUDE',
+                ...reviewerActor,
+                model: attempt.requestedModel,
+                effort: attempt.requestedEffort,
+                attempt: attempt.attempt,
+                attemptLimit: reviewPolicy.attempts.length,
+                label: msg('stage.reviewAttempt', {
+                  profile: reviewPolicy.profile,
+                  model: attempt.requestedModel,
+                  effort: attempt.requestedEffort,
+                  attempt: attempt.attempt,
+                }),
+              });
+            },
+            onAttemptEnd: (attempt) => {
+              const id = `round-${round}:reviewer:${attempt.attempt}`;
+              emit({
+                type: 'stage:end',
+                id,
+                badge: 'CLAUDE',
+                ...reviewerActor,
+                label: msg('stage.reviewAttempt', {
+                  profile: reviewPolicy.profile,
+                  model: attempt.requestedModel,
+                  effort: attempt.requestedEffort,
+                  attempt: attempt.attempt,
+                }),
+                status:
+                  attempt.status === 'COMPLETED'
+                    ? 'PASS'
+                    : attempt.status === 'FALLBACK_ELIGIBLE'
+                      ? 'FALLBACK'
+                      : 'FAIL',
+                durationMs:
+                  monotonicNow() -
+                  (attemptStarts.get(attempt.attempt) ?? monotonicNow()),
+              });
+            },
+          });
+          reviewRuns.push(claudeResult.execution);
+        } catch (error) {
+          if (error?.reviewExecution) reviewRuns.push(error.reviewExecution);
+          // The stop is recorded next; a failed write here leaves the review's
+          // error the stop code (the report then carries a warning).
+          await recordReviewAttempts(round, error?.reviewExecution).catch(
+            () => {},
+          );
+          throw await withImplementerStateViolation(error, 'post-review');
+        }
+        await recordReviewAttempts(round, claudeResult.execution);
+        // The same checks again after the review, before the final report or
+        // the next round's baseline.
+        await assertStateStillUnchanged('post-review');
+        const claudeLog = await saveDiagnosticLog({
+          runDirectory,
+          relativePath: join('logs', `round-${round}-claude.log`),
+          label: msg('log.reviewerRound', { round }),
+          stderr: claudeResult.stderr,
+          stage: 'reviewer',
+        });
+        diagnosticLogs.push(claudeLog);
+        roundDiagnosticLogs.push(claudeLog);
+        validatedClaudeReview = validateClaudeReview(claudeResult.review, {
+          taskMode: selectedTaskMode,
+          expectedConfirmation: snapshot.expectedConfirmation,
+          analysisHeadings: snapshot.analysisHeadings,
+        });
       }
-      await recordReviewAttempts(round, claudeResult.execution);
-      // The same checks again after the review, before the final report or the next
-      // round's baseline.
-      await assertStateStillUnchanged('post-review');
-      const claudeLog = await saveDiagnosticLog({
-        runDirectory,
-        relativePath: join('logs', `round-${round}-claude.log`),
-        label: msg('log.reviewerRound', { round }),
-        stderr: claudeResult.stderr,
-        stage: 'reviewer',
-      });
-      diagnosticLogs.push(claudeLog);
-      roundDiagnosticLogs.push(claudeLog);
-      const validatedClaudeReview = validateClaudeReview(claudeResult.review, {
-        taskMode: selectedTaskMode,
-        expectedConfirmation: snapshot.expectedConfirmation,
-        analysisHeadings: snapshot.analysisHeadings,
-      });
       if (selectedTaskMode === 'analysis') {
         integrityReport = createAnalysisIntegrityReport({ postReview: true });
         validateAnalysisIntegrityReport(integrityReport, { postReview: true });
@@ -11352,10 +11773,30 @@ async function runWorkflow(options) {
           'analysis',
         );
       }
-      const reviewedFindings = assignFindingIds(
-        validatedClaudeReview.findings,
-        knownFindingIdentities,
-      );
+      // With review lanes, every lane's findings get their ids against the
+      // same known identities (a collision with an earlier round or another
+      // lane stops the run; a repeated identity within one lane is
+      // ambiguous), then one findingId is one finding (mergeLaneFindings).
+      const reviewedFindings = laneStage
+        ? mergeLaneFindings(
+            laneStage.lanes.map(({ lane, review }) => {
+              try {
+                return {
+                  lane: lane.id,
+                  findings: assignFindingIds(
+                    review.findings,
+                    knownFindingIdentities,
+                  ),
+                };
+              } catch (error) {
+                throw reviewLaneFailure(error, lane.id);
+              }
+            }),
+          )
+        : assignFindingIds(
+            validatedClaudeReview.findings,
+            knownFindingIdentities,
+          );
       claudeResult.review = {
         ...validatedClaudeReview,
         findings: reviewedFindings,
@@ -11379,8 +11820,12 @@ async function runWorkflow(options) {
             }),
         snapshot: snapshotSummary,
         claude: claudeResult.review,
-        reviewExecution: claudeResult.execution,
-        ...roundRoles('claude'),
+        // With review lanes: claude is the merged result and reviewLanes
+        // holds each lane's execution (reviewer.executionField).
+        ...(laneStage
+          ? { reviewLanes: laneStage.entries }
+          : { reviewExecution: claudeResult.execution }),
+        ...roundRoles('claude', laneStage ? 'reviewLanes' : undefined),
         diagnostics: roundDiagnosticLogs,
       };
       rounds.push(roundReport);
@@ -11587,6 +12032,8 @@ async function runWorkflow(options) {
       durationMs: Math.max(0, Math.round(monotonicNow() - workflowStartedAt)),
       code: normalized.code,
       stage: normalized.stage,
+      // The review lane whose result was missing or invalid.
+      ...(typeof normalized.lane === 'string' ? { lane: normalized.lane } : {}),
       error: boundedUtf8(redactSensitive(normalized.message), 1_000),
       resume:
         normalized.resume ??
@@ -11712,6 +12159,7 @@ async function runWorkflow(options) {
           {
             code: normalized.code,
             stage: normalized.stage ?? null,
+            ...(report.lane === undefined ? {} : { lane: report.lane }),
             ...(report.checkpoint
               ? { resumable: report.checkpoint.resumable }
               : {}),
@@ -11907,6 +12355,8 @@ export const internal = {
   findingFingerprint,
   findingIdFor,
   assignFindingIds,
+  mergeLaneFindings,
+  isReviewLaneFocus,
   fullDiff,
   isDependencyInputPath,
   listRepositoryPaths,

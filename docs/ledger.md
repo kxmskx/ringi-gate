@@ -53,14 +53,18 @@ or paths outside the repository.
 | `gate` | after each gate | `round`, `index`, `name`, `passed` |
 | `integrity` | analysis mode, before and after the review | `round`, `checks` (`name`, `status`) |
 | `snapshot` | after the reviewer's snapshot | `round` and the round's `snapshot` field of the report (counts and hashes) |
-| `review-attempt` | after the review, per attempt | `round`, `attempt`, `model`, `effort`, `status` |
+| `review-attempt` | after the review, per attempt | `round`, `lane` (with [review lanes](profile.md#reviewlanes) only), `attempt`, `model`, `effort`, `status` |
+| `review-lane` | with review lanes, after each lane's attempts | the lane's entry of `report.reviewer.lanes`: `round`, `id`, `provider`, `profile`, `model`, `effort`, `status`, `findingCount`, `durationMs` |
 | `findings` | after the review | `round`, `verdict`, `findings` (`findingId`, `severity`), `unresolved` (finding ids) |
 | `checkpoint` | after each checkpoint (`--checkpoint`, `--resume`) | `path`, `phase`, `round` |
-| `stop` | a stopped run | `code`, `stage`, `resumable` (only with checkpoints), `integrityViolations` (count) |
+| `stop` | a stopped run | `code`, `stage`, `lane` (only when a review lane stopped the run), `resumable` (only with checkpoints), `integrityViolations` (count) |
 | `result` | last event | `status`, `rounds`, `publicationApproved` (`false`) |
 
 After `CLEANUP_FAILED` at the end of an approved run, a `stop` and a new
 `result` follow the approved result.
+
+The `review-lane` event is new while `ledgerVersion` stays the same: a
+`ringi verify` older than review lanes rejects a ledger that has it.
 
 ## Key and `mac`
 

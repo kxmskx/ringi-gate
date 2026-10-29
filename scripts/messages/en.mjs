@@ -16,6 +16,7 @@ export default Object.freeze({
   'log.saveFailed': 'Cannot save the bounded diagnostic log: {detail}',
   'log.implementerRound': 'IMPLEMENTER round {round}',
   'log.reviewerRound': 'REVIEWER round {round}',
+  'log.reviewerLaneRound': 'REVIEWER lane {lane} round {round}',
   'summary.truncated': '…[summary truncated]…',
 
   'process.interrupted': 'Stage {stage} interrupted by Ctrl+C.',
@@ -312,6 +313,7 @@ export default Object.freeze({
   'reviewer.invalidModel': 'Reviewer model {model} is invalid.',
   'reviewer.reviewFailed': 'The reviewer did not complete the review',
   'reviewer.fallbackFailed': 'The reviewer fallback did not complete the review.',
+  'reviewer.laneFailed': 'Review lane {lane}: {message}',
 
   'finding.identityCollision': 'Stable identity collision: {findingId}.',
   'finding.identityDuplicate': 'The review contains an ambiguously duplicated identity {findingId}.',
@@ -399,6 +401,8 @@ export default Object.freeze({
   'stage.analysisPackage': 'Minimal read-only analysis package',
   'stage.isolatedCopy': 'Isolated read-only copy',
   'stage.reviewAttempt': 'Review {profile} · {model} · effort {effort} · attempt {attempt}',
+  'stage.reviewLaneAttempt':
+    'Review lane {lane} · {profile} · {model} · effort {effort} · attempt {attempt}',
 
   'plan.analysisWriter': 'writer: full read-only analysis',
   'plan.analysisIntegrity': 'internal integrity checks',

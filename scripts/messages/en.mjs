@@ -334,6 +334,8 @@ export default Object.freeze({
   'repo.pathEscape': 'A repository path is outside the root.',
   'repo.linkAbsolute': 'Symbolic link {path} has an absolute target.',
   'repo.linkEscape': 'Symbolic link {path} points outside the repository.',
+  'repo.linkParent':
+    'Path {path} passes through symbolic link {link}. Only the last part of a path may be a symbolic link.',
   'repo.reviewContextReserved':
     'Path {path} uses .review-context, a name reserved for the review context of the snapshot.',
   'repo.unsupportedEntry': 'Unsupported entry type {path}.',

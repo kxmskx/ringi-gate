@@ -114,8 +114,28 @@ is published by hand, without provenance; later versions are published by
   `node_modules`) stops the run with `PATH_ESCAPE` before any snapshot or
   reviewer, in implementation, analysis and review-only runs and after a
   resume. The runner creates the context directory and each context file
-  only as new entries and never through a symbolic link. A repository
-  without `.review-context` runs as before.
+  only as new entries and never through a symbolic link (the context
+  directory and its files; repository paths follow the next entry). A
+  repository without `.review-context` runs as before.
+- Symbolic links in the repository could reach outside it. Earlier versions
+  checked a link's target only by its text and read repository paths
+  through linked parent directories, so a link (for example a chain such as
+  `p -> .` and `a -> p/..`) or a tracked directory replaced by a link could
+  bring a file from outside the repository into the reviewer's snapshot, and
+  copying the snapshot could write outside it. Now a manifest entry whose
+  parent directory is a symbolic link, or a link whose resolved target is
+  outside the repository, stops the run with `SYMLINK_ESCAPE`. The target
+  is resolved through every link on its way, so a dangling link or a loop
+  in such a chain stops the run too. The snapshot creates directories one
+  segment at a time, copies files with `COPYFILE_EXCL` and creates links
+  after every file. `AGENTS.md` and `CLAUDE.md` pass the same check before
+  they are read. Links that stay inside the repository work as before,
+  including a plain dangling link such as `a -> missing`, with these
+  changes: a tracked file whose parent directory is now a symbolic link
+  stops the run even when the link points inside the repository, and so do
+  a loop of links (`a -> b`, `b -> a`), a link whose chain passes through a
+  dangling link (`a -> d/x`, `d -> missing`) and a link whose target climbs
+  with `..` after a missing segment.
 
 ## 0.2.4 — 2026-10-28
 

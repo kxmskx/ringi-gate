@@ -6293,6 +6293,47 @@ async function listRepositoryPaths(runner, cwd, stage) {
   return paths;
 }
 
+// Resolves a link target segment by segment from the link's real directory,
+// following each existing link with realpath and the missing rest lexically.
+// undefined when a link on the way cannot be resolved (a loop or a dangling
+// link), so the caller refuses it.
+async function resolveLinkTarget(directory, target) {
+  let current = await realpath(directory);
+  const segments = target.split('/');
+  for (const [index, segment] of segments.entries()) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      current = dirname(current);
+      continue;
+    }
+    const next = join(current, segment);
+    const metadata = await lstat(next).catch((error) => {
+      if (['ENOENT', 'ENOTDIR'].includes(error?.code)) return undefined;
+      throw error;
+    });
+    if (!metadata) {
+      // Nothing under a missing segment can be a link, but a '..' after it
+      // would climb again; such a target is refused rather than guessed.
+      const rest = segments.slice(index + 1);
+      if (rest.includes('..')) return undefined;
+      return resolve(next, ...rest);
+    }
+    if (metadata.isSymbolicLink()) {
+      const linked = await realpath(next).catch((error) => {
+        if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error?.code)) {
+          return undefined;
+        }
+        throw error;
+      });
+      if (linked === undefined) return undefined;
+      current = linked;
+    } else {
+      current = next;
+    }
+  }
+  return current;
+}
+
 async function inspectRepositoryPath(root, path) {
   if (isAbsolute(path)) {
     throw new AgentWorkflowError(msg('repo.absolutePath'), {
@@ -6306,6 +6347,27 @@ async function inspectRepositoryPath(root, path) {
       code: 'PATH_ESCAPE',
       stage: 'snapshot',
     });
+  }
+  // lstat and readFile follow symbolic links in the parent directories, so
+  // no parent of the path may be one.
+  const segments = path.split('/');
+  let parent = root;
+  for (const segment of segments.slice(0, -1)) {
+    parent = join(parent, segment);
+    const parentMetadata = await lstat(parent).catch((error) => {
+      if (error?.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!parentMetadata) return { path, type: 'missing', size: 0, hash: null };
+    if (parentMetadata.isSymbolicLink()) {
+      throw new AgentWorkflowError(
+        msg('repo.linkParent', {
+          path: JSON.stringify(path),
+          link: JSON.stringify(relative(root, parent).split(sep).join('/')),
+        }),
+        { code: 'SYMLINK_ESCAPE', stage: 'snapshot' },
+      );
+    }
   }
   const metadata = await lstat(absolute).catch((error) => {
     if (error?.code === 'ENOENT') return undefined;
@@ -6324,7 +6386,15 @@ async function inspectRepositoryPath(root, path) {
       );
     }
     const targetAbsolute = resolve(dirname(absolute), target);
-    if (!pathIsInside(root, targetAbsolute)) {
+    // The lexical check misses chains such as q/r/p -> .. and
+    // a -> q/r/p/../../x; the target resolved through the links on its way
+    // must also stay inside the root, whether it exists or not.
+    const targetReal = await resolveLinkTarget(dirname(absolute), target);
+    if (
+      !pathIsInside(root, targetAbsolute) ||
+      targetReal === undefined ||
+      !pathIsInside(await realpath(root), targetReal)
+    ) {
       throw new AgentWorkflowError(
         msg('repo.linkEscape', { path: JSON.stringify(path) }),
         { code: 'SYMLINK_ESCAPE', stage: 'snapshot' },
@@ -6621,26 +6691,67 @@ async function copyManifestToSnapshot({
   targetRoot,
   runner,
 }) {
-  const copiedEntries = [];
-  for (const entry of manifest.entries) {
+  const copiedEntries = [...manifest.entries];
+  const links = [];
+  // Symbolic links come last, so no file or directory is written through one.
+  for (const [index, entry] of manifest.entries.entries()) {
     assertNotCancelled(runner, 'snapshot');
-    if (entry.type === 'missing') {
-      copiedEntries.push(entry);
+    if (entry.type === 'missing') continue;
+    if (entry.type === 'symlink') {
+      links.push(index);
       continue;
     }
     const source = resolve(sourceRoot, entry.path);
-    const target = resolve(targetRoot, entry.path);
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    if (entry.type === 'symlink') {
-      await symlink(entry.target, target);
-    } else {
-      await copyFile(source, target);
-      await chmod(target, entry.executable ? 0o700 : 0o600);
-    }
-    const copied = await inspectRepositoryPath(targetRoot, entry.path);
-    copiedEntries.push(copied);
+    const target = await snapshotEntryTarget(targetRoot, entry.path);
+    await copyFile(source, target, fsConstants.COPYFILE_EXCL);
+    await chmod(target, entry.executable ? 0o700 : 0o600);
+    copiedEntries[index] = await inspectRepositoryPath(targetRoot, entry.path);
+  }
+  for (const index of links) {
+    assertNotCancelled(runner, 'snapshot');
+    const entry = manifest.entries[index];
+    await symlink(
+      entry.target,
+      await snapshotEntryTarget(targetRoot, entry.path),
+    );
+  }
+  for (const index of links) {
+    copiedEntries[index] = await inspectRepositoryPath(
+      targetRoot,
+      manifest.entries[index].path,
+    );
   }
   return manifestHash(copiedEntries);
+}
+
+// Creates the parent directories of a snapshot entry one at a time and
+// stops if any of them is not a real directory.
+async function snapshotEntryTarget(targetRoot, path) {
+  const segments = path.split('/');
+  let directory = targetRoot;
+  for (const segment of segments.slice(0, -1)) {
+    directory = join(directory, segment);
+    await mkdir(directory, { mode: 0o700 }).catch((error) => {
+      if (error?.code !== 'EEXIST') throw error;
+    });
+    if (!(await lstat(directory)).isDirectory()) {
+      throw new AgentWorkflowError(
+        msg('repo.linkParent', {
+          path: JSON.stringify(path),
+          link: JSON.stringify(relative(targetRoot, directory).split(sep).join('/')),
+        }),
+        { code: 'SYMLINK_ESCAPE', stage: 'snapshot' },
+      );
+    }
+  }
+  const target = join(directory, segments.at(-1));
+  if (!pathIsInside(targetRoot, target)) {
+    throw new AgentWorkflowError(msg('repo.pathEscape'), {
+      code: 'PATH_ESCAPE',
+      stage: 'snapshot',
+    });
+  }
+  return target;
 }
 
 async function makeReadOnly(path) {
@@ -10680,6 +10791,14 @@ async function runWorkflow(options) {
       implementer: environment.implementer.warnings,
       reviewer: environment.reviewer.warnings,
     };
+    // The instructions follow an in-repository link (CLAUDE.md -> AGENTS.md)
+    // but never one that leaves the repository or a linked parent.
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+      await inspectRepositoryPath(cwd, name).catch((error) => {
+        if (error instanceof AgentWorkflowError) error.stage = 'preflight';
+        throw error;
+      });
+    }
     const repositoryInstructions = `${await readFile(join(cwd, 'AGENTS.md'), 'utf8')}\n\n${await readFile(join(cwd, 'CLAUDE.md'), 'utf8')}`;
     tempRoot = await mkdtemp(
       join(tmpdir(), `${selectedProfile.tempPrefix}${runId}-`),
@@ -12821,6 +12940,7 @@ export const internal = {
   allowedPnpmInvocations,
   parsePinnedPnpmSpecification,
   readRepositoryManifest,
+  copyManifestToSnapshot,
   createReviewContextDirectory,
   writeReviewContextFile,
   readAnalysisMutationFingerprint,

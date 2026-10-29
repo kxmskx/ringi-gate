@@ -39,6 +39,14 @@ export default Object.freeze({
   'run.interrupted': 'Workflow interrupted by Ctrl+C.',
   'run.maxRounds':
     'The limit of {maxRounds} rounds was reached with open findings. A human decides.',
+  'run.reviewOnlyFindings':
+    'The review-only run ended with {count} open findings. No writer corrects them: a human decides.',
+  'run.reviewOnlyTaskMode':
+    'A review-only run reviews an implementation candidate; the analysis mode is not available.',
+  'run.reviewOnlyNoChanges':
+    'A review-only run needs uncommitted changes relative to HEAD other than the task file; the working tree has none.',
+  'run.reviewOnlyClass':
+    'Task class {taskClass} skips the independent review; a review-only run needs a class with review.',
   'run.resume':
     "Fix the cause, check the working tree and run the task again. The workflow does not revert the writer's changes.",
   'cleanup.failed': 'Cleanup failed: {detail}',
@@ -368,6 +376,8 @@ export default Object.freeze({
   'plan.implementationReview': 'reviewer: diff-first review',
   'plan.implementationCorrection': 'writer correction after every BLOCKER/HIGH/MEDIUM/LOW finding',
   'plan.noMutations': 'none',
+  'plan.reviewOnlyInput': 'no writer: the uncommitted changes relative to HEAD are the candidate',
+  'plan.reviewOnlyFindings': 'no correction round: any finding stops the run for a human decision',
 
   'report.docsApproval':
     'APPROVE means the required docs checks ran; independent review is NOT_REQUIRED.',
@@ -429,6 +439,8 @@ export default Object.freeze({
     'The {option} option and its deprecated alias {alias} cannot be given together.',
   'cli.unknownOption': 'Unknown option: {option}',
   'cli.oneTaskPath': 'Exactly one task path is required.',
+  'cli.reviewOnlyTaskMode': 'The --review-only option works only with --task-mode implementation.',
+  'cli.reviewOnlyImplementer': 'The {option} option cannot be given with --review-only: no writer runs.',
   'cli.usage':
     'Usage: pnpm agents:run -- path/to/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':

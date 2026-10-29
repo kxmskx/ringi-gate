@@ -320,6 +320,11 @@ options: `--task-mode`, `--review-profile`, `--implementer-model`,
 `--implementer-effort`, `--verbose`, `--no-animation`, `--json`.
 `--codex-model` and `--sol-effort` are deprecated aliases of
 `--implementer-model` and `--implementer-effort`.
+`--review-only` sends a change already in the working tree (uncommitted,
+nothing staged) through the gates and a single independent review without
+starting the writer, for a change written by hand or a second opinion; any
+finding stops the run for a human decision (see
+[docs/cli.md](docs/cli.md#review-only)).
 
 The earlier entry point still works:
 `node scripts/agent-review-loop.mjs path/to/task.md` runs on the repository

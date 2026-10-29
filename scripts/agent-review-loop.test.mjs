@@ -23530,8 +23530,11 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // cli.missingValue, process.inputNotRead, label.reviewerOutput,
   // label.reviewerFinding, cli.optionAliasConflict,
   // preflight.reviewerUnsupportedVersion, preflight.reviewerUnsupportedPlatform,
-  // preflight.reviewerRefused.
-  assert.equal(keys.length, 352);
+  // preflight.reviewerRefused; review only: run.reviewOnlyFindings,
+  // run.reviewOnlyTaskMode, run.reviewOnlyNoChanges, run.reviewOnlyClass,
+  // plan.reviewOnlyInput, plan.reviewOnlyFindings, cli.reviewOnlyTaskMode,
+  // cli.reviewOnlyImplementer.
+  assert.equal(keys.length, 360);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -24897,6 +24900,410 @@ test('sandbox check: a codex round without a sandbox stops before the implemente
     // The guard directory is read-only.
     await chmod(join(tempRoot, 'guard-bin'), 0o700).catch(() => {});
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+// Review only (--review-only): no writer; the uncommitted changes relative
+// to HEAD are the candidate of a single review round.
+async function runReviewOnlyFixture(directory, overrides = {}) {
+  let claudeCalls = 0;
+  const result = await runFixture(directory, {
+    ...overrides,
+    codexRound: async () => {
+      throw new Error('Review only must never start the writer');
+    },
+    claudeReview: async (...args) => {
+      claudeCalls += 1;
+      return (overrides.claudeReview ?? approveReview)(...args);
+    },
+    workflow: { reviewOnly: true, ...overrides.workflow },
+  });
+  return { ...result, claudeCalls };
+}
+
+const writerProcessCalls = (runner) =>
+  runner.calls.filter(({ program }) => program === 'codex');
+
+async function rejectsReviewOnly(directory, overrides, expected) {
+  const runner = overrides.runner ?? createMockRunner();
+  let claudeCalls = 0;
+  await assert.rejects(
+    runReviewOnlyFixture(directory, {
+      ...overrides,
+      runner,
+      claudeReview: async (...args) => {
+        claudeCalls += 1;
+        return (overrides.claudeReview ?? approveReview)(...args);
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, expected.code);
+      assert.equal(error.report.code, expected.code);
+      assert.equal(error.report.stage, expected.stage);
+      assert.equal(error.report.status, 'STOPPED');
+      assert.equal(error.report.runMode, 'review-only');
+      assert.equal(error.report.schemaVersion, 1);
+      assert.equal(error.report.publicationApproved, false);
+      expected.assert?.(error.report);
+      return true;
+    },
+  );
+  assert.deepEqual(writerProcessCalls(runner), []);
+  assert.equal(runner.sandboxChecks.length, 0);
+  return { runner, claudeCalls };
+}
+
+test('review only: the uncommitted changes pass the gates and one review; APPROVE without the writer', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    await writeFile(join(directory, 'baseline.txt'), 'baseline changed\n');
+    const events = [];
+    let snapshotOptions;
+    const { report, runner, claudeCalls } = await runReviewOnlyFixture(
+      directory,
+      {
+        createSnapshot: async (options) => {
+          snapshotOptions = options;
+          return fakeSnapshot(options);
+        },
+        workflow: { onEvent: (event) => events.push(event) },
+      },
+    );
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.runMode, 'review-only');
+    assert.equal(report.taskMode, 'implementation');
+    assert.equal(report.publicationApproved, false);
+    assert.equal(claudeCalls, 1);
+    assert.deepEqual(writerProcessCalls(runner), []);
+    assert.equal(runner.sandboxChecks.length, 0);
+    assert.equal(report.rounds.length, 1);
+    const [round] = report.rounds;
+    assert.equal(Object.hasOwn(round, 'codex'), false);
+    assert.equal(Object.hasOwn(round, 'solExecution'), false);
+    assert.equal(round.implementer.outputField, null);
+    assert.equal(round.implementer.executionField, null);
+    assert.equal(round.reviewer.outputField, 'claude');
+    assert.equal(round.claude.verdict, 'APPROVE');
+    assert.deepEqual(
+      round.gates.gates.map(({ name }) => name),
+      report.quality.effectiveGates,
+    );
+    assert.equal(report.implementer.status, 'NOT_RUN');
+    assert.equal(report.implementer.attemptCount, 0);
+    assert.deepEqual(report.implementer.runs, []);
+    assert.deepEqual(report.sol.runs, []);
+    assert.equal(report.reviewer.attemptCount, 1);
+    assert.equal(report.findingPolicy.satisfied, true);
+    assert.deepEqual(snapshotOptions.findingResponses, []);
+    assert.equal(events.some(({ badge }) => badge === 'SOL'), false);
+    assert.equal(
+      events.find(({ type }) => type === 'metadata').runMode,
+      'review-only',
+    );
+    assert.equal(events.find(({ type }) => type === 'round:start').maxRounds, 1);
+    assert.equal(
+      await readFile(join(directory, 'implementation.txt'), 'utf8'),
+      'written by hand\n',
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: a run without the option has no runMode and still runs the writer', async () => {
+  const directory = await createRepository();
+  try {
+    const { report, codexCalls } = await runFixture(directory);
+    assert.equal(report.status, 'APPROVE');
+    assert.equal(codexCalls, 1);
+    assert.equal(Object.hasOwn(report, 'runMode'), false);
+    assert.equal(Object.hasOwn(report.implementer, 'status'), false);
+    assert.equal(report.rounds[0].implementer.outputField, 'codex');
+    assert.equal(report.rounds[0].implementer.executionField, 'solExecution');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: findings stop with HUMAN_DECISION_REQUIRED after one review, with the full finding state', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    const { claudeCalls } = await rejectsReviewOnly(
+      directory,
+      { claudeReview: async () => requestChanges(1) },
+      {
+        code: 'HUMAN_DECISION_REQUIRED',
+        stage: 'reviewer',
+        assert(report) {
+          assert.equal(report.rounds.length, 1);
+          assert.equal(Object.hasOwn(report.rounds[0], 'codex'), false);
+          assert.equal(report.implementer.status, 'NOT_RUN');
+          const [unresolved] = report.findings.unresolved;
+          assert.equal(report.findings.unresolved.length, 1);
+          assert.match(unresolved.findingId, /\S/);
+          assert.equal(unresolved.finding.severity, 'HIGH');
+          assert.equal(unresolved.finding.findingId, unresolved.findingId);
+          assert.equal(report.findingPolicy.unresolved.HIGH, 1);
+          assert.equal(report.findingPolicy.satisfied, false);
+        },
+      },
+    );
+    assert.equal(claudeCalls, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: no change other than the task file stops with INVALID_TASK before the gates', async () => {
+  for (const changeTask of [false, true]) {
+    const directory = await createRepository();
+    try {
+      if (changeTask)
+        await writeFile(
+          join(directory, 'task.md'),
+          `${taskMarkdown}\nUwaga dopisana ręcznie.\n`,
+        );
+      const { runner, claudeCalls } = await rejectsReviewOnly(directory, {}, {
+        code: 'INVALID_TASK',
+        stage: 'preflight',
+      });
+      assert.equal(claudeCalls, 0);
+      assert.equal(
+        runner.calls.some(({ program }) => program === 'pnpm'),
+        false,
+      );
+      await assert.rejects(
+        lstat(join(directory, '.agent-review-loop')),
+        /ENOENT/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('review only: a gate that changes the working tree stops with WORKING_TREE_CHANGED before the review', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    let changed = false;
+    const runner = createMockRunner({
+      async onRun(program, args) {
+        if (program === 'pnpm' && !args.includes('--version') && !changed) {
+          changed = true;
+          await writeFile(join(directory, 'gate-output.txt'), 'gate\n');
+        }
+      },
+    });
+    const { claudeCalls } = await rejectsReviewOnly(
+      directory,
+      { runner },
+      { code: 'WORKING_TREE_CHANGED', stage: 'checks' },
+    );
+    assert.equal(changed, true);
+    assert.equal(claudeCalls, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: a change of the working tree during the review stops with WORKING_TREE_CHANGED', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    const { claudeCalls } = await rejectsReviewOnly(
+      directory,
+      {
+        claudeReview: async () => {
+          await writeFile(join(directory, 'implementation.txt'), 'changed\n');
+          return approveReview();
+        },
+      },
+      { code: 'WORKING_TREE_CHANGED', stage: 'reviewer' },
+    );
+    assert.equal(claudeCalls, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: a change after the preflight read the working tree stops with WORKING_TREE_CHANGED before the first gate', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    const runner = createMockRunner();
+    const { claudeCalls } = await rejectsReviewOnly(
+      directory,
+      {
+        runner,
+        workflow: {
+          prepareCheckEnvironment: async (options) => {
+            const prepared = await fakePrepareCheckEnvironment(options);
+            await writeFile(
+              join(directory, 'implementation.txt'),
+              'changed during the run\n',
+            );
+            return prepared;
+          },
+        },
+      },
+      { code: 'WORKING_TREE_CHANGED', stage: 'checks' },
+    );
+    assert.equal(claudeCalls, 0);
+    // No gate ran (pnpm check, pnpm docs:check).
+    assert.equal(
+      runner.calls.some(
+        ({ program, args }) =>
+          program === 'pnpm' && ['check', 'docs:check'].includes(args.at(-1)),
+      ),
+      false,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: a staged change stops with STAGED_CHANGES; a secret in the changes stops with SECRET_DETECTED', async () => {
+  for (const [name, prepare, code] of [
+    [
+      'staged',
+      async (directory) => {
+        await writeFile(join(directory, 'implementation.txt'), 'staged\n');
+        command(directory, 'git', ['add', 'implementation.txt']);
+      },
+      'STAGED_CHANGES',
+    ],
+    [
+      'secret',
+      async (directory) => {
+        await writeFile(
+          join(directory, 'implementation.txt'),
+          `SYNTHETIC_TOKEN=${['ghp', 'C'.repeat(24)].join('_')}\n`,
+        );
+      },
+      'SECRET_DETECTED',
+    ],
+  ]) {
+    const directory = await createRepository();
+    try {
+      await prepare(directory);
+      const { claudeCalls } = await rejectsReviewOnly(directory, {}, {
+        code,
+        stage: 'preflight',
+      });
+      assert.equal(claudeCalls, 0, name);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('review only: the analysis mode stops with INVALID_TASK_MODE, a class without review with INVALID_TASK_CLASS', async () => {
+  const analysis = await createRepository();
+  try {
+    await configureAnalysisTask(analysis);
+    const { claudeCalls } = await rejectsReviewOnly(
+      analysis,
+      { workflow: { taskMode: 'analysis' } },
+      {
+        code: 'INVALID_TASK_MODE',
+        stage: 'preflight',
+        assert(report) {
+          assert.equal(report.taskMode, 'analysis');
+        },
+      },
+    );
+    assert.equal(claudeCalls, 0);
+  } finally {
+    await rm(analysis, { recursive: true, force: true });
+  }
+  const docs = await createRepository();
+  try {
+    const taskPath = await prepareQualityTask(docs, 'docs-minor');
+    await writeFile(join(docs, 'docs', 'description.md'), '# Opis\n');
+    const { claudeCalls } = await rejectsReviewOnly(
+      docs,
+      { workflow: { taskPath } },
+      { code: 'INVALID_TASK_CLASS', stage: 'preflight' },
+    );
+    assert.equal(claudeCalls, 0);
+  } finally {
+    await rm(docs, { recursive: true, force: true });
+  }
+});
+
+test('review only: the dry-run plan shows the sequence without the writer and probes no writer CLI', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    const standard = (
+      await runFixture(directory, { workflow: { dryRun: true } })
+    ).report;
+    const { report: plan, runner, claudeCalls } = await runReviewOnlyFixture(
+      directory,
+      { workflow: { dryRun: true } },
+    );
+    assert.equal(plan.status, 'DRY_RUN_OK');
+    assert.equal(plan.schemaVersion, 1);
+    assert.equal(plan.runMode, 'review-only');
+    assert.equal(Object.hasOwn(standard, 'runMode'), false);
+    assert.equal(plan.maxRounds, 1);
+    assert.equal(plan.sequence.length, 5);
+    assert.notEqual(plan.sequence[0], standard.sequence[0]);
+    assert.deepEqual(plan.sequence.slice(1, 4), standard.sequence.slice(1, 4));
+    assert.notEqual(plan.sequence[4], standard.sequence[4]);
+    assert.equal(plan.agents.codex, null);
+    assert.equal(plan.agents.implementer.version, null);
+    assert.equal(typeof plan.agents.claude, 'string');
+    assert.equal(plan.implementer.status, 'NOT_RUN');
+    assert.equal(claudeCalls, 0);
+    assert.deepEqual(writerProcessCalls(runner), []);
+    assert.equal(runner.sandboxChecks.length, 0);
+    await assert.rejects(
+      lstat(join(directory, '.agent-review-loop')),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('review only: the CLI parser accepts --review-only and refuses the analysis mode and the writer options', () => {
+  assert.equal(parseAgentArguments(['task.md']).reviewOnly, undefined);
+  assert.deepEqual(parseAgentArguments(['task.md', '--review-only']), {
+    taskPath: 'task.md',
+    taskMode: 'implementation',
+    reviewOnly: true,
+    reviewProfile: 'critical',
+    implementerModel: 'gpt-6.1-sol',
+    implementerEffort: 'high',
+    dryRun: false,
+    verbose: false,
+    noAnimation: false,
+    json: false,
+  });
+  assert.equal(
+    parseAgentArguments([
+      '--review-only',
+      'task.md',
+      '--task-mode=implementation',
+      '--dry-run',
+    ]).reviewOnly,
+    true,
+  );
+  for (const argumentsList of [
+    ['task.md', '--review-only', '--task-mode', 'analysis'],
+    ['task.md', '--review-only', '--implementer-model', 'gpt-6.1-sol'],
+    ['task.md', '--review-only', '--sol-effort=high'],
+  ]) {
+    assert.match(
+      parseAgentArguments(argumentsList).error,
+      /--review-only/,
+      argumentsList.join(' '),
+    );
   }
 });
 

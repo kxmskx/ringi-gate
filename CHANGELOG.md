@@ -5,6 +5,26 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Added
+
+- `ringi run <task> --review-only` (also in
+  `scripts/agent-review-loop.mjs`): the uncommitted changes relative to
+  `HEAD` go through the gates, the read-only snapshot and a single
+  independent review without starting the writer. The writer's CLI is
+  neither required nor probed. The fingerprints are taken from the working
+  tree at the start, and any change of it during the run stops with the
+  existing integrity codes. Zero findings end with `APPROVE`; any finding
+  stops with `HUMAN_DECISION_REQUIRED` and the full finding state, without
+  a correction round. A working tree without a change other than the task
+  file stops with `INVALID_TASK`, a class that skips the review with
+  `INVALID_TASK_CLASS`, analysis mode with `INVALID_TASK_MODE`;
+  `--task-mode analysis` and the writer options with `--review-only` are
+  argument errors. The report, the dry-run plan and the `metadata` event
+  add `runMode: 'review-only'`, and `implementer.status: 'NOT_RUN'`;
+  `schemaVersion` stays 1 and a run without the option is unchanged.
+
 ## 0.2.4 — 2026-10-28
 
 ### Added

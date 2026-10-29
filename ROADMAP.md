@@ -136,6 +136,10 @@ Everything below "Planned" is a plan, not a feature. The
   longer crashes on `EPIPE`; a failing exit stays the agent's own failure,
   and an exit with 0 without the whole prompt read stops with
   `PROCESS_ERROR`.
+- Review only. `ringi run <task> --review-only` sends the uncommitted
+  changes through the gates and a single independent review without
+  starting the writer; any finding stops with `HUMAN_DECISION_REQUIRED`.
+  See [docs/cli.md](docs/cli.md#review-only).
 
 ## Planned (not implemented)
 

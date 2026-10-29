@@ -27,6 +27,7 @@ export const LEDGER_EVENT_TYPES = Object.freeze([
   'integrity',
   'snapshot',
   'review-attempt',
+  'review-lane',
   'findings',
   'checkpoint',
   'stop',

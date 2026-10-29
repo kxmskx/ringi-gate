@@ -64,9 +64,36 @@ export function buildCodexPrompt({ locale, ...options }) {
   return promptBuilder(locale, buildCodexPromptEn, buildCodexPromptPl)(options);
 }
 
-// The locale and taskMode must already be resolved by the core.
-export function buildClaudePrompt({ locale, ...options }) {
-  return promptBuilder(locale, buildClaudePromptEn, buildClaudePromptPl)(options);
+// The locale and taskMode must already be resolved by the core. lane: a
+// review lane ({ id, focus }) validated by the core; its focus is appended to
+// the fixed prompt and changes none of its rules. Without a lane the prompt
+// is exactly the fixed one.
+export function buildClaudePrompt({ locale, lane, ...options }) {
+  const prompt = promptBuilder(
+    locale,
+    buildClaudePromptEn,
+    buildClaudePromptPl,
+  )(options);
+  if (lane === undefined) return prompt;
+  const addendum = promptBuilder(
+    locale,
+    reviewLaneAddendumEn,
+    reviewLaneAddendumPl,
+  )(lane);
+  return `${prompt}\n\n${addendum}`;
+}
+
+// The focus may already end with a full stop; never add a second one.
+function endSentence(text) {
+  return /[.?]$/.test(text) ? text : `${text}.`;
+}
+
+function reviewLaneAddendumEn({ id, focus }) {
+  return `REVIEW LANE ${id}: this review is one of several independent reviews of the same read-only snapshot. Give particular attention to: ${endSentence(focus)} This focus only directs your attention: every rule above, the result schema and the zero findings policy apply unchanged, and you still report every finding you see outside the focus.`;
+}
+
+function reviewLaneAddendumPl({ id, focus }) {
+  return `TOR REVIEW ${id}: to review jest jednym z kilku niezależnych review tego samego snapshotu tylko do odczytu. Zwróć szczególną uwagę na: ${endSentence(focus)} Ten akcent kieruje wyłącznie uwagą: wszystkie powyższe zasady, schemat wyniku i polityka zero findings obowiązują bez zmian, a każdy finding spoza akcentu nadal zgłaszasz.`;
 }
 
 function promptBuilder(locale, en, pl) {

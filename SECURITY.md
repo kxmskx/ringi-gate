@@ -52,6 +52,24 @@ on.
   allowlisted set of environment variables. The `claude` reviewer ignores
   the settings files and MCP servers of the copy (`--restricted`,
   `--strict-mcp-config`) and its `CLAUDE.md` files (`--safe-mode`).
+- With `reviewLanes` (see [profile.md](docs/profile.md#reviewlanes)) every
+  lane is a separate reviewer process with these same guarantees, on the
+  same read-only copy with one hash. The lanes run in parallel: they are the
+  only processes of the runner that may overlap (with the read-only state
+  checks between their attempts), never with the writer, a gate or another
+  command. The snapshot and the working tree are checked before the stage,
+  around every attempt of every lane and after the stage. A lane without a
+  valid result stops the run; partial results are never merged. The profile
+  cannot change the fixed reviewer prompt: a lane's focus is a validated
+  phrase (Latin letters A-Z, digits, spaces and plain punctuation only; no
+  line breaks, quotes, brackets other than parentheses or markup; no stem of
+  a word of the result contract or of format instructions anywhere in a
+  word) appended after it. This validation guards against mistakes, not
+  against prompt injection: the profile is trusted code (it can already
+  load provider modules and presenters), so the focus is not a security
+  barrier. Each lane is a full
+  review, so the review cost of a round grows with the number of lanes (up
+  to 4).
 - Every run report (`APPROVE` or `STOPPED`) has `publicationApproved: false`;
   the runner never sets it to `true` and never commits, pushes or merges.
 - Checkpoints are opt-in. With `--checkpoint` or `--resume`, state carried

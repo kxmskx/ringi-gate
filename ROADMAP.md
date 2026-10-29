@@ -151,8 +151,17 @@ Everything below "Planned" is a plan, not a feature. The
   `ringi verify <runId>` checks it against the key and the report. The
   ledger documents a run and is never a source of trusted state. See
   [docs/ledger.md](docs/ledger.md).
+- Review lanes (opt-in). `reviewLanes` in the profile runs 1 to 4
+  reviewers in parallel on the same read-only snapshot, each with the
+  guarantees of a single reviewer and a validated focus appended to the
+  fixed prompt, then merges their findings by `findingId` and stops when a
+  lane has no valid result. See
+  [docs/architecture.md](docs/architecture.md#review-lanes).
 
 ## Planned (not implemented)
+
+- Minimal context packages per review lane, and measurements of the cost
+  and findings of lanes.
 
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).

@@ -284,6 +284,20 @@ code `2`); the analysis candidate is the writer's artifact. The report and
 the dry-run plan carry `runMode: 'review-only'`; see
 [profile.md](profile.md#report-fields).
 
+### Review lanes
+
+A profile with [`reviewLanes`](profile.md#reviewlanes) needs no option:
+`ringi run` (also with `--review-only`, `--checkpoint` and `--resume`) runs
+every lane in parallel in each review round and merges their findings (see
+[architecture.md](architecture.md#review-lanes)). `--review-profile` sets
+the review profile of every lane that names none. A lane without a valid
+result stops the run with that lane's stop code; the report's `lane` field
+names it, and `reviewer.lanes` lists every lane with its status. A
+resumable stop (for example `CLAUDE_PROCESS_FAILED` or `TIMEOUT`) resumes
+like any other: the resumed run runs every lane again. With
+`--review-only`, any finding of any lane is `HUMAN_DECISION_REQUIRED`, with
+the merged findings and their `lanes` in the report.
+
 ### Checkpoints and resume
 
 ```sh

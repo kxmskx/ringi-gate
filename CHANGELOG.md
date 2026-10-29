@@ -9,6 +9,25 @@ is published by hand, without provenance; later versions are published by
 
 ### Added
 
+- Review lanes: optional `reviewLanes` in the profile (1 to 4 lanes
+  `{ id, focus, profile? }`, validated fail-closed with
+  `INVALID_CONFIGURATION`). Each review round runs one reviewer process per
+  lane, in parallel on the same read-only snapshot, each with the
+  guarantees of a single reviewer; the lane's focus (a validated phrase) is
+  appended to the fixed reviewer prompt. The snapshot and the working tree
+  are checked before the stage, around every attempt of every lane and
+  after the stage. Findings are merged by `findingId` (highest severity,
+  `lanes` lists the lanes that reported it), and the zero findings policy
+  applies to the merged list. A lane without a valid result stops the run
+  with its own stop code and the report's `lane` field. The report adds
+  `reviewer.lanes`, `rounds[].reviewLanes` and `findings[].lanes`, the
+  ledger a `review-lane` event per lane; the process runner lets only the
+  lanes' processes overlap. A review round with lanes has `reviewLanes`
+  and `reviewer.executionField: 'reviewLanes'` instead of the
+  `reviewExecution` key. The focus validation guards against mistakes, not
+  against prompt injection. A `ringi verify` older than review lanes rejects
+  a ledger with a `review-lane` event. `schemaVersion` stays 1 and a profile
+  without `reviewLanes` runs exactly as before.
 - `ringi run <task> --review-only` (also in
   `scripts/agent-review-loop.mjs`): the uncommitted changes relative to
   `HEAD` go through the gates, the read-only snapshot and a single

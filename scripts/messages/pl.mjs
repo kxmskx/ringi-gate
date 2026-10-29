@@ -16,6 +16,7 @@ export default Object.freeze({
   'log.saveFailed': 'Nie można zapisać ograniczonego logu diagnostycznego: {detail}',
   'log.implementerRound': 'WYKONAWCA runda {round}',
   'log.reviewerRound': 'REVIEWER runda {round}',
+  'log.reviewerLaneRound': 'REVIEWER tor {lane} runda {round}',
   'summary.truncated': '…[podsumowanie obcięte]…',
 
   'process.interrupted': 'Przerwano etap {stage} przez Ctrl+C.',
@@ -317,6 +318,7 @@ export default Object.freeze({
   'reviewer.invalidModel': 'Model reviewera {model} jest niepoprawny.',
   'reviewer.reviewFailed': 'Reviewer niezakończył review poprawnie',
   'reviewer.fallbackFailed': 'Fallback reviewera nie zakończył review poprawnie.',
+  'reviewer.laneFailed': 'Tor review {lane}: {message}',
 
   'finding.identityCollision': 'Wykryto kolizję stabilnej tożsamości {findingId}.',
   'finding.identityDuplicate': 'Review zawiera niejednoznacznie zduplikowaną tożsamość {findingId}.',
@@ -405,6 +407,8 @@ export default Object.freeze({
   'stage.analysisPackage': 'Minimalny pakiet analizy read-only',
   'stage.isolatedCopy': 'Izolowana kopia read-only',
   'stage.reviewAttempt': 'Review {profile} · {model} · effort {effort} · próba {attempt}',
+  'stage.reviewLaneAttempt':
+    'Tor review {lane} · {profile} · {model} · effort {effort} · próba {attempt}',
 
   'plan.analysisWriter': 'wykonawca: pełna analiza read-only',
   'plan.analysisIntegrity': 'wewnętrzne kontrole integralności',

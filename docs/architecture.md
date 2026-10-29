@@ -413,13 +413,61 @@ flowchart TD
    findings (`BLOCKER`, `HIGH`, `MEDIUM`, `LOW`). The runner computes the
    result itself: any finding of any severity means another writer round.
    The snapshot and the working tree must be unchanged before and after each
-   review attempt.
+   review attempt. With [review lanes](#review-lanes) several reviewers run
+   in parallel and their findings are merged.
 7. **Result.** With zero findings the run ends with `APPROVE`. Otherwise the
    writer gets the findings and must answer each one with `CONFIRMED`,
    `REJECTED` or `NEEDS_HUMAN`. The loop runs at most 3 rounds.
 
 The runner never commits, pushes, merges or reverts. When it stops, the
 writer's changes stay in the working tree for a human to inspect.
+
+### Review lanes
+
+With `reviewLanes` in the profile (see
+[profile.md](profile.md#reviewlanes)), the review stage of every round runs
+one reviewer per lane instead of one reviewer:
+
+- **Execution.** Every lane starts at once (at most 4 processes) on the same
+  snapshot, so every lane reviews the same files with the same hash. Each
+  lane is its own reviewer process with the guarantees of a single reviewer:
+  read-only tools, no session, the isolated environment, its review profile
+  with its model fallback, and the fixed reviewer prompt with the lane's
+  focus appended. The runner's processes otherwise run one at a time; only
+  the processes of the lanes (the reviewers and the read-only state checks
+  between their attempts) may overlap, and a timeout or output limit stops
+  only the process it belongs to.
+- **Checks.** The snapshot and the working tree are checked before the
+  stage, before and after every attempt of every lane (one check at a time)
+  and after the stage; the checks of a single review after it follow.
+- **Completeness.** The stage waits for every lane and expects one valid
+  result per lane. A lane whose reviewer failed, timed out or returned no
+  valid result stops the run with that lane's own stop code (for example
+  `CLAUDE_PROCESS_FAILED`, `TIMEOUT`, `INVALID_AGENT_OUTPUT`,
+  `SNAPSHOT_CHANGED`) and the report's `lane` field. When several lanes
+  fail, a stop that is not resumable comes first, then the profile's lane
+  order. No partial result is merged. For `SNAPSHOT_CHANGED` and
+  `WORKING_TREE_CHANGED`, `lane` names the first lane whose check saw the
+  change, not necessarily the lane whose process made it. A stop of the
+  merge (such as `AMBIGUOUS_FINDING_IDENTITY`) names its lane in `lane`,
+  while that lane's status stays `COMPLETED`: its reviewer completed with a
+  valid result.
+- **Merge.** Each lane's findings get their `findingId` as in a single
+  review, against the same known identities: a repeated identity within one
+  lane is `AMBIGUOUS_FINDING_IDENTITY`, and an id whose identity differs
+  from one seen in an earlier round or another lane is
+  `FINDING_ID_COLLISION`. The same `findingId` from several lanes is then
+  one finding: the highest severity, the text of the first lane in profile
+  order with that severity, and `lanes`, every lane that reported it in
+  profile order. The merged list keeps the order of first appearance
+  (lanes in profile order). The merged verdict is `APPROVE` only when every
+  lane approved; the merged `checks` carry the lane id. The zero findings
+  policy applies to the merged findings, so any finding of any lane means
+  another writer round, and the writer receives the merged findings.
+
+A `findingId` is derived from the finding's identity (`file`, `anchor`,
+`category`), so two lanes that report the same id report the same identity;
+only the text and severity may differ, and the merge keeps one of them.
 
 ### Review only
 

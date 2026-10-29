@@ -22,6 +22,7 @@ export const LEDGER_EVENT_TYPES = Object.freeze([
   'preflight',
   'fingerprints',
   'resume',
+  'routing',
   'writer-round',
   'gate',
   'integrity',

@@ -303,6 +303,29 @@ reviewer starts, in every mode. Without an interactive terminal, the line
 that ends a lane's attempt shows the size of the lane's prompt and its
 number of diff files (`prompt 4178 B · diff files 1`).
 
+### Routing
+
+A profile with [`routing.rules`](profile.md#routing) needs no option
+either: in the `implementation` mode the rule named after the task's class
+sets the implementer effort, the review profile, the lanes and the added
+checks, and a candidate path named in the rule's `escalate` switches the
+gates and the review to the strictest matching rule (of another class or an
+escalation rule), only ever upwards; `routing.rule` in the report names it. The options win over the
+rule, which wins over the profile's defaults: `--implementer-effort` and
+`--review-profile` (and their aliases) set the value even when it is lower
+than the rule's, also after an escalation; `--review-profile` does not
+change a lane with its own `profile`. The
+report's `routing.overriddenBy` lists them. Routing never picks a value the
+profile does not allow, so the options still only accept the profile's
+efforts and review profiles. With `--review-only` the rule and an
+escalation by the working tree apply in the preflight; `--dry-run` shows
+the routing in the plan. A resumed run computes the routing again (an
+option may differ from the stopped run's) and lists the fields that differ
+from the checkpoint in `routing.checkpointDifferences`; the difference does
+not stop the run, while a changed profile still does. The `analysis` mode
+ignores routing. See [profile.md](profile.md#report-fields) for the report
+field.
+
 ### Checkpoints and resume
 
 ```sh

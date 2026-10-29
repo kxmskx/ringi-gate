@@ -334,6 +334,8 @@ export default Object.freeze({
   'repo.pathEscape': 'A repository path is outside the root.',
   'repo.linkAbsolute': 'Symbolic link {path} has an absolute target.',
   'repo.linkEscape': 'Symbolic link {path} points outside the repository.',
+  'repo.reviewContextReserved':
+    'Path {path} uses .review-context, a name reserved for the review context of the snapshot.',
   'repo.unsupportedEntry': 'Unsupported entry type {path}.',
   'repo.fileTooLarge': 'File {path} exceeds the 8 MiB limit. Split the task.',
   'repo.stateTooLarge': 'The repository state exceeds the 64 MiB copy limit. Split the task.',

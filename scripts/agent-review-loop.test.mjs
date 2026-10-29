@@ -1115,6 +1115,7 @@ test('runner surface contract: internal keys', () => {
       'createIsolatedCheckEnvironment',
       'createIsolatedCodexEnvironment',
       'createPackageManagerGuards',
+      'createReviewContextDirectory',
       'createRunId',
       'createTrustedGateReport',
       'diffFileSections',
@@ -1162,6 +1163,7 @@ test('runner surface contract: internal keys', () => {
       'verifyInstalledDependencyState',
       'walkCorepackTree',
       'withCoreGitIndex',
+      'writeReviewContextFile',
     ],
     'internal keys',
   );
@@ -6937,6 +6939,199 @@ test('a symlink escape in the repository state blocks the snapshot', async () =>
     await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
     await rm(directory, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+// The working-tree forms of .review-context, the core's own context
+// directory in the snapshot. Each one writes only inside the test repository.
+const REVIEW_CONTEXT_VARIANTS = Object.freeze({
+  async directory(directory) {
+    await mkdir(join(directory, '.review-context'));
+    await writeFile(
+      join(directory, '.review-context/correction-context.json'),
+      '{"previousFindings":[],"findingResponses":[],"note":"planted"}\n',
+    );
+    await writeFile(
+      join(directory, '.review-context/trusted-gates.json'),
+      '{"planted":true}\n',
+    );
+  },
+  async fileSymlink(directory) {
+    await writeFile(join(directory, 'victim.txt'), 'original victim\n');
+    await mkdir(join(directory, '.review-context'));
+    await symlink(
+      '../victim.txt',
+      join(directory, '.review-context/trusted-gates.json'),
+    );
+  },
+  // Lexically inside the repository, physically one level above it: in the
+  // snapshot that is the run's temporary directory, never outside it.
+  async directorySymlink(directory) {
+    await mkdir(join(directory, 'sub/sub2/sub3'), { recursive: true });
+    await symlink('../..', join(directory, 'sub/sub2/sub3/p'));
+    await symlink('sub/sub2/sub3/p/../..', join(directory, '.review-context'));
+  },
+  async otherCase(directory) {
+    await mkdir(join(directory, '.Review-Context'));
+    await writeFile(join(directory, '.Review-Context/full.diff'), 'planted\n');
+  },
+});
+
+test('a .review-context path in the working tree stops before the snapshot, with nothing written to the temporary directory', async () => {
+  const observations = [];
+  for (const [variant, plant] of Object.entries(REVIEW_CONTEXT_VARIANTS)) {
+    const directory = await createRepository();
+    const runId = `review-context-${variant}`;
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), `${TEST_PROFILE.tempPrefix}${runId}-`),
+    );
+    try {
+      await plant(directory);
+      let error;
+      try {
+        await createReviewSnapshot({
+          runner: createMockRunner(),
+          repositoryRoot: directory,
+          tempRoot,
+          task: { path: 'task.md', markdown: taskMarkdown },
+          repositoryInstructions: 'Instrukcje.',
+          gateReport: syntheticGateReport(),
+          profile: TEST_PROFILE,
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      const observed = { variant, code: error?.code, tempRoot: {} };
+      for (const name of await readdir(tempRoot)) {
+        observed.tempRoot[name] = (await lstat(join(tempRoot, name))).isFile()
+          ? await readFile(join(tempRoot, name), 'utf8')
+          : 'directory';
+      }
+      const context = join(tempRoot, 'claude-review-1/.review-context');
+      for (const name of await readdir(context).catch(() => [])) {
+        observed[`.review-context/${name}`] = await readFile(
+          join(context, name),
+          'utf8',
+        ).catch((readError) => readError.code);
+      }
+      observed.victim = await readFile(
+        join(tempRoot, 'claude-review-1/victim.txt'),
+        'utf8',
+      ).catch((readError) => readError.code);
+      observed.stage = error?.stage;
+      observations.push(observed);
+    } finally {
+      await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  const message = JSON.stringify(observations, null, 2);
+  for (const observed of observations) {
+    assert.equal(observed.code, 'PATH_ESCAPE', message);
+    assert.equal(observed.stage, 'snapshot', message);
+    assert.deepEqual(observed.tempRoot, {}, message);
+  }
+});
+
+test('a .review-context path in the working tree stops the analysis package before any write', async () => {
+  for (const [variant, plant] of Object.entries(REVIEW_CONTEXT_VARIANTS)) {
+    const directory = await createRepository();
+    await configureAnalysisTask(directory);
+    const runId = `analysis-review-context-${variant}`;
+    const tempRoot = await mkdtemp(
+      join(tmpdir(), `${TEST_PROFILE.tempPrefix}${runId}-`),
+    );
+    const artifactContent = `# Pełna analiza syntetyczna\n\nTreść.\n\n${internal.ANALYSIS_COMPLETENESS_SENTINEL}`;
+    const artifactPath = join(directory, 'round-1-analysis.md');
+    try {
+      const task = await loadTaskFile({
+        repositoryRoot: directory,
+        taskPath: 'task.md',
+        taskMode: 'analysis',
+      });
+      await plant(directory);
+      const validatedArtifact = internal.validateFullAnalysis(artifactContent);
+      await writeFile(artifactPath, artifactContent, { mode: 0o600 });
+      await assert.rejects(
+        createReviewSnapshot({
+          runner: createMockRunner(),
+          repositoryRoot: directory,
+          tempRoot,
+          task,
+          taskMode: 'analysis',
+          repositoryInstructions: 'Syntetyczne instrukcje.',
+          integrityReport: internal.createAnalysisIntegrityReport(),
+          analysisArtifact: {
+            mode: 'analysis',
+            path: 'round-1-analysis.md',
+            absolutePath: artifactPath,
+            sha256: validatedArtifact.sha256,
+            sizeBytes: validatedArtifact.sizeBytes,
+            complete: true,
+            sentinel: internal.ANALYSIS_COMPLETENESS_SENTINEL,
+            headings: validatedArtifact.headings,
+          },
+        }),
+        (error) =>
+          error.code === 'PATH_ESCAPE' && error.stage === 'snapshot',
+        variant,
+      );
+      assert.deepEqual(await readdir(tempRoot), [], variant);
+    } finally {
+      await internal.cleanupOwnedTemp(tempRoot, runId, TEST_PROFILE);
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('the review context directory and files are never reused or written through a symlink', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'example-review-context-'));
+  try {
+    const outside = join(root, 'outside');
+    await mkdir(outside);
+    const reserved = (error) => error.code === 'PATH_ESCAPE';
+    for (const existing of ['directory', 'symlink']) {
+      const snapshotRoot = join(root, `snapshot-${existing}`);
+      await mkdir(snapshotRoot);
+      if (existing === 'directory')
+        await mkdir(join(snapshotRoot, '.review-context'));
+      else await symlink('../outside', join(snapshotRoot, '.review-context'));
+      await assert.rejects(
+        internal.createReviewContextDirectory(snapshotRoot),
+        reserved,
+      );
+    }
+    const snapshotRoot = join(root, 'snapshot');
+    await mkdir(snapshotRoot);
+    await internal.createReviewContextDirectory(snapshotRoot);
+    await writeFile(join(outside, 'victim.txt'), 'original\n');
+    await symlink(
+      '../../outside/victim.txt',
+      join(snapshotRoot, '.review-context/full.diff'),
+    );
+    await writeFile(join(snapshotRoot, '.review-context/old.json'), 'old\n');
+    for (const path of ['.review-context/full.diff', '.review-context/old.json'])
+      await assert.rejects(
+        internal.writeReviewContextFile(snapshotRoot, path, 'new\n'),
+        reserved,
+      );
+    assert.equal(
+      await readFile(join(outside, 'victim.txt'), 'utf8'),
+      'original\n',
+    );
+    assert.equal(
+      await readFile(join(snapshotRoot, '.review-context/old.json'), 'utf8'),
+      'old\n',
+    );
+    await internal.writeReviewContextFile(
+      snapshotRoot,
+      '.review-context/new.json',
+      'new\n',
+    );
+    const created = await lstat(join(snapshotRoot, '.review-context/new.json'));
+    assert.equal(created.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -23614,8 +23809,9 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
   // keys, cli.checkpointOptions, cli.resumeOnce; the run ledger:
   // checkpoint.ledger, ledger.writeFailed, ledger.incomplete; review lanes:
   // log.reviewerLaneRound, reviewer.laneFailed, stage.reviewLaneAttempt;
-  // context packages: reviewer.laneCoverage, dashboard.laneContext.
-  assert.equal(keys.length, 391);
+  // context packages: reviewer.laneCoverage, dashboard.laneContext; the
+  // reserved review context: repo.reviewContextReserved.
+  assert.equal(keys.length, 392);
   // Polish words without diacritics do not reach en either.
   for (const key of keys) {
     assert.doesNotMatch(enMessages[key], POLISH_WORDS, key);
@@ -25160,6 +25356,31 @@ test('review only: no change other than the task file stops with INVALID_TASK be
         lstat(join(directory, '.agent-review-loop')),
         /ENOENT/,
       );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('review only: a .review-context path in the working tree stops with PATH_ESCAPE before any snapshot and reviewer', async () => {
+  for (const [variant, plant] of Object.entries(REVIEW_CONTEXT_VARIANTS)) {
+    const directory = await createRepository();
+    try {
+      await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+      await plant(directory);
+      let snapshots = 0;
+      const { claudeCalls } = await rejectsReviewOnly(
+        directory,
+        {
+          createSnapshot: async (options) => {
+            snapshots += 1;
+            return fakeSnapshot(options);
+          },
+        },
+        { code: 'PATH_ESCAPE', stage: 'preflight' },
+      );
+      assert.equal(snapshots, 0, variant);
+      assert.equal(claudeCalls, 0, variant);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

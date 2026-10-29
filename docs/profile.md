@@ -1002,3 +1002,17 @@ round has no `codex` and `solExecution` keys, and its `implementer` has
 is `null` when no review ran. The dry-run plan has `maxRounds: 1`. These
 fields add to the format or take values the format already allows, and a
 run without the option is unchanged, so `schemaVersion` stays 1.
+
+A run with `--checkpoint` or `--resume` (see
+[cli.md](cli.md#checkpoints-and-resume)) adds `checkpoint` to the report
+(`APPROVE` and `STOPPED`): `path` (the checkpoint relative to the
+repository, or `null` when no phase completed), `signature`
+(`'hmac-sha256'`), `phase` (`implementer`, `checks` or `review`, or `null`)
+and `round` of the last saved checkpoint, and in a stopped run `resumable`
+(`false`, with `path` `null` and an entry in `warnings`, when the stop could
+not be recorded and the checkpoint was removed). A resumed run adds
+`resumedFrom` (the run id it continues); its rounds keep the numbers of the
+lineage, and a round resumed after the writer's phase has no `solExecution`
+key (no writer ran in it). Its gate results always come from gates run in
+that run. A run without these options has none of these fields, so
+`schemaVersion` stays 1.

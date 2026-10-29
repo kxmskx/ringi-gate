@@ -140,6 +140,12 @@ Everything below "Planned" is a plan, not a feature. The
   changes through the gates and a single independent review without
   starting the writer; any finding stops with `HUMAN_DECISION_REQUIRED`.
   See [docs/cli.md](docs/cli.md#review-only).
+- Checkpoints and resume (opt-in). `ringi run <task> --checkpoint` saves a
+  signed checkpoint after every phase; `--resume <runId>` continues a
+  stopped run when the task, profile, runner, branch, `HEAD` and working
+  tree match, skipping only the writer of the interrupted round: the gates
+  and the review always run again. Only an allowlist of stops is resumable.
+  See [docs/cli.md](docs/cli.md#checkpoints-and-resume).
 
 ## Planned (not implemented)
 

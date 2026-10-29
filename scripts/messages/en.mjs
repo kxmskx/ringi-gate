@@ -49,6 +49,38 @@ export default Object.freeze({
     'Task class {taskClass} skips the independent review; a review-only run needs a class with review.',
   'run.resume':
     "Fix the cause, check the working tree and run the task again. The workflow does not revert the writer's changes.",
+  'checkpoint.options':
+    'Checkpoints and resume need a run with a writer: not with a dry run or a review-only run.',
+  'checkpoint.taskMode': 'Checkpoints and resume are available in the implementation mode only.',
+  'checkpoint.runId': 'The run id to resume is not a run id of this runner.',
+  'checkpoint.noStateDirectory':
+    'The checkpoint key needs XDG_STATE_HOME or HOME as an absolute path.',
+  'checkpoint.stateDirectoryUnsafe':
+    'The directory of the checkpoint key must be a directory of the current user without access for others (mode 0700), not a symbolic link.',
+  'checkpoint.keyMissing': 'The checkpoint key does not exist: no checkpoint can be verified.',
+  'checkpoint.keyUnsafe':
+    'The checkpoint key must be a regular file of the current user with mode 0600 and 32 bytes, not a symbolic link.',
+  'checkpoint.keyWriteFailed': 'The checkpoint key could not be created: {detail}',
+  'checkpoint.writeFailed': 'The checkpoint could not be written: {detail}',
+  'checkpoint.profileUnhashable': 'The profile cannot be fingerprinted for a checkpoint.',
+  'checkpoint.missing': 'Run {runId} has no checkpoint to resume from.',
+  'checkpoint.structure': 'The checkpoint of run {runId} is unreadable or malformed; it is not trusted.',
+  'checkpoint.signature': 'The checkpoint of run {runId} has no valid signature; it is not trusted.',
+  'checkpoint.revoked':
+    'Run {runId} stopped with a code that cannot be resumed. A human decides; start a new run.',
+  'checkpoint.notResumable':
+    'Run {runId} stopped with {code}, which cannot be resumed. A human decides; start a new run.',
+  'checkpoint.mismatch':
+    'The checkpoint of run {runId} does not match the current {field}; the run cannot be resumed.',
+  'checkpoint.completed': 'Run {runId} has no open phase; there is nothing to resume.',
+  'checkpoint.roundLimit':
+    'Run {runId} used all {maxRounds} rounds; resume does not reset the round limit.',
+  'checkpoint.resumeHint':
+    'Fix the cause and continue with ringi run <task> --resume {runId}. The working tree must stay as the checkpoint recorded it.',
+  'checkpoint.stopRecordFailed':
+    'The stop could not be recorded in the checkpoint or revoked ({detail}); the checkpoints of this run were removed and it cannot be resumed.',
+  'checkpoint.neutralizeFailed':
+    'The stop could not be recorded in the checkpoint or revoked ({detail}), and the checkpoint of run {runIds} could not be removed: do not resume it.',
   'cleanup.failed': 'Cleanup failed: {detail}',
   'cleanup.unknownResource': 'Refused to clean up an unknown resource.',
 
@@ -441,6 +473,9 @@ export default Object.freeze({
   'cli.oneTaskPath': 'Exactly one task path is required.',
   'cli.reviewOnlyTaskMode': 'The --review-only option works only with --task-mode implementation.',
   'cli.reviewOnlyImplementer': 'The {option} option cannot be given with --review-only: no writer runs.',
+  'cli.checkpointOptions':
+    'The --checkpoint and --resume options need a run with a writer in --task-mode implementation: not with --dry-run or --review-only.',
+  'cli.resumeOnce': 'The --resume option can be given only once.',
   'cli.usage':
     'Usage: pnpm agents:run -- path/to/task.md [--task-mode {taskModes}] [--implementer-model <id>] [--implementer-effort {efforts}] [--review-profile {profiles}] [--dry-run] [--verbose] [--no-animation] [--json]',
   'cli.criticalOpus':

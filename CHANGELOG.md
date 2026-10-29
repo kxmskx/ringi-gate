@@ -24,6 +24,26 @@ is published by hand, without provenance; later versions are published by
   argument errors. The report, the dry-run plan and the `metadata` event
   add `runMode: 'review-only'`, and `implementer.status: 'NOT_RUN'`;
   `schemaVersion` stays 1 and a run without the option is unchanged.
+- `ringi run <task> --checkpoint` and `--resume <runId>` (also in
+  `scripts/agent-review-loop.mjs`), opt-in. With `--checkpoint` the runner
+  saves `.agent-review-loop/runs/<runId>/checkpoint.json` after the writer's
+  round, the gates and the review, signed with an HMAC (SHA-256) key in
+  `$XDG_STATE_HOME/ringi` or `~/.local/state/ringi` (directory `0700`, file
+  `0600`, created once). `--resume` runs the full preflight and continues
+  with the checkpoint's round and findings, only when the signature is
+  valid and the task, profile, runner, branch, `HEAD`, round limit and
+  working tree match; the round limit counts every run. A resume skips only
+  the writer of the interrupted round: the gates and the review always run
+  again. Refusals use existing codes: `INTEGRITY_CHECK_FAILED` (key or
+  signature), `HUMAN_DECISION_REQUIRED` (another state, a stop that is not
+  resumable), `INVALID_CONFIGURATION` (no checkpoint, options). Only the
+  stops in `RESUMABLE_STOP_CODES` are resumable; a stop that cannot be
+  recorded fails closed. The signature detects a checkpoint changed without
+  the key; code running as the user can read the key, so a forged
+  checkpoint can change the round or findings history but cannot approve a
+  run. Reports add `checkpoint` and `resumedFrom`; `schemaVersion` stays 1,
+  and a run without the options is unchanged and writes nothing in the
+  state directory.
 
 ## 0.2.4 — 2026-10-28
 

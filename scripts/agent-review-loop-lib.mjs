@@ -1,5 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -25,6 +30,7 @@ import {
   readdir,
   readlink,
   realpath,
+  rename,
   rm,
   rmdir,
   symlink,
@@ -9153,6 +9159,421 @@ function projectProfileAudit(projectProfile, uncommitted) {
   };
 }
 
+// Signed checkpoints (options checkpoint and resume). The run directory is
+// in the repository, where the writer may change it, so a checkpoint is
+// accepted only with a valid HMAC (SHA-256) signature made with a key from
+// the user's state directory, outside the repository. The signature detects
+// a checkpoint changed without the key; code that runs as the user (the
+// writer, the gates) can read the key. A checkpoint therefore only sets the
+// round and the findings to continue with: the gates and the review always
+// run again, so no checkpoint content can approve a run.
+const CHECKPOINT_FORMAT = 'ringi-checkpoint';
+const CHECKPOINT_VERSION = 1;
+const CHECKPOINT_FILE = 'checkpoint.json';
+const CHECKPOINT_KEY_FILE = 'checkpoint.key';
+const CHECKPOINT_STOPPED_DIRECTORY = 'stopped';
+const CHECKPOINT_KEY_BYTES = 32;
+const MAX_CHECKPOINT_BYTES = 32 * 1024 * 1024;
+const CHECKPOINT_PHASES = new Set(['implementer', 'checks', 'review']);
+const RUN_ID_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z--[A-Za-z0-9]{1,64}$/;
+// The only stops after which a run may be resumed: a failed or interrupted
+// gate, a process that failed or timed out, and an agent's output that could
+// not be used. Every other code, including codes added later, is not
+// resumable, and neither is a stop that carries integrity violations.
+export const RESUMABLE_STOP_CODES = Object.freeze([
+  'CHECK_FAILED',
+  'TIMEOUT',
+  'INTERRUPTED',
+  'PROCESS_ERROR',
+  'PROCESS_FAILED',
+  'CLAUDE_PROCESS_FAILED',
+  'CLAUDE_FALLBACK_FAILED',
+  'OUTPUT_LIMIT_EXCEEDED',
+  'INVALID_AGENT_OUTPUT',
+]);
+const RESUMABLE_STOP_CODE_SET = new Set(RESUMABLE_STOP_CODES);
+
+export function isResumableStop(error) {
+  return (
+    RESUMABLE_STOP_CODE_SET.has(error?.code) &&
+    !(error?.integrityViolations?.length > 0)
+  );
+}
+
+// $XDG_STATE_HOME/ringi, or ~/.local/state/ringi; only absolute paths.
+export function resolveCheckpointStateDirectory(environment = process.env) {
+  const stateHome = environment.XDG_STATE_HOME;
+  if (typeof stateHome === 'string' && isAbsolute(stateHome))
+    return join(stateHome, 'ringi');
+  const home = environment.HOME;
+  if (typeof home === 'string' && isAbsolute(home))
+    return join(home, '.local', 'state', 'ringi');
+  return undefined;
+}
+
+function checkpointStop(
+  key,
+  params = {},
+  code = 'INTEGRITY_CHECK_FAILED',
+  stage = 'preflight',
+) {
+  return new AgentWorkflowError(msg(key, params), { code, stage });
+}
+
+function ownedByCurrentUser(metadata) {
+  return (
+    typeof process.getuid !== 'function' || metadata.uid === process.getuid()
+  );
+}
+
+// The key's directory: a directory of the current user that no one else may
+// read or enter (no group or other bits), never a symbolic link.
+async function assertPrivateStateDirectory(directory, stage) {
+  let metadata;
+  try {
+    metadata = await lstat(directory);
+  } catch (error) {
+    throw checkpointStop(
+      error?.code === 'ENOENT'
+        ? 'checkpoint.keyMissing'
+        : 'checkpoint.stateDirectoryUnsafe',
+      {},
+      undefined,
+      stage,
+    );
+  }
+  if (
+    !metadata.isDirectory() ||
+    (metadata.mode & 0o077) !== 0 ||
+    !ownedByCurrentUser(metadata)
+  ) {
+    throw checkpointStop('checkpoint.stateDirectoryUnsafe', {}, undefined, stage);
+  }
+}
+
+// Created once, atomically: a new key is linked in place and never replaces
+// an existing one.
+async function createCheckpointKey(directory, stage) {
+  const keyPath = join(directory, CHECKPOINT_KEY_FILE);
+  if (await lstat(keyPath).catch(() => undefined)) return;
+  const temporaryPath = join(
+    directory,
+    `.${CHECKPOINT_KEY_FILE}.${randomBytes(8).toString('hex')}.tmp`,
+  );
+  let handle;
+  try {
+    handle = await open(temporaryPath, 'wx', 0o600);
+    await handle.writeFile(randomBytes(CHECKPOINT_KEY_BYTES));
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await link(temporaryPath, keyPath).catch((error) => {
+      if (error?.code !== 'EEXIST') throw error;
+    });
+  } catch (error) {
+    throw checkpointStop(
+      'checkpoint.keyWriteFailed',
+      { detail: error?.code ?? 'unknown' },
+      undefined,
+      stage,
+    );
+  } finally {
+    await handle?.close().catch(() => {});
+    await unlink(temporaryPath).catch(() => {});
+  }
+}
+
+async function readCheckpointKey(directory, stage) {
+  let handle;
+  try {
+    handle = await open(
+      join(directory, CHECKPOINT_KEY_FILE),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    throw checkpointStop(
+      error?.code === 'ENOENT' ? 'checkpoint.keyMissing' : 'checkpoint.keyUnsafe',
+      {},
+      undefined,
+      stage,
+    );
+  }
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      (metadata.mode & 0o077) !== 0 ||
+      !ownedByCurrentUser(metadata) ||
+      metadata.size !== CHECKPOINT_KEY_BYTES
+    ) {
+      throw checkpointStop('checkpoint.keyUnsafe', {}, undefined, stage);
+    }
+    const key = await handle.readFile();
+    if (key.length !== CHECKPOINT_KEY_BYTES)
+      throw checkpointStop('checkpoint.keyUnsafe', {}, undefined, stage);
+    return key;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+// create: a run with checkpoints makes the key when there is none; a
+// resumed run only reads it (without the key nothing can be verified).
+async function openCheckpointKey({ stateDirectory, create, stage }) {
+  if (!stateDirectory) {
+    throw checkpointStop(
+      'checkpoint.noStateDirectory',
+      {},
+      'INVALID_CONFIGURATION',
+      stage,
+    );
+  }
+  if (create) {
+    try {
+      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      throw checkpointStop(
+        'checkpoint.keyWriteFailed',
+        { detail: error?.code ?? 'unknown' },
+        undefined,
+        stage,
+      );
+    }
+  }
+  await assertPrivateStateDirectory(stateDirectory, stage);
+  if (create) await createCheckpointKey(stateDirectory, stage);
+  return readCheckpointKey(stateDirectory, stage);
+}
+
+function signCheckpoint(key, payload) {
+  return createHmac('sha256', key).update(payload).digest();
+}
+
+// The signed payload is the exact JSON text; each string is redacted
+// before signing, so the file stays valid JSON.
+async function writeCheckpointFile({ runDirectory, key, payload, stage }) {
+  const text = JSON.stringify(payload, (_, value) =>
+    typeof value === 'string' ? redactSensitive(value) : value,
+  );
+  const content = `${JSON.stringify(
+    {
+      format: CHECKPOINT_FORMAT,
+      version: CHECKPOINT_VERSION,
+      payload: text,
+      signature: signCheckpoint(key, text).toString('hex'),
+    },
+    null,
+    2,
+  )}\n`;
+  const temporaryPath = join(
+    runDirectory,
+    `.${CHECKPOINT_FILE}.${randomBytes(8).toString('hex')}.tmp`,
+  );
+  let handle;
+  try {
+    handle = await open(temporaryPath, 'wx', 0o600);
+    await handle.writeFile(content);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, join(runDirectory, CHECKPOINT_FILE));
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    await unlink(temporaryPath).catch(() => {});
+    throw checkpointStop(
+      'checkpoint.writeFailed',
+      { detail: error?.code ?? 'unknown' },
+      undefined,
+      stage,
+    );
+  }
+}
+
+function isCheckpointLineage(value, runId) {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 64 &&
+    value.every((item) => typeof item === 'string' && RUN_ID_PATTERN.test(item)) &&
+    value.at(-1) === runId
+  );
+}
+
+// Only a checkpoint with a valid signature of this key, for this run id,
+// is trusted; anything else stops before any agent starts.
+async function readCheckpointFile({ runDirectory, key, runId, stage }) {
+  const structure = () =>
+    checkpointStop('checkpoint.structure', { runId }, undefined, stage);
+  let handle;
+  try {
+    handle = await open(
+      join(runDirectory, CHECKPOINT_FILE),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw checkpointStop(
+        'checkpoint.missing',
+        { runId },
+        'INVALID_CONFIGURATION',
+        stage,
+      );
+    }
+    throw structure();
+  }
+  let text;
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > MAX_CHECKPOINT_BYTES)
+      throw structure();
+    text = await handle.readFile('utf8');
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  let envelope;
+  try {
+    envelope = JSON.parse(text);
+  } catch {
+    throw structure();
+  }
+  if (
+    !isPlainObject(envelope) ||
+    Object.keys(envelope).length !== 4 ||
+    envelope.format !== CHECKPOINT_FORMAT ||
+    envelope.version !== CHECKPOINT_VERSION ||
+    typeof envelope.payload !== 'string' ||
+    typeof envelope.signature !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(envelope.signature)
+  ) {
+    throw structure();
+  }
+  if (
+    !timingSafeEqual(
+      Buffer.from(envelope.signature, 'hex'),
+      signCheckpoint(key, envelope.payload),
+    )
+  ) {
+    throw checkpointStop('checkpoint.signature', { runId }, undefined, stage);
+  }
+  let payload;
+  try {
+    payload = JSON.parse(envelope.payload);
+  } catch {
+    throw structure();
+  }
+  if (
+    !isPlainObject(payload) ||
+    payload.version !== CHECKPOINT_VERSION ||
+    payload.runId !== runId ||
+    !isCheckpointLineage(payload.lineage, runId) ||
+    !CHECKPOINT_PHASES.has(payload.phase) ||
+    !Number.isSafeInteger(payload.round) ||
+    payload.round < 1
+  ) {
+    throw structure();
+  }
+  return payload;
+}
+
+// The findings of a checkpoint have the shape the runner stores: reviewed
+// findings with an id, the writer's valid responses and identity pairs.
+function isCheckpointFindings(findings) {
+  const isList = (value, isItem) => Array.isArray(value) && value.every(isItem);
+  const isFinding = (finding) =>
+    isPlainObject(finding) &&
+    FINDING_SEVERITIES.includes(finding.severity) &&
+    typeof finding.findingId === 'string' &&
+    new RegExp(`^${FINDING_ID_PREFIX}[0-9a-f]{24}$`).test(finding.findingId) &&
+    ['file', 'anchor', 'category', 'location', 'impact', 'recommendation'].every(
+      (field) => typeof finding[field] === 'string',
+    );
+  const isResponse = (response) => {
+    try {
+      validateFindingResponse(response);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return (
+    isPlainObject(findings) &&
+    isList(findings.history, isFinding) &&
+    isList(findings.latest, isFinding) &&
+    isList(findings.pending, isFinding) &&
+    isList(findings.responses, isResponse) &&
+    isList(
+      findings.identities,
+      (pair) =>
+        Array.isArray(pair) && pair.length === 2 && typeof pair[0] === 'string',
+    )
+  );
+}
+
+// After a stop that is not resumable, a marker per run of the lineage in
+// the state directory: an older signed checkpoint of the same run restored
+// from a copy is refused too.
+async function revokeCheckpointRuns({ stateDirectory, runIds }) {
+  const directory = join(stateDirectory, CHECKPOINT_STOPPED_DIRECTORY);
+  await mkdir(directory, { mode: 0o700 }).catch((error) => {
+    if (error?.code !== 'EEXIST') throw error;
+  });
+  await assertPrivateStateDirectory(directory, 'workflow');
+  for (const runId of runIds) {
+    const handle = await open(join(directory, runId), 'wx', 0o600).catch(
+      (error) => {
+        if (error?.code === 'EEXIST') return undefined;
+        throw error;
+      },
+    );
+    await handle?.close();
+  }
+}
+
+// The first revoked run of the lineage; an unreadable marker counts as one.
+async function revokedCheckpointRun(stateDirectory, runIds) {
+  for (const runId of runIds) {
+    const revoked = await lstat(
+      join(stateDirectory, CHECKPOINT_STOPPED_DIRECTORY, runId),
+    ).then(
+      () => true,
+      (error) => error?.code !== 'ENOENT',
+    );
+    if (revoked) return runId;
+  }
+  return undefined;
+}
+
+// Functions (provider modules) by their source text, so the hash is the
+// same for the same profile in every process.
+function checkpointHash(value) {
+  try {
+    return sha256Hex(
+      JSON.stringify(value, (_, item) => {
+        if (typeof item === 'function') return `function ${item.toString()}`;
+        if (item instanceof Set || item instanceof Map) return [...item];
+        if (typeof item === 'bigint' || typeof item === 'symbol')
+          return String(item);
+        return item;
+      }),
+    );
+  } catch {
+    throw checkpointStop(
+      'checkpoint.profileUnhashable',
+      {},
+      'INVALID_CONFIGURATION',
+    );
+  }
+}
+
+async function readCheckpointTreeState({ runner, cwd, stage, manifest }) {
+  return {
+    manifest:
+      manifest ?? (await readRepositoryManifest({ runner, cwd, stage })).hash,
+    diff: sha256Hex(await fullDiff({ runner, cwd, stage })),
+  };
+}
+
 // Every message of the run is in the locale of its profile.
 export function runAgentReviewLoop(options) {
   return withLocale(profileLocale(options?.profile), () =>
@@ -9185,6 +9606,14 @@ async function runWorkflow(options) {
     // Review only: no writer; the uncommitted changes relative to HEAD at
     // the start are the candidate of a single review round.
     reviewOnly = false,
+    // Signed checkpoints after every phase (checkpoint), or the run id of a
+    // checkpointed run to continue (resume, which checkpoints too). The
+    // signing key is in stateDirectory: by default resolved from
+    // XDG_STATE_HOME or HOME (resolveCheckpointStateDirectory). Without
+    // these options nothing below changes and nothing is written there.
+    checkpoint: checkpointRequested = false,
+    resume,
+    stateDirectory,
     dryRun = false,
     maxRounds = MAX_ROUNDS,
     codexTimeoutMs = 45 * 60_000,
@@ -9346,6 +9775,29 @@ async function runWorkflow(options) {
   };
   // Report field runMode: only a review-only run has it.
   const runModeFields = () => (reviewOnly ? { runMode: 'review-only' } : {});
+  const checkpointing = checkpointRequested === true || resume !== undefined;
+  // Set once the checkpoint key is open: its directory, the run's lineage
+  // (the run ids it continues, then its own) and the last saved payload.
+  let checkpointContext;
+  let resumedFrom;
+  const checkpointReport = (stop) => {
+    if (!checkpointContext) return undefined;
+    const last = checkpointContext.last;
+    return {
+      path: last
+        ? join(STATE_DIRECTORY, 'runs', runId, CHECKPOINT_FILE)
+        : null,
+      signature: 'hmac-sha256',
+      phase: last?.phase ?? null,
+      round: last?.round ?? null,
+      ...(stop ? { resumable: Boolean(last) && stop.resumable } : {}),
+    };
+  };
+  // Report fields resumedFrom and checkpoint: only runs with checkpoints.
+  const checkpointFields = (stop) => ({
+    ...(resumedFrom ? { resumedFrom } : {}),
+    ...(checkpointContext ? { checkpoint: checkpointReport(stop) } : {}),
+  });
   // A review-only run has a single round: findings are not corrected.
   const roundLimit = reviewOnly ? 1 : maxRounds;
   let pendingFindings = [];
@@ -9399,6 +9851,21 @@ async function runWorkflow(options) {
         { code: 'INVALID_CONFIGURATION', stage: 'preflight' },
       );
     }
+    if (checkpointing && (dryRun || reviewOnly)) {
+      throw new AgentWorkflowError(msg('checkpoint.options'), {
+        code: 'INVALID_CONFIGURATION',
+        stage: 'preflight',
+      });
+    }
+    if (
+      resume !== undefined &&
+      (typeof resume !== 'string' || !RUN_ID_PATTERN.test(resume))
+    ) {
+      throw new AgentWorkflowError(msg('checkpoint.runId'), {
+        code: 'INVALID_CONFIGURATION',
+        stage: 'preflight',
+      });
+    }
     // Options override the profile within its allowlists. A new option
     // given together with its deprecated alias takes precedence.
     const optionModel =
@@ -9413,6 +9880,12 @@ async function runWorkflow(options) {
     // there is nothing to review.
     if (reviewOnly && selectedTaskMode !== 'implementation') {
       throw new AgentWorkflowError(msg('run.reviewOnlyTaskMode'), {
+        code: 'INVALID_TASK_MODE',
+        stage: 'preflight',
+      });
+    }
+    if (checkpointing && selectedTaskMode !== 'implementation') {
+      throw new AgentWorkflowError(msg('checkpoint.taskMode'), {
         code: 'INVALID_TASK_MODE',
         stage: 'preflight',
       });
@@ -9629,6 +10102,123 @@ async function runWorkflow(options) {
     });
     await assertFingerprintsUnchanged('preflight');
 
+    // Checkpoints: the key first (created by a run with checkpoints, only
+    // read by a resumed one), then the resumed run's checkpoint, verified
+    // against the fresh preflight. Any difference stops before any agent.
+    let resumeFrom;
+    let profileHash;
+    if (checkpointing) {
+      const keyDirectory =
+        stateDirectory ?? resolveCheckpointStateDirectory(sourceEnvironment);
+      const key = await openCheckpointKey({
+        stateDirectory: keyDirectory,
+        create: resume === undefined,
+        stage: 'preflight',
+      });
+      profileHash = checkpointHash({
+        profile,
+        projectProfile: projectProfileReport
+          ? {
+              sha256: projectProfileReport.sha256,
+              files: projectProfileReport.files,
+            }
+          : null,
+      });
+      if (resume !== undefined) {
+        const candidate = await readCheckpointFile({
+          runDirectory: join(cwd, STATE_DIRECTORY, 'runs', resume),
+          key,
+          runId: resume,
+          stage: 'preflight',
+        });
+        const humanDecision = (messageKey, params) =>
+          new AgentWorkflowError(msg(messageKey, { runId: resume, ...params }), {
+            code: 'HUMAN_DECISION_REQUIRED',
+            stage: 'preflight',
+          });
+        const revoked = await revokedCheckpointRun(
+          keyDirectory,
+          candidate.lineage,
+        );
+        if (revoked !== undefined)
+          throw humanDecision('checkpoint.revoked', { runId: revoked });
+        if (candidate.stop && candidate.stop.resumable !== true) {
+          throw humanDecision('checkpoint.notResumable', {
+            code: String(candidate.stop.code),
+          });
+        }
+        const mismatch = [
+          [
+            'task',
+            candidate.task?.path === task.path &&
+              candidate.task?.sha256 === task.hash &&
+              candidate.task?.mode === selectedTaskMode,
+          ],
+          ['profile', candidate.profile === profileHash],
+          ['runner', candidate.runner === runnerFingerprint.sha256],
+          ['branch', candidate.branch === branch],
+          ['HEAD', candidate.head === head],
+          ['maxRounds', candidate.maxRounds === roundLimit],
+        ].find(([, same]) => !same);
+        if (mismatch)
+          throw humanDecision('checkpoint.mismatch', { field: mismatch[0] });
+        const tree = await readCheckpointTreeState({
+          runner,
+          cwd,
+          stage: 'preflight',
+        });
+        if (
+          tree.manifest !== candidate.tree?.manifest ||
+          tree.diff !== candidate.tree?.diff
+        ) {
+          throw humanDecision('checkpoint.mismatch', { field: 'working tree' });
+        }
+        // A signed payload is validated again like the writer's output: a
+        // malformed one is a damaged checkpoint, as in readCheckpointFile.
+        let codexReport;
+        try {
+          if (!isCheckpointFindings(candidate.findings)) throw new Error();
+          if (candidate.phase !== 'review')
+            codexReport = validateCodexReport(
+              candidate.codexReport,
+              candidate.findings.pending,
+              selectedTaskMode,
+            );
+        } catch {
+          throw checkpointStop('checkpoint.structure', { runId: resume });
+        }
+        // Nothing is left after an approving review, or after the gates
+        // of a class without review.
+        if (
+          (candidate.phase === 'review' &&
+            candidate.findings.pending.length === 0) ||
+          (candidate.phase === 'checks' && !quality.independentReviewRequired)
+        ) {
+          throw humanDecision('checkpoint.completed');
+        }
+        // The round limit counts the rounds of every run of the lineage: a
+        // review phase continues with the next round, any other phase with
+        // the same one.
+        if (
+          candidate.round > roundLimit ||
+          (candidate.phase === 'review' && candidate.round >= roundLimit)
+        ) {
+          throw humanDecision('checkpoint.roundLimit', {
+            maxRounds: roundLimit,
+          });
+        }
+        resumeFrom = { ...candidate, codexReport };
+        resumedFrom = resume;
+      }
+      checkpointContext = {
+        key,
+        stateDirectory: keyDirectory,
+        runsDirectory: join(cwd, STATE_DIRECTORY, 'runs'),
+        lineage: [...(resumeFrom?.lineage ?? []), runId],
+        last: undefined,
+      };
+    }
+
     const copyInputMetadata = () => ({
       branch,
       head,
@@ -9757,10 +10347,72 @@ async function runWorkflow(options) {
       status: 'PASS',
       durationMs: monotonicNow() - workflowStartedAt,
     });
-    const knownFindingIdentities = new Map();
+    // A checkpoint stores redacted text: an identity that redaction changed
+    // no longer matches its finding id and is not restored, so the same
+    // finding reported again keeps its id instead of a collision.
+    const knownFindingIdentities = new Map(
+      (resumeFrom?.findings.identities ?? []).filter(([findingId, identity]) => {
+        try {
+          return findingIdFor(identity) === findingId;
+        } catch {
+          return false;
+        }
+      }),
+    );
     let sessionId;
+    // A resumed run continues after the last completed phase with the
+    // checkpoint's round and findings; the writer's session is not resumed.
+    let startRound = 1;
+    if (resumeFrom) {
+      for (const finding of resumeFrom.findings.history)
+        findingHistory.set(finding.findingId, finding);
+      responseHistory.push(...resumeFrom.findings.responses);
+      latestFindings = resumeFrom.findings.latest;
+      pendingFindings = resumeFrom.findings.pending;
+      startRound =
+        resumeFrom.phase === 'review' ? resumeFrom.round + 1 : resumeFrom.round;
+    }
+    // A signed checkpoint after each completed phase (fields: phase, round,
+    // tree, and the writer's report). Gate results are never stored: a
+    // resumed run always runs the gates and the review again.
+    const saveCheckpoint = async ({ pending = pendingFindings, ...fields }) => {
+      if (!checkpointContext) return;
+      const payload = {
+        version: CHECKPOINT_VERSION,
+        runId,
+        lineage: checkpointContext.lineage,
+        ...(resumedFrom ? { resumedFrom } : {}),
+        task: { path: task.path, sha256: task.hash, mode: selectedTaskMode },
+        profile: profileHash,
+        runner: runnerFingerprint.sha256,
+        maxRounds: roundLimit,
+        branch,
+        head,
+        dependencies: {
+          metadata: dependencyMetadata.hash,
+          inputs: dependencyInputs.hash,
+          corepackCache: checkPreparation.cache?.manifestHash ?? null,
+        },
+        findings: {
+          history: [...findingHistory.values()],
+          responses: responseHistory,
+          latest: latestFindings,
+          pending,
+          identities: [...knownFindingIdentities],
+        },
+        stop: null,
+        ...fields,
+      };
+      await writeCheckpointFile({
+        runDirectory,
+        key: checkpointContext.key,
+        payload,
+        stage: `post-${fields.phase}`,
+      });
+      checkpointContext.last = payload;
+    };
 
-    for (let round = 1; round <= roundLimit; round += 1) {
+    for (let round = startRound; round <= roundLimit; round += 1) {
       assertNotCancelled(runner, reviewOnly ? 'checks' : 'implementer');
       emit({
         type: 'round:start',
@@ -9827,7 +10479,14 @@ async function runWorkflow(options) {
       let solExecution;
       let codexResult;
       let analysisArtifact;
-      if (!reviewOnly) {
+      // Resumed after the writer's phase: its validated report comes from
+      // the checkpoint and no writer starts in this round.
+      const resumedWriter =
+        Boolean(resumeFrom) &&
+        round === startRound &&
+        resumeFrom.phase !== 'review';
+      if (resumedWriter) codexResult = { report: resumeFrom.codexReport };
+      if (!reviewOnly && !resumedWriter) {
         const codexStageId = `round-${round}:implementer`;
         const codexStartedAt = monotonicNow();
         solExecution = {
@@ -9964,7 +10623,10 @@ async function runWorkflow(options) {
             codexResult.report = validatedCodexReport;
           }
         } catch (error) {
-          throw await profileViolationFirst(error, 'post-implementer');
+          throw await profileViolationFirst(
+            await withImplementerStateViolation(error, 'post-implementer'),
+            'post-implementer',
+          );
         }
         responseHistory.push(...codexResult.report.findingResponses);
         const needsHuman = codexResult.report.findingResponses.find(
@@ -10043,6 +10705,18 @@ async function runWorkflow(options) {
             : appendIntegrityViolation(humanDecisionError, integrityError);
         }
         if (humanDecisionError) throw humanDecisionError;
+        if (checkpointContext) {
+          await saveCheckpoint({
+            phase: 'implementer',
+            round,
+            tree: await readCheckpointTreeState({
+              runner,
+              cwd,
+              stage: 'post-implementer',
+            }),
+            codexReport: codexResult.report,
+          });
+        }
       }
       let gateReport;
       let integrityReport;
@@ -10192,6 +10866,21 @@ async function runWorkflow(options) {
           task.checks,
           selectedProfile,
         );
+        // The state after the gates, before the review; a resumed run
+        // continues with the gates of this round.
+        if (checkpointContext) {
+          await saveCheckpoint({
+            phase: 'checks',
+            round,
+            tree: await readCheckpointTreeState({
+              runner,
+              cwd,
+              stage: 'post-checks',
+              manifest: afterChecks.hash,
+            }),
+            codexReport: codexResult?.report ?? null,
+          });
+        }
       } else {
         const integrityStageId = `round-${round}:integrity`;
         const integrityStartedAt = monotonicNow();
@@ -10278,6 +10967,7 @@ async function runWorkflow(options) {
           nextStep: quality.remainingAssurance,
           ...projectProfileFields(),
           ...runnerFields(),
+          ...checkpointFields(),
         };
         await saveJson(join(runDirectory, 'report.json'), report);
         break;
@@ -10475,6 +11165,18 @@ async function runWorkflow(options) {
       const unresolvedFindings = reviewedFindings.filter(({ severity }) =>
         UNRESOLVED_FINDING_SEVERITIES.has(severity),
       );
+      if (checkpointContext) {
+        await saveCheckpoint({
+          phase: 'review',
+          round,
+          tree: await readCheckpointTreeState({
+            runner,
+            cwd,
+            stage: 'post-review',
+          }),
+          pending: unresolvedFindings,
+        });
+      }
       emit({
         type: 'activity',
         role: 'CLAUDE',
@@ -10576,6 +11278,7 @@ async function runWorkflow(options) {
             msg('report.nextStep'),
           ...projectProfileFields(),
           ...runnerFields(),
+          ...checkpointFields(),
         };
         await saveJson(join(runDirectory, 'report.json'), report);
         break;
@@ -10644,7 +11347,9 @@ async function runWorkflow(options) {
       error: boundedUtf8(redactSensitive(normalized.message), 1_000),
       resume:
         normalized.resume ??
-        msg('run.resume'),
+        (checkpointContext?.last && isResumableStop(normalized)
+          ? msg('checkpoint.resumeHint', { runId })
+          : msg('run.resume')),
       ...(quality?.independentReviewRequired === false
         ? {}
         : buildFindingState({
@@ -10663,6 +11368,73 @@ async function runWorkflow(options) {
       ...projectProfileFields(),
       ...runnerFields(),
     };
+    // The stop is recorded in the signed checkpoint; after a stop that is
+    // not resumable every run of the lineage is revoked in the state
+    // directory. Neither write changes the stop code. When either fails,
+    // the run fails closed: every run of the lineage is revoked and its
+    // checkpoint removed, and the report carries a warning.
+    if (checkpointContext) {
+      let resumable = isResumableStop(normalized);
+      let recordFailure;
+      if (checkpointContext.last) {
+        await writeCheckpointFile({
+          runDirectory,
+          key: checkpointContext.key,
+          payload: {
+            ...checkpointContext.last,
+            stop: {
+              code: normalized.code,
+              stage: normalized.stage ?? null,
+              resumable,
+            },
+          },
+          stage: 'workflow',
+        }).catch((error) => {
+          recordFailure = error;
+        });
+      }
+      if (!resumable || recordFailure) {
+        await revokeCheckpointRuns({
+          stateDirectory: checkpointContext.stateDirectory,
+          runIds: checkpointContext.lineage,
+        }).catch((error) => {
+          recordFailure ??= error;
+        });
+      }
+      if (recordFailure) {
+        resumable = false;
+        const kept = [];
+        for (const lineageRunId of checkpointContext.lineage) {
+          const path = join(
+            checkpointContext.runsDirectory,
+            lineageRunId,
+            CHECKPOINT_FILE,
+          );
+          await unlink(path).catch((error) => {
+            if (error?.code !== 'ENOENT') kept.push(lineageRunId);
+          });
+        }
+        checkpointContext.last = undefined;
+        report.resume = normalized.resume ?? msg('run.resume');
+        report.warnings = [
+          ...(report.warnings ?? []),
+          msg(
+            kept.length > 0
+              ? 'checkpoint.neutralizeFailed'
+              : 'checkpoint.stopRecordFailed',
+            {
+              detail: redactSensitive(
+                recordFailure instanceof Error
+                  ? recordFailure.message
+                  : String(recordFailure),
+              ),
+              runIds: kept.join(', '),
+            },
+          ),
+        ];
+      }
+      Object.assign(report, checkpointFields({ resumable }));
+    }
     if (runDirectory) report.reportPath = reportPath;
     if (normalized.diagnostic && runDirectory) {
       const includeStdout = !['implementer', 'reviewer'].includes(

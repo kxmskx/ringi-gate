@@ -15,7 +15,8 @@
     "durationMs": "Pola durationMs (zegar rzeczywisty procesów bramek) mają wartość 0.",
     "dependencyMetadataFingerprint": "dependencyMetadata.fingerprint (SHA-256 z inode i mtime plików node_modules, które test tworzy w każdym przebiegu) ma wartość \"<sha256>\" po sprawdzeniu formatu.",
     "temporaryPaths": "Ścieżki katalogów tymczasowych tworzonych przez test (repozytorium, tempRoot rundy, katalog CLI; także po realpath) są zastąpione znacznikami <repo>, <temp>, <root>.",
-    "runnerFingerprint": "Pole raportu runner (odcisk SHA-256 plików runnera, zmienia się z każdą zmianą kodu runnera; także w raporcie zdarzenia result i w raporcie partial) jest pominięte po sprawdzeniu formatu, jak w wersji sprzed tego pola."
+    "runnerFingerprint": "Pole raportu runner (odcisk SHA-256 plików runnera, zmienia się z każdą zmianą kodu runnera; także w raporcie zdarzenia result i w raporcie partial) jest pominięte po sprawdzeniu formatu, jak w wersji sprzed tego pola.",
+    "ledgerHeadHash": "ledger.headHash w raporcie (SHA-256 ostatniej linii ledgera, którego zdarzenie fingerprints zawiera odcisk runnera; także w raporcie zdarzenia result i w raporcie partial) ma wartość \"<sha256>\" po sprawdzeniu formatu."
   },
   "entries": {
     "dry-run implementation": {
@@ -105,12 +106,12 @@
       },
       "subtrees": {
         "report": {
-          "sha256": "81412e9e97352b1d43f4754f493306e6059b1b0253c87d1ca4785adb85a6d0a0",
-          "orderedSha256": "b1c21657d77cc15b99dbc1f50519700f29f759ce42d88ab77944ae44b2bc1365"
+          "sha256": "3b3d77563fe1862f301b17a51a5b5741144d38da3afc3fdb31c5f7d64c239e55",
+          "orderedSha256": "f8b366ae4c2f658f6fafe9f99cb3c7b67e14f7b49295e64daf780d6bdeb3a7f4"
         },
         "events": {
-          "sha256": "3ef00fd0beaa2232a7bb522a8edcd6f0fa62674fdd4f92319012b08ea377835d",
-          "orderedSha256": "e4f1e4c80cdc45bf39fe8140533277fa497d6407e6ac6960ff4737a781d8f32b"
+          "sha256": "e741a0f4b93a805600c35649f0a96f81291e633c490ff8fdbba5cc5b9e168f90",
+          "orderedSha256": "fe744012b5d93bfbd416dc06af9aa310fe22b965f43625a26d4e6fdd8352f4da"
         }
       }
     },
@@ -129,12 +130,12 @@
       },
       "subtrees": {
         "report": {
-          "sha256": "4bb5b40025fd419ab8fc8c983dbc7ebc7bf52e0f32096f182389572927f3d6d8",
-          "orderedSha256": "b11bb28e7c03ea65dd8a26d3f3a5bfdde023767413d92fad03d1327f07354ecf"
+          "sha256": "cf0df7cf113557b7839bfbf4c83406e8bc3ae513ea25feb53c2162d75bcf3137",
+          "orderedSha256": "dfc1530c3e944491c598647c3c83573b9cdb83914d7157b3338069ec08663f31"
         },
         "events": {
-          "sha256": "bf521ca7381a94bf3135264ce5607aa701d32521f38c0789c9737b56ad38144f",
-          "orderedSha256": "42a946c397569425dc4b12de46ff61e55fd4ed949d10ee5c2aa3a762bcea5ebc"
+          "sha256": "f515ebffee906a080d1b084306b9120cd43aab8a5ea75e3b11227671dd33d3b8",
+          "orderedSha256": "9e0d4883dbdc96e5c59e54dbcf7bceb782dc8462de2a996aeebb9e04b37a558a"
         }
       }
     },
@@ -153,12 +154,12 @@
       },
       "subtrees": {
         "report": {
-          "sha256": "a64c2c81669d2f381b49a3f1e6a490f4c60e188cffe7042d01c6726090a3fccb",
-          "orderedSha256": "3f641e8498d4c93439dece7fc5c510ca19748ce37ebb369a45256261988eeb94"
+          "sha256": "8dffc77b3428a70372f1b451b9c69a267b66e29bb2dc389e3779f8f9a38a5aca",
+          "orderedSha256": "3fb7af906ec981d378a7a315747513310ea0be95ef2659a33c3c0c4774775d5f"
         },
         "events": {
-          "sha256": "ac8d48dc70d7c3868c7cf1597f0685202bdfb551db87df5b5bc01e363e9fae2a",
-          "orderedSha256": "b44d48837a8cf52c397c2cdbb41bc740d868b58fc55aec2171520ad381ab1a8b"
+          "sha256": "1b011bea8a43ce56b525a858b32df8b4b7f20ad5c1210f0af8bb6a97a9004e78",
+          "orderedSha256": "9f84f0f150eddfa70920167acef191918853dcfbc8e35b29a0c6602a6094b1bc"
         }
       }
     },
@@ -177,12 +178,12 @@
       },
       "subtrees": {
         "report": {
-          "sha256": "ce58c5fda214735f21e74d2f365faa0e48967e516cafe07055beee45e47b3df5",
-          "orderedSha256": "62908ff4e267cce73e87aea33a38b4f6734b34740a248f816fb82130ffe369b7"
+          "sha256": "1351695bc2217fec8f6dfd6023a0e1ce5d8aa1b583d9e7a85272dfd928c89e5e",
+          "orderedSha256": "68744566af9ae5e463953eecd39aa52fa75f345c131ce8460da54bc00cc5d913"
         },
         "events": {
-          "sha256": "dd123320cb7b52a19f6ccd728bac9d77620231aaf34aab04ac4ab0086ec8fd02",
-          "orderedSha256": "0edff0d76e61af40305b53325a0094965dd65c714a8de9f391943e6555ddae02"
+          "sha256": "709daf483c29a4709a5d3e91e307ec723b4a96599ad5c6ab7301bad17e202e76",
+          "orderedSha256": "c16664a857e5d7383bc96f98879f88f29b904e95dca9566656270cc4cb113dac"
         }
       }
     },
@@ -201,12 +202,12 @@
       },
       "subtrees": {
         "report": {
-          "sha256": "af3d53aa0db19e0772493d8879162e19c412b00b6d4bdfe5477f3d24770c5cae",
-          "orderedSha256": "6273f6877c574c109e99d923c88fcb9f453f01c037d0871cde33b20a8a3849ff"
+          "sha256": "c6347cee36da1ba2bc16043807e113fc036daa4c70b9d1c0909b1ec571d626a8",
+          "orderedSha256": "1151203bc632d7eb0bdb987b7130bcb9d5efdea87cc3d1c32ec0f5efe3ba529f"
         },
         "events": {
-          "sha256": "b0fb260a8822c555afd2a9ce5fdd08f77d0e248dfd76b3308f40c53ffb81e2fc",
-          "orderedSha256": "77aa11d02afdabf2f9c8e9e38b8d89c520aca464a21697bb7795982d75c30cc2"
+          "sha256": "023fb19c6b6a5b958fced506fe03d2246a400dca20888a411250bb7e91cd1030",
+          "orderedSha256": "c4cf3849d6fde7ed218809e1d438b40570e096b537188d8032313386b4c92423"
         }
       }
     },

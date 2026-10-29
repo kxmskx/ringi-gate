@@ -2,12 +2,13 @@
 
 `ringi` runs Ringi Gate on the Git repository of the current directory, with
 the project profile from `ringi.config.mjs` at that repository's root. It has
-three commands:
+four commands:
 
 - `ringi init` prepares a project: a profile and a task template;
 - `ringi doctor` checks the repository and the machine before a run;
 - `ringi run <task.md> [options]` runs the writer, the gates and the
-  independent review.
+  independent review;
+- `ringi verify <runId>` verifies the evidence ledger of a run.
 
 From version 0.1.0 the npm package `ringi-gate` installs the command
 (see [Installation from npm](../README.md#installation-from-npm)). The
@@ -326,7 +327,7 @@ Refusals (all in the preflight, before any agent):
 | --- | --- |
 | `--checkpoint` or `--resume` with `--dry-run`, `--review-only` or `--task-mode analysis` | argument error (exit code `2`); in the API `INVALID_CONFIGURATION` or `INVALID_TASK_MODE` |
 | No checkpoint for the run id, an invalid run id, no `XDG_STATE_HOME` or `HOME` | `INVALID_CONFIGURATION` |
-| Missing key, a key or key directory with looser permissions, another owner or a symbolic link, a malformed checkpoint, a signature that does not verify | `INTEGRITY_CHECK_FAILED` |
+| Missing key, a key or key directory with looser permissions, another owner or a symbolic link, a malformed checkpoint, a signature that does not verify, a [ledger](ledger.md) of the run that is missing, does not verify with the key or whose last `checkpoint` event is not this checkpoint | `INTEGRITY_CHECK_FAILED` |
 | A stop that is not resumable, another task, profile, runner, branch, `HEAD`, round limit or working tree, a run with nothing left, a round limit already used | `HUMAN_DECISION_REQUIRED` |
 
 Resumable stops are an allowlist (`RESUMABLE_STOP_CODES` in the runner):
@@ -354,7 +355,12 @@ checkpoint forged that way can change the round or the findings history a
 resume continues with, but it cannot make a run approve without fresh gates
 and, for a task class with review, a fresh review with no unresolved
 findings. Without `--checkpoint` or `--resume` a run writes nothing there
-and its report is unchanged.
+and its report has no `checkpoint` or `resumedFrom`; it only reads an
+existing key to sign its [ledger](ledger.md).
+
+A resumed run continues the ledger of the run it resumes: its first line's
+`prev` is that ledger's last line, and its `resume` event names it. The
+ledger only documents the lineage; the gates and the review still run again.
 
 Exit codes are those of the earlier CLI: `0` for a completed run (`APPROVE`
 or `DRY_RUN_OK`), `1` for a stopped run, `2` for invalid arguments or an
@@ -385,3 +391,48 @@ revert the change: review the diff of the profile files
 (`git diff HEAD -- <files>`) and revert it. Until then `ringi run` stops
 with `PROFILE_UNCOMMITTED` and `ringi doctor` fails, without importing a
 changed `ringi.config.mjs`.
+
+Every run that reaches its run directory writes the evidence ledger
+`.agent-review-loop/runs/<runId>/ledger.jsonl` (see [ledger.md](ledger.md))
+and its report has `ledger: { path, events, headHash }`. An event that cannot
+be written stops the run with `INTEGRITY_CHECK_FAILED`, which is not
+resumable; when the stop or the result cannot be written, the report's
+`warnings` say that the ledger is incomplete.
+
+## `ringi verify`
+
+```sh
+ringi verify <runId> [--json]
+```
+
+Verifies the ledger of a run of the Git repository of the current directory,
+read-only:
+
+- every line is a ledger line of `ledgerVersion` 1, `seq` runs from 1
+  without gaps, each `prev` is the SHA-256 of the line before, the first event
+  is `preflight`, and with the key every `mac` matches;
+- the report of the run: `report.ledger` names this file, its number of events
+  and its last line's hash, the run id, the `runner` and `projectProfile`
+  fingerprints match the `fingerprints` event, and the last event is the
+  `result` with the report's `status`;
+- for a resumed run, the ledger of the run it resumed names that run, verifies
+  and ends at the first line's `prev`.
+
+The key is the checkpoint key (`$XDG_STATE_HOME/ringi/checkpoint.key` or
+`~/.local/state/ringi/checkpoint.key`), only read with the same permission
+checks as a resume; `ringi verify` never creates it. Without the key only the
+hash chain is verified and a warning says that this does not prove the ledger
+is authentic. When the key exists but the ledger has no `mac`, the result is
+`unverified`: the ledger was written without the key, or its macs were
+removed, and the two cannot be told apart.
+
+The output is `ok`, `unverified` or `fail` with the first mismatch (event
+number, check and message); `--json` prints `status` (`ok`, `unverified` or
+`fail`), `runId`, `ledger`, `events`, `headHash`, `mac` (`verified`,
+`not-verified` or `absent`), `key` (`present`, `no-key`, `key-unsafe` or
+`no-state-directory`), `failure` and `warnings`.
+
+Exit codes: `0` when the ledger verifies (`ok`), `1` at the first mismatch
+(also a missing ledger or report) or for `unverified`, `2` for invalid
+arguments (not exactly one run id, an unknown option) or outside a Git
+repository.

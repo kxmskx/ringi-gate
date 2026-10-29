@@ -1,4 +1,4 @@
-// The ringi command: init, doctor and run. `ringi run` is the runner of
+// The ringi command: init, doctor, run and verify. `ringi run` is the runner of
 // scripts/agent-review-loop.mjs with two differences: the profile comes from
 // ringi.config.mjs at the root of the Git repository of the current
 // directory (loadProjectProfile, fingerprinted; it runs only when committed),
@@ -11,10 +11,13 @@ import { fileURLToPath } from 'node:url';
 import {
   AgentWorkflowError,
   createProcessRunner,
+  isRunId,
   loadProjectProfile,
   redactSensitive,
+  resolveCheckpointStateDirectory,
   resolveReviewProfile,
   runAgentReviewLoop,
+  verifyRunLedger,
 } from './agent-review-loop-lib.mjs';
 import {
   createTerminalDashboard,
@@ -39,6 +42,7 @@ Commands:
   init     Create ringi.config.mjs and tasks/example-task.md in the repository root
   doctor   Check the repository and this machine before a run (read-only)
   run      Run the writer, the gates and the independent review on a task
+  verify   Verify the evidence ledger of a run (read-only)
 
 Options:
   -h, --help     Show this help (or the help of a command)
@@ -97,6 +101,22 @@ Options:
 Exit code: 0 for a completed run, 1 for a stopped run, 2 for invalid arguments
 or an error outside the runner.
 `,
+  verify: `Usage: ringi verify <runId> [--json]
+
+Verifies the evidence ledger of a run of the Git repository of the current
+directory (.agent-review-loop/runs/<runId>/ledger.jsonl): the prev chain,
+seq, every mac with the checkpoint key, report.ledger and the fingerprints
+of report.json, and for a resumed run the ledger it continues. Read-only:
+the key is never created. Without the key only the chain is verified, which
+does not prove that the ledger is authentic. See docs/ledger.md.
+
+Options:
+  --json      Print the result as JSON
+  -h, --help  Show this help
+
+Exit code: 0 when the ledger verifies, 1 at the first mismatch, 2 for invalid
+arguments or outside a Git repository.
+`,
 };
 
 const write = (stream, text) => stream.write(text.endsWith('\n') ? text : `${text}\n`);
@@ -140,7 +160,84 @@ export async function main(argv) {
   }
   if (command === 'init') return initCommand(args);
   if (command === 'doctor') return doctorCommand(args);
+  if (command === 'verify') return verifyCommand(args);
   return runCommand(args);
+}
+
+// Warnings of a result: what a chain without a verified mac does not prove.
+// A ledger without a mac may have been written without the key or had its
+// macs removed; the two cannot be told apart.
+const VERIFY_WARNINGS = {
+  absent:
+    'The ledger has no mac (it was written without the checkpoint key, or its macs were removed): only the hash chain was verified, which does not prove that the ledger is authentic.',
+  'not-verified':
+    'The checkpoint key is not available: only the hash chain was verified, which does not prove that the ledger is authentic.',
+  unverified:
+    'The checkpoint key exists but the ledger has no mac: it was written without the key, or its macs were removed. Only the hash chain was verified, which does not prove that the ledger is authentic.',
+};
+const KEY_WARNINGS = {
+  'key-unsafe':
+    'The checkpoint key exists but is not a private file of the current user (mode 0600) in a private directory (mode 0700); it was not used.',
+};
+
+async function verifyCommand(args) {
+  const json = args.includes('--json');
+  const operands = args.filter((argument) => argument !== '--json');
+  const unknown = operands.find((argument) => argument.startsWith('-'));
+  if (unknown !== undefined)
+    return usageError(`unknown option ${JSON.stringify(unknown)} for verify.`, COMMAND_HELP.verify);
+  if (operands.length !== 1)
+    return usageError('verify takes exactly one run id.', COMMAND_HELP.verify);
+  const [runId] = operands;
+  if (!isRunId(runId))
+    return usageError(`${JSON.stringify(runId)} is not a run id.`, COMMAND_HELP.verify);
+  const runner = createProcessRunner({ output: { write() {} } });
+  let root;
+  try {
+    root = await findRepositoryRoot(runner, process.cwd());
+  } catch (error) {
+    write(
+      process.stderr,
+      gitLocationError(error)
+        ? `ringi verify: ${error.message}`
+        : 'ringi verify: not inside a Git repository.',
+    );
+    return 2;
+  }
+  const result = await verifyRunLedger({
+    repositoryRoot: root,
+    runId,
+    stateDirectory: resolveCheckpointStateDirectory(process.env),
+  });
+  const verifyWarning =
+    result.status === 'unverified'
+      ? VERIFY_WARNINGS.unverified
+      : VERIFY_WARNINGS[result.mac];
+  const warnings = [
+    ...(KEY_WARNINGS[result.key] ? [KEY_WARNINGS[result.key]] : []),
+    ...(verifyWarning ? [verifyWarning] : []),
+  ];
+  if (json) {
+    write(process.stdout, JSON.stringify({ ...result, warnings }, null, 2));
+  } else {
+    const lines = [
+      result.status === 'fail'
+        ? `fail: ${result.ledger}`
+        : `${result.status}: ${result.ledger} (${result.events} events, ${result.mac === 'verified' ? 'chain and mac verified' : 'chain only'})`,
+      ...(result.headHash ? [`head: ${result.headHash}`] : []),
+      ...(result.failure
+        ? [
+            `first mismatch${result.failure.seq ? ` (event ${result.failure.seq})` : ''}: ${result.failure.check}: ${result.failure.message}`,
+          ]
+        : []),
+      ...warnings.map((warning) => `warning: ${warning}`),
+    ];
+    write(process.stdout, lines.join('\n'));
+  }
+  // 'unverified' is not a success: with the key present, a ledger without a
+  // mac is what a rewrite without the key looks like. Exit code 2 stays for
+  // argument and repository errors.
+  return result.status === 'ok' ? 0 : 1;
 }
 
 async function initCommand(args) {

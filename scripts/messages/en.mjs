@@ -81,6 +81,11 @@ export default Object.freeze({
     'The stop could not be recorded in the checkpoint or revoked ({detail}); the checkpoints of this run were removed and it cannot be resumed.',
   'checkpoint.neutralizeFailed':
     'The stop could not be recorded in the checkpoint or revoked ({detail}), and the checkpoint of run {runIds} could not be removed: do not resume it.',
+  'checkpoint.ledger':
+    'The ledger of run {runId} does not verify with the checkpoint key ({detail}); the checkpoint is not trusted.',
+  'ledger.writeFailed': 'The run ledger could not be written: {detail}',
+  'ledger.incomplete':
+    'The run ledger is incomplete: an event could not be written. ringi verify reports the mismatch.',
   'cleanup.failed': 'Cleanup failed: {detail}',
   'cleanup.unknownResource': 'Refused to clean up an unknown resource.',
 

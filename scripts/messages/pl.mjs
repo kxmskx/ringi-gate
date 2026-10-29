@@ -81,6 +81,11 @@ export default Object.freeze({
     'Zapis stopu w checkpoincie lub unieważnienie nie powiodły się ({detail}); checkpointy tego przebiegu usunięto i nie można go wznowić.',
   'checkpoint.neutralizeFailed':
     'Zapis stopu w checkpoincie lub unieważnienie nie powiodły się ({detail}), a checkpointu przebiegu {runIds} nie udało się usunąć: nie wznawiaj go.',
+  'checkpoint.ledger':
+    'Ledger przebiegu {runId} nie przechodzi weryfikacji kluczem checkpointu ({detail}); checkpoint nie jest zaufany.',
+  'ledger.writeFailed': 'Nie udało się zapisać ledgera przebiegu: {detail}',
+  'ledger.incomplete':
+    'Ledger przebiegu jest niekompletny: nie udało się zapisać zdarzenia. ringi verify wskaże niezgodność.',
   'cleanup.failed': 'Cleanup nie powiódł się: {detail}',
   'cleanup.unknownResource': 'Odmowa cleanupu nieznanego zasobu.',
 

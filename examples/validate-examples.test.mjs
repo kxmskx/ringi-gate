@@ -361,6 +361,110 @@ test('docs candidate rule accepts handbook/ when the profile adds it', async () 
   }
 });
 
+// A text check of the example workflow of ringi ci, not a YAML parser (no
+// dependency): its events, permissions, pinned actions, concurrency, the
+// draft rule, the always-running aggregator and the job lists of its lanes.
+test('example ringi ci workflow keeps the rules of docs/ci.md', async () => {
+  const text = await readFile(
+    new URL('./github-actions/ringi-ci.yml', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(text, /\t/);
+  // Events: the pull request types (edited for a change of the base branch)
+  // and a push to the default branch only.
+  assert.match(
+    text,
+    /^on:\n {2}pull_request:\n {4}types: \[opened, edited, synchronize, reopened, ready_for_review, converted_to_draft\]\n {2}push:\n {4}branches: \[main\]\n\n/m,
+  );
+  // No job depends on what an edit changed: a skipped job would pass.
+  assert.doesNotMatch(text, /github\.event\.changes/);
+  // ringi-gate comes from the project's pnpm lockfile, without install
+  // scripts, and runs with pnpm exec.
+  assert.doesNotMatch(text, /\bnpx\b|\bnpm (?:ci|install)\b/);
+  const ringiCalls = [...text.matchAll(/^ {10}pnpm exec ringi ci (classify|aggregate) /gm)];
+  assert.deepEqual(ringiCalls.map(([, command]) => command), ['classify', 'aggregate']);
+  assert.equal(
+    [...text.matchAll(/^ {10}corepack enable pnpm\n {10}pnpm install --frozen-lockfile --ignore-scripts\n/gm)].length,
+    2,
+  );
+  assert.doesNotMatch(
+    text,
+    /pull_request_target|workflow_run|paths-ignore|paths:|skip-ci|skip ci|ci skip/,
+  );
+  // No secrets, no token, no write permission.
+  assert.doesNotMatch(text, /secrets|TOKEN|github\.token|id-token|write/i);
+  assert.match(text, /^permissions:\n {2}contents: read\n\n/m);
+  assert.equal([...text.matchAll(/permissions:/g)].length, 1);
+  // Actions of actions/* only, pinned to a commit SHA; every checkout
+  // without persisted credentials.
+  const uses = [...text.matchAll(/^\s*-?\s*uses:\s*(.+)$/gm)].map(([, value]) => value);
+  assert.ok(uses.length >= 4);
+  for (const value of uses)
+    assert.match(value, /^actions\/(?:checkout|setup-node)@[0-9a-f]{40} # v\d+\.\d+\.\d+$/, value);
+  const checkouts = uses.filter((value) => value.startsWith('actions/checkout@')).length;
+  assert.equal([...text.matchAll(/^ {10}persist-credentials: false$/gm)].length, checkouts);
+  // Concurrency: the workflow and the pull request number; a push has a
+  // group of its own (run_id) and only a pull request cancels.
+  assert.match(
+    text,
+    /^concurrency:\n {2}group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'pull_request' && format\('pr-\{0\}', github\.event\.pull_request\.number\) \|\| format\('run-\{0\}', github\.run_id\) \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}\n/m,
+  );
+  // Jobs and their conditions.
+  const jobsText = text.slice(text.indexOf('\njobs:\n'));
+  const jobs = [...jobsText.matchAll(/^ {2}([a-z][a-z-]*):\n/gm)].map(([, id]) => id);
+  assert.deepEqual(jobs, ['classify', 'whitespace', 'test', 'required']);
+  const job = (id) => {
+    const start = jobsText.indexOf(`\n  ${id}:\n`);
+    const next = jobs[jobs.indexOf(id) + 1];
+    return jobsText.slice(start, next ? jobsText.indexOf(`\n  ${next}:\n`) : undefined);
+  };
+  assert.doesNotMatch(job('classify'), /^ {4}if:/m);
+  assert.match(job('classify'), /ringi ci classify --base "\$base" --head "\$head" >> "\$GITHUB_OUTPUT"/);
+  assert.match(job('classify'), /test "\$\(git rev-parse HEAD\^2\)" = "\$PR_HEAD"/);
+  assert.match(job('whitespace'), /^ {4}if: github\.event\.pull_request\.draft != true$/m);
+  assert.match(
+    job('test'),
+    /^ {4}if: needs\.classify\.outputs\.lane == 'full' && github\.event\.pull_request\.draft != true$/m,
+  );
+  // The aggregator always runs, under a fixed name, red for a draft, and
+  // its job lists are the jobs it needs.
+  const required = job('required');
+  assert.match(required, /^ {4}name: ringi-ci required$/m);
+  assert.match(required, /^ {4}if: always\(\)$/m);
+  assert.equal([...text.matchAll(/always\(\)/g)].length, 2, 'the job and its comment');
+  assert.doesNotMatch(text, /success\(\)|continue-on-error/);
+  assert.match(
+    required,
+    /- name: A draft is not ready\n {8}if: github\.event\.pull_request\.draft == true\n {8}run: \|\n(?: {10}.+\n)+ {10}exit 1\n/,
+  );
+  const aggregate = required.match(
+    /ringi ci aggregate --lane "\$LANE" --needs "\$RUNNER_TEMP\/needs\.json" --classify-job (\S+) --docs-jobs (\S+) --full-jobs (\S+)\n/,
+  );
+  assert.ok(aggregate);
+  const [, classifyJob, docsJobs, fullJobs] = aggregate;
+  assert.equal(classifyJob, 'classify');
+  assert.ok(docsJobs.split(',').every((id) => fullJobs.split(',').includes(id)));
+  assert.match(required, new RegExp(`^ {4}needs: \\[${[classifyJob, ...fullJobs.split(',')].join(', ')}\\]$`, 'm'));
+  assert.match(required, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/);
+  assert.match(required, /LANE: \$\{\{ needs\.classify\.outputs\.lane \|\| 'full' \}\}/);
+  // Expressions reach the scripts through the environment only.
+  for (const [, script] of text.matchAll(/run: \|\n((?: {10}.*\n)+)/g))
+    assert.doesNotMatch(script, /\$\{\{/, script);
+  // The ci section of the header is valid with the example profile's checks.
+  const resolved = internal.resolveRunnerProfile({
+    ...PROFILE,
+    ci: {
+      docsPaths: ['README.md', 'docs/'],
+      lanes: {
+        docs: ['git diff --check'],
+        full: ['git diff --check', 'pnpm test'],
+      },
+    },
+  });
+  assert.deepEqual(resolved.ci.lanes.full, ['git diff --check', 'pnpm test']);
+  assert.match(text, /docs: \['git diff --check'\],\n#\s+full: \['git diff --check', 'pnpm test'\],/);
+});
+
 test('required gate rule without message uses the default text', async () => {
   const [{ message, ...ruleWithoutMessage }] = PROFILE.requiredGateRules;
   const profile = { ...PROFILE, requiredGateRules: [ruleWithoutMessage] };

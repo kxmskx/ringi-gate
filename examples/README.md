@@ -8,6 +8,7 @@ runner; `npm test` uses only the template provider.
 | [`project-profile.mjs`](project-profile.mjs) | A project profile with the same shape as `scripts/agent-review-profile.mjs`. The CLI imports the profile from that module only; it does not load profiles from other paths. To use this example, its contents would replace that file. |
 | [`task-add-health-endpoint.md`](task-add-health-endpoint.md) | An implementation task in the format accepted by the current task parser. It uses the English canonical section names of the default task schema (`locale: 'en'`); the Polish names listed in [docs/architecture.md](../docs/architecture.md#task-file) are accepted as aliases of the same sections. Body text can be in any language. |
 | [`providers/example-provider.mjs`](providers/example-provider.mjs) | A template provider module for a fictional agent CLI (`example-agent`), with its conformance fixtures. No such CLI exists; copy it as a starting point for a new provider (see [docs/providers.md](../docs/providers.md)). |
+| [`github-actions/ringi-ci.yml`](github-actions/ringi-ci.yml) | An example GitHub Actions workflow of `ringi ci`: the lane of a pull request from its real diff and one required check (see [docs/ci.md](../docs/ci.md)). Copy it to `.github/workflows/` of a project and replace its lane jobs with your own. |
 | [`validate-examples.test.mjs`](validate-examples.test.mjs) | Checks these files against the runner core without starting agents. |
 
 Run the check from the repository root:
@@ -43,4 +44,8 @@ It verifies that:
   with `DOCS_CANDIDATE_REJECTED`;
 - a `requiredGateRules` entry without `message` is accepted, and touching its
   paths without requesting its check stops with the rule's `code` and the
-  default text, which names the check.
+  default text, which names the check;
+- the example workflow keeps the rules of [docs/ci.md](../docs/ci.md) in its
+  text (events, read-only permissions, actions pinned to a commit SHA,
+  concurrency, the draft rule, the aggregator and the jobs of its lanes),
+  and the `ci` section in its header is valid with the example profile.

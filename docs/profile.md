@@ -216,6 +216,7 @@ export const PROFILE = {
   // reviewLanes: optional list of parallel review lanes
   // routing: optional { rules }: per task class and for escalation (effort, review profile, lanes, added checks)
   // providerModules: optional list of provider module objects
+  // ci: optional { docsPaths, lanes } for ringi ci (the lanes of CI)
   // createPresenters: optional function returning presentation hooks
 };
 ```
@@ -1059,6 +1060,41 @@ configuration, so review the module before you register it (see
 `providerModules` the core always applies the checks it applies to the
 Claude Code writer (repository layout, process group, Git directory
 fingerprint, private index), whatever the module declares.
+
+### `ci`
+
+Optional; only `ringi ci` reads it (see [ci.md](ci.md)). A profile without
+`ci` behaves exactly as before, and `ringi ci` without it stops with
+`INVALID_CONFIGURATION`.
+
+```js
+ci: {
+  docsPaths: ['README.md', 'docs/'],
+  lanes: {
+    docs: ['git diff --check'],
+    full: ['git diff --check', 'pnpm test'],
+  },
+},
+```
+
+- `docsPaths`: the paths of plain documentation, 1 to 32 entries in the
+  dialect and with the validator of review lane `paths` (see
+  [reviewLanes](#reviewlanes)): a directory prefix ending with `/` or an
+  exact file path, relative, compared by segments and case-sensitively, no
+  glob. An exact file path must end with `.md`. A file under these paths
+  is in the `docs` lane only when it also meets the other rules of
+  [ci.md](ci.md#lanes) (`.md`, mode `100644`, not an instruction or
+  security file, not excluded by the exclusions of
+  [docsCandidatePolicy](#docscandidatepolicy), not a file of the profile,
+  no segment starting with a dot).
+- `lanes`: exactly `docs` and `full`, each a non-empty list of names from
+  `checks` without duplicates. Every check of `docs` must also be in `full`:
+  the `docs` lane is a subset, so routing a change to `full` never drops a
+  check (see [ci.md](ci.md#lanes)).
+
+Any other key of `ci` or of `ci.lanes` is `INVALID_CONFIGURATION`, reserved
+for later options. The lanes name checks; which workflow jobs run them is
+set in the workflow (see [ci.md](ci.md#ringi-ci-aggregate)).
 
 ### `title`, `tempPrefix`, `createPresenters`
 

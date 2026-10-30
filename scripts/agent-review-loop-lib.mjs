@@ -997,6 +997,12 @@ const MAX_ROUTING_ESCALATIONS = 16;
 const MAX_ROUTING_REASON_LENGTH = 500;
 const ROUTING_ALL_LANES = 'all';
 
+// CI (ci, read by ringi ci): docsPaths and lanes are its only keys; others
+// are reserved for later options. lanes has exactly the docs and the full
+// lane.
+const CI_KEYS = new Set(['docsPaths', 'lanes']);
+const CI_LANE_KEYS = new Set(['docs', 'full']);
+
 // True when routing rule `to` is at least as strict as rule `from`: its
 // review effort is not lower, its lanes and added checks are supersets.
 // Review profiles (defaultProfile without reviewProfile) compare only with
@@ -5636,6 +5642,7 @@ const DEFAULT_RUNNER_PROFILE = Object.freeze({
 });
 const RUNNER_PROFILE_KEYS = new Set([
   ...Object.keys(DEFAULT_RUNNER_PROFILE),
+  'ci',
   'createPresenters',
   'providerModules',
   'reviewLanes',
@@ -6259,6 +6266,39 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
     }
     resolved.routing = Object.freeze({ rules: Object.freeze(rules) });
   }
+
+  // CI: optional, absent from the default profile; only ringi ci reads it.
+  // docsPaths: the paths of plain documentation, in the dialect and with the
+  // validator of review lane paths; an exact file path must end in .md,
+  // since a file of the docs lane always does. lanes: the checks of the docs
+  // and the full lane, names from checks, neither empty. The docs lane is a
+  // subset of the full lane: a change routed to the full lane never drops a
+  // check of the docs lane.
+  if (Object.hasOwn(fields, 'ci')) {
+    const ci = record(resolved.ci, CI_KEYS);
+    const lanes = record(ci.lanes, CI_LANE_KEYS);
+    const docsPaths = normalizeReviewLanePaths(list(ci.docsPaths));
+    if (
+      docsPaths === undefined ||
+      docsPaths.some((path) => !path.endsWith('/') && !path.endsWith('.md'))
+    )
+      invalid();
+    const laneChecks = (value) => {
+      const names = uniqueList(
+        value,
+        (check) => typeof check === 'string' && Object.hasOwn(checks, check),
+      );
+      if (names.length === 0) invalid();
+      return names;
+    };
+    const docs = laneChecks(lanes.docs);
+    const full = laneChecks(lanes.full);
+    if (!docs.every((check) => full.includes(check))) invalid();
+    resolved.ci = Object.freeze({
+      docsPaths,
+      lanes: Object.freeze({ docs, full }),
+    });
+  }
   return Object.freeze(resolved);
 }
 
@@ -6685,6 +6725,31 @@ async function assertRequiredGates({ runner, cwd, stage, task, profile }) {
   }
 }
 
+// The exclusions of a resolved docs candidate policy, with the base
+// exclusions: true when a segment of the path is an excluded name (ASCII
+// letters case-insensitively) or an excluded segment (lower case), or the
+// path starts with an excluded prefix (ASCII letters case-insensitively).
+// Shared by the docs candidate rule and the classifier of ringi ci.
+function docsPolicyExcludes(policy) {
+  const excludedNames = new Set(
+    [...BASE_DOCS_EXCLUDED_NAMES, ...policy.excludedNames].map(asciiLowerCase),
+  );
+  const excludedSegments = new Set(
+    [...BASE_DOCS_EXCLUDED_SEGMENTS, ...policy.excludedSegments].map((part) =>
+      part.toLowerCase(),
+    ),
+  );
+  const excludedPrefixes = policy.excludedPrefixes.map(asciiLowerCase);
+  return (path) => {
+    const segments = path.split('/');
+    return (
+      segments.some((part) => excludedNames.has(asciiLowerCase(part))) ||
+      excludedPrefixes.some((prefix) => asciiLowerCase(path).startsWith(prefix)) ||
+      segments.some((part) => excludedSegments.has(part.toLowerCase()))
+    );
+  };
+}
+
 // protectedPaths: the files of a project profile loaded from
 // ringi.config.mjs (loadProjectProfile); never part of a docs candidate.
 async function assertDocsCandidate({
@@ -6696,15 +6761,7 @@ async function assertDocsCandidate({
 }) {
   const policy = resolveRunnerProfile(profile).docsCandidatePolicy;
   const protectedNames = new Set(protectedPaths.map(asciiLowerCase));
-  const excludedNames = new Set(
-    [...BASE_DOCS_EXCLUDED_NAMES, ...policy.excludedNames].map(asciiLowerCase),
-  );
-  const excludedSegments = new Set(
-    [...BASE_DOCS_EXCLUDED_SEGMENTS, ...policy.excludedSegments].map((part) =>
-      part.toLowerCase(),
-    ),
-  );
-  const excludedPrefixes = policy.excludedPrefixes.map(asciiLowerCase);
+  const excluded = docsPolicyExcludes(policy);
   const paths = await readCandidatePaths({ runner, cwd, stage });
   const reject = (path) => {
     throw new AgentWorkflowError(
@@ -6722,20 +6779,11 @@ async function assertDocsCandidate({
           policy.allowedPrefixes.some((prefix) => path.startsWith(prefix))) &&
         policy.allowedExtensions.some((extension) => path.endsWith(extension))
       ) ||
-      segments.some(
-        (part) =>
-          !part ||
-          part === '.' ||
-          part === '..' ||
-          excludedNames.has(asciiLowerCase(part)),
-      ) ||
+      segments.some((part) => !part || part === '.' || part === '..') ||
       protectedNames.has(asciiLowerCase(path)) ||
       /[\\\x00-\x1f\x7f]/.test(path) ||
       hasAsciiFoldingCharacter(path) ||
-      excludedPrefixes.some((prefix) =>
-        asciiLowerCase(path).startsWith(prefix),
-      ) ||
-      segments.some((part) => excludedSegments.has(part.toLowerCase()))
+      excluded(path)
     )
       reject(path);
     // HEAD types protect deletions and symlink-to-file replacements as well.
@@ -13361,6 +13409,12 @@ export const internal = {
   mergeLaneFindings,
   isReviewLaneFocus,
   normalizeReviewLanePaths,
+  // ringi ci: the path matching of review lanes and the name checks of the
+  // docs candidate rule, for the classifier of a diff.
+  reviewLanePathsMatch,
+  asciiLowerCase,
+  hasAsciiFoldingCharacter,
+  docsPolicyExcludes,
   diffFileSections,
   reviewLanePackages,
   reviewerPrompt,

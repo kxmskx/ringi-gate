@@ -1,4 +1,5 @@
-// The ringi command: init, doctor, run and verify. `ringi run` is the runner of
+// The ringi command: init, doctor, run, verify and ci (scripts/ringi-ci.mjs).
+// `ringi run` is the runner of
 // scripts/agent-review-loop.mjs with two differences: the profile comes from
 // ringi.config.mjs at the root of the Git repository of the current
 // directory (loadProjectProfile, fingerprinted; it runs only when committed),
@@ -32,6 +33,7 @@ import {
   formatDoctorTable,
   runDoctor,
 } from './ringi-doctor.mjs';
+import { CI_HELP, ciCommand } from './ringi-ci.mjs';
 import { runInit } from './ringi-init.mjs';
 
 const RUNNER_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +45,7 @@ Commands:
   doctor   Check the repository and this machine before a run (read-only)
   run      Run the writer, the gates and the independent review on a task
   verify   Verify the evidence ledger of a run (read-only)
+  ci       Choose the lane of a change and aggregate the required check in CI
 
 Options:
   -h, --help     Show this help (or the help of a command)
@@ -119,6 +122,7 @@ Options:
 Exit code: 0 when the ledger verifies, 1 at the first mismatch or when it is
 unverified, 2 for invalid arguments or outside a Git repository.
 `,
+  ci: CI_HELP,
 };
 
 const write = (stream, text) => stream.write(text.endsWith('\n') ? text : `${text}\n`);
@@ -163,6 +167,7 @@ export async function main(argv) {
   if (command === 'init') return initCommand(args);
   if (command === 'doctor') return doctorCommand(args);
   if (command === 'verify') return verifyCommand(args);
+  if (command === 'ci') return ciCommand(args);
   return runCommand(args);
 }
 

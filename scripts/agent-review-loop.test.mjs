@@ -84,6 +84,7 @@ import {
 // Tests of the ringi command (bin/ringi.mjs) and of the npm package live in
 // separate files and run with npm test without changing scripts.test.
 import './ringi-cli.test.mjs';
+import './ringi-ci.test.mjs';
 import './ringi-package.test.mjs';
 import {
   dashboardPhases,
@@ -1081,6 +1082,9 @@ test('runner surface contract: internal keys', () => {
       'WORKING_BRANCHES_BLOCKED',
       'allowedPnpmInvocations',
       'appendIntegrityViolation',
+      // ringi ci: the classifier of a diff uses the path matching of review
+      // lanes and the name checks of the docs candidate rule.
+      'asciiLowerCase',
       'assertAnalysisArtifactIntegrity',
       'assertDependencyInputsUnchanged',
       'assertDependencyMetadataUnchanged',
@@ -1121,11 +1125,14 @@ test('runner surface contract: internal keys', () => {
       'createRunId',
       'createTrustedGateReport',
       'diffFileSections',
+      // The exclusions of the docs candidate rule, shared with ringi ci.
+      'docsPolicyExcludes',
       'environmentReport',
       'establishSecretBaseline',
       'findingFingerprint',
       'findingIdFor',
       'fullDiff',
+      'hasAsciiFoldingCharacter',
       'isDependencyInputPath',
       'isReviewLaneFocus',
       'listRepositoryPaths',
@@ -1148,6 +1155,7 @@ test('runner surface contract: internal keys', () => {
       'resolveSolEffort',
       'resolveTaskMode',
       'reviewLanePackages',
+      'reviewLanePathsMatch',
       'reviewerPrompt',
       'roleProvider',
       'runChecks',
@@ -1654,11 +1662,17 @@ async function contractDocumentList(name) {
   return entries;
 }
 
-// Codes set with code: '...' outside the core (the ringi command, doctor and
-// the earlier entry point).
+// Codes set with code: '...' outside the core (the ringi command, doctor,
+// ringi ci and the earlier entry point).
 async function commandStopCodes() {
   const codes = new Set();
-  for (const name of ['ringi-cli.mjs', 'ringi-doctor.mjs', 'agent-review-loop.mjs']) {
+  for (const name of [
+    'ringi-cli.mjs',
+    'ringi-doctor.mjs',
+    'ringi-ci.mjs',
+    'ringi-ci-lanes.mjs',
+    'agent-review-loop.mjs',
+  ]) {
     const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
     for (const [, code] of source.matchAll(/\bcode: '([A-Z][A-Z_]+)'/g)) codes.add(code);
   }
@@ -1666,8 +1680,13 @@ async function commandStopCodes() {
 }
 
 const CONTRACT_STOP_CODES_OUTSIDE_CORE = [
+  // ringi ci classify: codes of the core for a diff that cannot be
+  // classified.
+  'DIFF_FAILED',
+  'DIFF_TOO_LARGE',
   'INVALID_CONFIGURATION',
-  // ringi run and ringi doctor only: the profile is not committed.
+  // ringi run, ringi doctor and ringi ci classify: the profile is not
+  // committed.
   'PROFILE_UNCOMMITTED',
   'UNEXPECTED_ERROR',
 ];
@@ -1735,6 +1754,7 @@ test('contract: top-level profile keys', async () => {
   const expected = [
     'checkSets',
     'checks',
+    'ci',
     'createPresenters',
     'docsCandidatePolicy',
     'implementer',
@@ -1889,18 +1909,25 @@ test('contract: ledger event types and version', async () => {
 test('contract: CLI commands and options', async () => {
   // Every option literal of the ringi command and of the run parser.
   const options = new Set();
-  for (const name of ['ringi-cli.mjs', 'agent-review-dashboard.mjs']) {
+  for (const name of ['ringi-cli.mjs', 'ringi-ci.mjs', 'agent-review-dashboard.mjs']) {
     const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
     for (const [, option] of source.matchAll(/'(--?[a-z][a-z-]*)'/g)) options.add(option);
   }
   const expected = [
+    '--base',
     '--checkpoint',
+    '--classify-job',
     '--codex-model',
+    '--docs-jobs',
     '--dry-run',
+    '--full-jobs',
+    '--head',
     '--help',
     '--implementer-effort',
     '--implementer-model',
     '--json',
+    '--lane',
+    '--needs',
     '--no-animation',
     '--resume',
     '--review-only',
@@ -1920,12 +1947,12 @@ test('contract: CLI commands and options', async () => {
   const { COMMAND_HELP } = await import('./ringi-cli.mjs');
   assertSurfaceContract(
     Object.keys(COMMAND_HELP).sort(),
-    ['doctor', 'init', 'run', 'verify'],
+    ['ci', 'doctor', 'init', 'run', 'verify'],
     'ringi commands',
   );
   assertSurfaceContract(
     [...(await contractDocumentList('cli-commands'))].sort(),
-    ['doctor', 'init', 'run', 'verify'],
+    ['ci', 'doctor', 'init', 'run', 'verify'],
     'docs/contract.md commands',
   );
 });

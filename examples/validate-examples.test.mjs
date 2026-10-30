@@ -465,6 +465,94 @@ test('example ringi ci workflow keeps the rules of docs/ci.md', async () => {
   assert.match(text, /docs: \['git diff --check'\],\n#\s+full: \['git diff --check', 'pnpm test'\],/);
 });
 
+// The variant with review by a model: the rules above for the jobs it
+// shares, and the threat model of docs/ci.md for the review job.
+test('example ringi ci review workflow keeps the threat model of docs/ci.md', async () => {
+  const [text, plain] = await Promise.all(
+    ['ringi-ci-review.yml', 'ringi-ci.yml'].map((name) =>
+      readFile(new URL(`./github-actions/${name}`, import.meta.url), 'utf8'),
+    ),
+  );
+  assert.doesNotMatch(text, /\t/);
+  assert.doesNotMatch(text, /pull_request_target|workflow_run|paths-ignore|paths:|github\.event\.changes|continue-on-error/);
+  assert.match(text, /^permissions:\n {2}contents: read\n\n/m);
+  assert.equal([...text.matchAll(/permissions:/g)].length, 1);
+  assert.doesNotMatch(text, /write|id-token|github\.token/i);
+  // The same pinned actions as the workflow without review; every checkout
+  // without persisted credentials.
+  const uses = (source) =>
+    [...source.matchAll(/^\s*-?\s*uses:\s*(.+)$/gm)].map(([, value]) => value);
+  for (const value of uses(text))
+    assert.ok(uses(plain).includes(value), value);
+  const checkouts = uses(text).filter((value) => value.startsWith('actions/checkout@')).length;
+  assert.equal([...text.matchAll(/^ {10}persist-credentials: false$/gm)].length, checkouts);
+  assert.equal(
+    text.slice(text.indexOf('\nconcurrency:\n'), text.indexOf('\njobs:\n')).replace(/^#.*\n/gm, ''),
+    plain.slice(plain.indexOf('\nconcurrency:\n'), plain.indexOf('\njobs:\n')).replace(/^#.*\n/gm, ''),
+  );
+  const jobsText = text.slice(text.indexOf('\njobs:\n'));
+  const jobs = [...jobsText.matchAll(/^ {2}([a-z][a-z-]*):\n/gm)].map(([, id]) => id);
+  assert.deepEqual(jobs, ['classify', 'whitespace', 'test', 'review', 'required']);
+  const job = (id) => {
+    const start = jobsText.indexOf(`\n  ${id}:\n`);
+    const next = jobs[jobs.indexOf(id) + 1];
+    return jobsText.slice(start, next ? jobsText.indexOf(`\n  ${next}:\n`) : undefined);
+  };
+  const review = job('review');
+  // The environment only on the review job; the secret only in the env of
+  // its Review step, never in a run script.
+  assert.equal([...text.matchAll(/environment:/g)].length, 1);
+  assert.match(review, /^ {4}environment: ringi-review$/m);
+  const step = review.slice(review.indexOf('      - name: Review\n'), review.indexOf('      - name: Verify the ledger\n'));
+  assert.match(step, /^ {8}env:\n(?: {10}[A-Z_]+: .+\n)+ {8}run: \|\n/m);
+  assert.equal([...text.matchAll(/secrets\./g)].length, 1);
+  assert.match(step, /^ {10}ANTHROPIC_API_KEY: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}$/m);
+  for (const [, script] of text.matchAll(/run: \|\n((?: {10}.*\n)+)/g))
+    assert.doesNotMatch(script, /\$\{\{|secrets|API_KEY/, script);
+  // Ringi from the checkout of the base, never from the pull request: no
+  // pnpm exec, no install with scripts, the reviewer CLI in an exact version.
+  assert.match(
+    review,
+    /- name: Check out the base \(trusted\)\n {8}uses: actions\/checkout@\S+ # v\S+\n {8}with:\n {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n {10}path: trusted\n/,
+  );
+  assert.doesNotMatch(review, /pnpm exec|npx/);
+  assert.equal([...review.matchAll(/pnpm install(?! --frozen-lockfile --ignore-scripts\n)/g)].length, 0);
+  const ringiCalls = [...review.matchAll(/"\$GITHUB_WORKSPACE\/trusted\/node_modules\/\.bin\/ringi" (ci review|verify) /g)];
+  assert.deepEqual(ringiCalls.map(([, command]) => command), ['ci review', 'verify']);
+  // The reviewer CLI: one global install, of an exact version.
+  assert.match(review, /^ {10}REVIEWER_CLI: '@[a-z-]+\/[a-z-]+@\d+\.\d+\.\d+'$/m);
+  assert.deepEqual(
+    [...text.matchAll(/(?<!p)npm install[^\n]*/g)].map(([line]) => line),
+    ['npm install --global "$REVIEWER_CLI"'],
+  );
+  assert.doesNotMatch(text, /@latest|@\^|@~|@next/);
+  // The job's limit is above ci.review.timeoutMinutes plus the preflight.
+  const jobTimeout = Number(review.match(/^ {4}timeout-minutes: (\d+)$/m)[1]);
+  assert.ok(jobTimeout >= 30 + 15, String(jobTimeout));
+  assert.match(review, /^ {4}if: github\.event_name == 'pull_request' && github\.event\.pull_request\.draft != true$/m);
+  // The aggregator needs the review and requires it with the checks.
+  const required = job('required');
+  assert.match(required, /^ {4}needs: \[classify, whitespace, test, review\]$/m);
+  assert.match(required, /^ {4}if: always\(\)$/m);
+  assert.match(required, /--full-jobs whitespace,test --enforce-checks --review-job review\n/);
+  // The ci section of the header is valid with the example profile.
+  const resolved = internal.resolveRunnerProfile({
+    ...PROFILE,
+    ci: {
+      docsPaths: ['README.md', 'docs/'],
+      lanes: { docs: ['git diff --check'], full: ['git diff --check', 'pnpm test'] },
+      review: {
+        profiles: { docs: 'standard', full: 'critical' },
+        maxAttempts: 2,
+        timeoutMinutes: 30,
+        credentials: ['ANTHROPIC_API_KEY'],
+      },
+    },
+  });
+  assert.equal(resolved.ci.review.profiles.docs, 'standard');
+  assert.match(text, /profiles: \{ docs: 'standard', full: 'critical' \},\n#\s+maxAttempts: 2,\n#\s+timeoutMinutes: 30,\n#\s+credentials: \['ANTHROPIC_API_KEY'\],/);
+});
+
 test('required gate rule without message uses the default text', async () => {
   const [{ message, ...ruleWithoutMessage }] = PROFILE.requiredGateRules;
   const profile = { ...PROFILE, requiredGateRules: [ruleWithoutMessage] };

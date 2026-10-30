@@ -1,0 +1,276 @@
+# Example workflow of ringi ci with review by a model (docs/ci.md, its
+# threat model first). It is ringi-ci.yml with a review job: use one of the
+# two. Copy it to .github/workflows/ringi-ci.yml of a project that has
+# ringi-gate as a devDependency and, in the committed ringi.config.mjs of
+# its default branch, a ci section with review, for example:
+#
+#   ci: {
+#     docsPaths: ['README.md', 'docs/'],
+#     lanes: {
+#       docs: ['git diff --check'],
+#       full: ['git diff --check', 'pnpm test'],
+#     },
+#     review: {
+#       profiles: { docs: 'standard', full: 'critical' },
+#       maxAttempts: 2,
+#       timeoutMinutes: 30,
+#       credentials: ['ANTHROPIC_API_KEY'],
+#     },
+#   },
+#
+# The secret is an environment secret of the environment ringi-review, with
+# required reviewers: a person approves every run of the review job, and a
+# pull request from a fork gets no secret (its review is red). The jobs
+# whitespace and test stand for the checks of the lanes, without a secret.
+# Branch protection requires one check: "ringi-ci required".
+name: ringi-ci
+
+# edited: a change of the base branch of a pull request must run again (the
+# check of the old base would stay green). Every edit of the title or the
+# description runs the workflow too, the review included (a new approval of
+# the environment): no job is made conditional on the changed field, since
+# a skipped job would count as a passed check.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One group per pull request, where a newer run cancels the older one (the
+# review of an older commit included); every push to the default branch has
+# a group of its own and is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The light preflight, also for a draft: the lane of the change from its
+  # real diff and the checks of that lane. A diff that cannot be classified
+  # fails this job; it never becomes a lane.
+  classify:
+    name: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+      checks: ${{ steps.lane.outputs.checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit of the pull request and its parents.
+          fetch-depth: 2
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install ringi-gate
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      # A push to the default branch always runs the full lane.
+      - name: Choose the lane
+        id: lane
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo lane=full >> "$GITHUB_OUTPUT"
+            echo 'checks=["git diff --check","pnpm test"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="$(git rev-parse HEAD^1)"
+          head="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^2)" = "$PR_HEAD"
+          pnpm exec ringi ci classify --base "$base" --head "$head" --checks >> "$GITHUB_OUTPUT"
+
+  # Docs lane and full lane. Each lane job names the checks it ran in its
+  # output checks; the aggregator compares them with the classification.
+  whitespace:
+    name: whitespace
+    needs: classify
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      checks: ${{ steps.checks.outputs.checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - id: checks
+        run: |
+          git diff --check HEAD^1 HEAD
+          echo 'checks=["git diff --check"]' >> "$GITHUB_OUTPUT"
+
+  # Full lane only.
+  test:
+    name: test
+    needs: classify
+    if: needs.classify.outputs.lane == 'full' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      checks: ${{ steps.checks.outputs.checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+
+      - id: checks
+        run: |
+          pnpm test
+          echo 'checks=["pnpm test"]' >> "$GITHUB_OUTPUT"
+
+  # The review by a model, in both lanes of a pull request that is not a
+  # draft. Only the base is code here: ringi-gate, ringi.config.mjs and the
+  # prompts come from base.sha (the trusted directory and HEAD of the
+  # reviewed one); the pull request's tree is data, put in the working tree
+  # by ringi ci review, never installed or run. The secret is only in the
+  # env of the step Review.
+  review:
+    name: review
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    # More than ci.review.timeoutMinutes (30 above) plus the checkouts, the
+    # installations and the preflight, so that ringi ci review stops first
+    # (TIMEOUT, with evidence) and this limit is only the backstop.
+    timeout-minutes: 50
+    environment: ringi-review
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+      lane: ${{ steps.review.outputs.lane }}
+    steps:
+      - name: Check out the base (trusted)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out the merge commit (data)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: review
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install ringi-gate from the base
+        working-directory: trusted
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      # The reviewer CLI in an exact version only, never a range or latest
+      # (here Claude Code, the core's default reviewer): code from the npm
+      # registry, pinned by its version (npm checks no integrity of a
+      # global install here), installed in a step without the secret.
+      # Change it together with the provider's probes.
+      - name: Install the reviewer CLI
+        env:
+          REVIEWER_CLI: '@anthropic-ai/claude-code@2.1.311'
+        run: |
+          npm install --global "$REVIEWER_CLI"
+
+      # The reviewed checkout on a branch at the base, with the base's
+      # dependencies (installed before the pull request's tree is there).
+      - name: Prepare the reviewed checkout
+        working-directory: review
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git switch --quiet --create ringi-ci-review "$BASE"
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Review
+        id: review
+        working-directory: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          MERGE: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          "$GITHUB_WORKSPACE/trusted/node_modules/.bin/ringi" ci review --base "$BASE" --head "$MERGE" --event "$GITHUB_EVENT_PATH" --attempt "$RUN_ATTEMPT" --out "$RUNNER_TEMP/ringi-review" --summary "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the ledger
+        working-directory: review
+        env:
+          RUN_ID: ${{ steps.review.outputs.run-id }}
+        run: |
+          "$GITHUB_WORKSPACE/trusted/node_modules/.bin/ringi" verify "$RUN_ID"
+
+      # The evidence ($RUNNER_TEMP/ringi-review: ci-review.json, report.json,
+      # ledger.jsonl) as an artifact of the job needs actions/upload-artifact
+      # pinned to a full commit SHA, which this example does not pin yet:
+      # add the step with the SHA of a release you reviewed.
+
+  # The required check, under a name that never changes. always() only
+  # makes the job run after a failed, cancelled or skipped job (a skipped
+  # required check would count as passed); the result is the exit code of
+  # ringi ci aggregate: green only when the classification, every job of its
+  # lane with the classification's checks and, for a pull request, the
+  # review with APPROVE succeeded.
+  required:
+    name: ringi-ci required
+    needs: [classify, whitespace, test, review]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: A draft is not ready
+        if: github.event.pull_request.draft == true
+        run: |
+          echo "Draft pull request: only the preflight ran. The required check stays red until the pull request is ready for review."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install ringi-gate
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      # Without a lane (the classification failed) the strictest lane is
+      # checked, and the failed classification makes the check red. A push
+      # to the default branch has no review: its job is left out of needs.
+      - name: Aggregate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          LANE: ${{ needs.classify.outputs.lane || 'full' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+            pnpm exec ringi ci aggregate --lane "$LANE" --needs "$RUNNER_TEMP/needs.json" --classify-job classify --docs-jobs whitespace --full-jobs whitespace,test --enforce-checks --review-job review
+          else
+            printf '%s' "$NEEDS" | jq 'del(.review)' > "$RUNNER_TEMP/needs.json"
+            pnpm exec ringi ci aggregate --lane "$LANE" --needs "$RUNNER_TEMP/needs.json" --classify-job classify --docs-jobs whitespace --full-jobs whitespace,test --enforce-checks
+          fi

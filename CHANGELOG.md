@@ -9,6 +9,45 @@ is published by hand, without provenance; later versions are published by
 
 ### Added
 
+- The CI adapter for GitHub Actions, part 2: review by a model in CI,
+  opt-in (see [docs/ci.md](docs/ci.md), the threat model first). Optional
+  `ci.review: { profiles: { docs, full }, maxAttempts, timeoutMinutes,
+  credentials }` in the profile: review profiles of `reviewer.profiles` for
+  both lanes (the `docs` lane gets a cheaper review, never none), the
+  budget per workflow run (attempts of the job in the run and the time of
+  the review; across runs the approval of the environment; no cost
+  limit, since no provider reports a cost) and the names of the
+  credential variables (`*_KEY` or `*_TOKEN`). Any other key is
+  `INVALID_CONFIGURATION`, reserved. A profile without `ci.review` behaves
+  as before.
+- `ringi ci review --base <sha> --head <sha> --event <file> --attempt <n>
+  --out <dir> [--summary <file>]`: in a checkout of the base with the
+  base's profile, refuses an attempt over the budget, a merge commit whose
+  parents are not the base and the head of the event, a missing credential,
+  a credential shorter than 8 characters and a change of the profile, of
+  agent instructions or settings (`AGENTS.md`, `CLAUDE.md`,
+  `CLAUDE.local.md`, `.mcp.json`, `.claude/`), of `.corepack.env`, of a
+  dependency input (the core's names, `package.json` among them, at any
+  depth), of a
+  `.patch` file or of `node_modules`, and a new symbolic link;
+  puts the merge commit's tree in the working tree, generates the task from
+  the pull request (title and description quoted as data, cut to 256 and
+  4000 characters) and runs the review-only mode with only the `git`
+  checks as gates and the credentials in the reviewer's environment alone.
+  Prints `verdict=`, `lane=` and `run-id=`; writes `ci-review.json` (with
+  the measurement of the commit), the report and the ledger to `--out` and a
+  summary without secrets to `--summary`. Existing STOP codes only.
+- `ringi ci classify --checks` prints `checks=<JSON array>`;
+  `ringi ci aggregate --review-job <job>` requires the review job with
+  `verdict=APPROVE` of the same lane, and `--enforce-checks` compares the
+  checks the lane jobs ran with the classification's. Without these options
+  the output and the check are as before.
+- `examples/github-actions/ringi-ci-review.yml`: the example workflow with
+  the review job (`environment`, the base checked out as trusted code, the
+  merge commit as data, the secret only in the env of the review step,
+  `ringi verify` after the review), checked by its own text test.
+- `runAgentReviewLoop` options `gitGatesOnly` and `reviewerCredentials`,
+  set only by `ringi ci review`.
 - The CI adapter for GitHub Actions, part 1 (see
   [docs/ci.md](docs/ci.md)); no model and no secret in CI. Optional
   `ci: { docsPaths, lanes }` in the profile: `docsPaths` in the dialect and

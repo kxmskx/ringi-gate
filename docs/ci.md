@@ -10,15 +10,99 @@ of checks in CI:
 - one required check is always present, and it is green only after the
   exact set of jobs of the lane succeeded.
 
-CI runs no model and needs no secret. Review in CI is a later part.
+Classification and aggregation run no model and need no secret. Review by
+a model in CI is opt-in (`ci.review` in the profile, `ringi ci review`); it
+is the only part with a secret, and the [threat model](#threat-model) below
+comes first.
 
 | Piece | Where |
 | --- | --- |
+| The threat model of review in CI | [below](#threat-model) |
 | The `ci` section of the profile | [profile.md](profile.md#ci) |
 | `ringi ci classify` | [below](#ringi-ci-classify) |
 | `ringi ci aggregate` | [below](#ringi-ci-aggregate) |
+| `ringi ci review` | [below](#ringi-ci-review) |
 | The example workflow | [`examples/github-actions/ringi-ci.yml`](../examples/github-actions/ringi-ci.yml) |
 | The budget policy | [below](#budget-policy) |
+
+## Threat model
+
+Review in CI sends the change to a model, and the model's CLI needs a
+secret (an API key or a token). The rules below decide where that secret
+may be and which code may run next to it. They come first; the command,
+the profile section and the example workflow follow them.
+
+- **The workflow of a `pull_request` run comes from the pull request.**
+  GitHub runs the workflow file of the merge commit, so an author with write
+  access to the repository can change the workflow in the pull request
+  itself: drop the review job, print the secret, run anything. Nothing
+  written in the YAML protects against that author, and Ringi Gate does not
+  claim it does.
+- **The boundary of the secret is the GitHub `environment`, not the
+  YAML.** The secret is an environment secret of an `environment` with
+  required reviewers: a human approves every run of the review job before
+  the secret is handed out, and should look at the change of `.github/`
+  first. A pull request from a fork gets no secrets at all (GitHub's rule
+  for `pull_request`), so its review job is red, never skipped. That is all
+  these docs promise; code owner review of `.github/` and of the profile
+  (see [Setup](#setup)) narrows who can change the workflow, it does not
+  make a changed workflow safe.
+- **In the job with the secret, only the base is code.** `ringi-gate`,
+  `ringi.config.mjs` and the prompts come from a checkout of the pull
+  request's base commit (`base.sha`), installed from the base's lockfile
+  without install scripts. The pull request's tree is data: the diff and
+  the snapshot the reviewer reads. None of its scripts, installations,
+  hooks, profile or copy of Ringi Gate runs in that job. Concretely:
+  - `ringi` is run from a separate checkout of the base (the *trusted*
+    directory); the reviewed checkout is another directory whose `HEAD` is
+    the base commit and whose working tree is the merge commit's tree;
+  - the profile is loaded from `HEAD` of the reviewed checkout (the base)
+    and must be committed there; a pull request that changes, adds,
+    deletes or renames (either end) the profile or a module it imports,
+    agent instructions or settings (`AGENTS.md`, `CLAUDE.md`,
+    `CLAUDE.local.md`, `.mcp.json`, a `.claude` segment, at any depth and
+    in any ASCII letter case), Corepack's `.corepack.env` (at any depth), a
+    dependency input (`package.json`, the lockfiles, `.npmrc`,
+    `.pnpmfile.cjs` and the other names the core's preflight treats as
+    dependency inputs, at any depth), a `.patch` file,
+    anything under `node_modules`, or that adds a symbolic link, is refused
+    before any model starts (`HUMAN_DECISION_REQUIRED`): a person reviews
+    such a change;
+  - the dependencies of the reviewed checkout are installed from the base's
+    lockfile before the pull request's tree is put in place. The core's
+    preflight runs pnpm, which reads the dependency inputs of the working
+    tree, but only ever in the base's version: a pull request that changes
+    one is stopped before the review (above);
+  - the gates of the review run are only the profile's `git` checks
+    (`git diff --check`); checks that run the project's scripts (`pnpm …`)
+    run in the lane jobs, which have no secret. A required gate rule that
+    asks for such a check stops the review with its own code;
+  - the reviewer CLI is installed in an exact version (never a range or
+    `latest`) in a step without the secret: it is code from the npm
+    registry, pinned by its version, not by an integrity hash. It reads the
+    snapshot with read-only tools.
+- **No `pull_request_target` with a checkout of the pull request, and no
+  `workflow_run` that consumes artifacts of a pull request run as
+  trusted.** Both would give the base repository's secrets or token to
+  input written by the author of the change.
+- **The secret is only in the `env` of the review step.** Never in an
+  argument, a log line, an artifact or the job summary. `ringi ci review`
+  removes it from its own environment before the run and hands it only to
+  the reviewer's process; the other processes of the run (Git, the gates)
+  do not get it, and every text the command writes has the secret's value
+  replaced by `[REDACTED]` (a configured credential shorter than 8
+  characters is refused, since its value could not be redacted reliably).
+  Removing it from the environment only stops inheritance: a process of the
+  same user on the runner could still read `/proc/<pid>/environ` of
+  `ringi ci review` or of the reviewer. That is why no input of the pull
+  request reaches a program that runs in the job: its scripts, dependency
+  inputs, hooks and settings are never executed or read as configuration.
+
+What this does not cover: a person who approves the environment without
+looking at the change, a reviewer CLI that leaks its own credentials, and
+the admin-managed settings of the reviewer CLI (see
+[providers.md](providers.md)). The review is a check of the change, not of
+the workflow that runs it.
 
 ## Setup
 
@@ -196,11 +280,16 @@ built (`--head`) against its first parent, the tip of the base branch
 (`--base`): the change the merge would make. It also checks that the second
 parent is the head of the pull request. `fetch-depth: 2` is enough.
 
+With `--checks` (for `ringi ci aggregate --enforce-checks`), the plain
+output has a second line, `checks=<JSON array>`: the checks of the lane, as
+in the JSON output. Without it the output is the one line above.
+
 ## `ringi ci aggregate`
 
 ```sh
 ringi ci aggregate --lane docs|full --needs <file> \
-  --classify-job <job> --docs-jobs <job,...> --full-jobs <job,...>
+  --classify-job <job> --docs-jobs <job,...> --full-jobs <job,...> \
+  [--review-job <job>] [--enforce-checks]
 ```
 
 The required check. `<file>` holds `toJSON(needs)` of the aggregator job:
@@ -229,6 +318,136 @@ list they describe, so one change of one file keeps them in step and one
 review sees both. A separate mapping file would be a second place to keep
 in sync and to protect. Nothing is guessed: every job of `needs` must be
 named, and a job added to `needs` but not to a lane makes the check red.
+
+Two options, each opt-in; without them the check is the one above:
+
+- `--review-job <job>`: the job of `ringi ci review`, required in both
+  lanes (a change of documentation gets a cheaper review, never none). It
+  is green only with the result `success`, the output `verdict` equal to
+  `APPROVE` and the output `lane` equal to `--lane`: the review classifies
+  the change itself, with the base's profile, so a classification job that
+  put out another lane makes the check red. The review job is neither the
+  classification job nor a job of a lane (exit code `2` otherwise).
+- `--enforce-checks`: the jobs, not only their names. The classification
+  job's output `checks` (from `classify --checks`) must be exactly the
+  union of the outputs `checks` of the jobs of the lane, each a JSON array
+  of the check names the job ran. A check of the lane that no job ran, a
+  job without the output, a check that is not one of the lane's, or an
+  output that is not a JSON array of distinct names makes the check red.
+  The outputs are written by the workflow's own steps, so this catches a
+  workflow that has drifted from `ci.lanes` (a check added to the profile
+  and to no job), not a workflow changed on purpose (see the
+  [threat model](#threat-model)).
+
+## `ringi ci review`
+
+```sh
+ringi ci review --base <sha> --head <sha> --event <file> \
+  --attempt <n> --out <dir> [--summary <file>]
+```
+
+The review of a pull request by a model, with the `ci.review` section of
+the profile ([profile.md](profile.md#ci)), as the
+[threat model](#threat-model) requires. Run it with a `ringi-gate`
+installed from a checkout of the base, in another checkout (the reviewed
+one) that is clean, has `HEAD` at `--base` on a branch other than `main`
+or `master`, the base's dependencies installed, and the merge commit
+`--head`. `--event` is the `pull_request` event (`$GITHUB_EVENT_PATH`),
+`--attempt` the attempt of the job (`$GITHUB_RUN_ATTEMPT`).
+
+In this order, each step fail-closed:
+
+1. Every variable whose name ends in `_KEY` or `_TOKEN` leaves the
+   command's environment before its first process; none of the later
+   processes gets it, except the reviewer below.
+2. The profile is loaded from `HEAD` (the base) as by `ringi run`: committed,
+   valid, with `ci.review`.
+3. Budget of the workflow run: an `--attempt` (`run_attempt`, re-runs of
+   the job included) over `ci.review.maxAttempts` stops before any model
+   (`HUMAN_DECISION_REQUIRED`). Re-running the job does not help; a new run
+   needs a new event (a push or an edit of the pull request) and a new
+   approval of the environment.
+4. Commits: `--base` is the base of the event and `HEAD`; `--head` is a
+   merge commit whose first parent is `--base` and whose second parent is
+   the head of the event. A merge commit that GitHub computed against
+   another base (for example right after the base branch was changed) is
+   refused (`INVALID_CONFIGURATION`), not reviewed. A re-run of the job has
+   the same event and commits; a new event (a push or an edit of the pull
+   request) brings the current merge commit.
+5. Credentials: each name of `ci.review.credentials` must be set and at
+   least 8 characters long; a pull request from a fork has none
+   (`INVALID_CONFIGURATION`).
+6. Trusted inputs: a diff record (added, modified, deleted, type-changed,
+   both ends of a rename or copy) of the profile or a module it imports;
+   `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`,
+   `.corepack.env` or a name of the core's dependency inputs
+   (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`,
+   `.pnpmfile.cjs` and the others) at any
+   depth, in any ASCII letter case; a name ending in `.patch`; a path with
+   a `node_modules`, `.claude` or `.agent-review-loop` segment; or a
+   symbolic link on the head side (mode `120000`, added or type-changed)
+   stops (`HUMAN_DECISION_REQUIRED`): such a change is reviewed by a
+   person. A symbolic link is refused whatever its target, so the
+   code is not `SYMLINK_ESCAPE` (a link that leaves the repository).
+7. The lane, classified from the diff with the base's profile, chooses the
+   review profile (`ci.review.profiles`).
+8. The task is generated from the pull request in the profile's task
+   schema and validated: the class is the full track (`implementation`),
+   the required checks are the `git` checks of its check set, and the title
+   and the description (cut to 256 and 4000 characters) are quoted as one
+   JSON string each, with `<`, `>`, `&`, the backtick and the control,
+   format and bidirectional characters escaped, under a sentence that says
+   they are data, not instructions. No heading, check name, HTML comment or
+   line break of theirs reaches the Markdown of the task.
+9. `git restore --source=<head> --worktree` makes the working tree the
+   merge commit's tree (`HEAD` and the index stay the base), and the task is
+   written to `.agent-review-loop/ci-review/task.md` (never over an existing
+   file).
+10. The run is `ringi run <task> --review-only --review-profile <profile>`
+    of the profile, in the same process, with two differences that only
+    `ringi ci review` sets: the gates are only the task's `git` checks (a
+    routing rule's added checks included), and the credentials of
+    `ci.review.credentials` are added to the reviewer's environment and to
+    no other process. A run longer than `ci.review.timeoutMinutes` is
+    cancelled (`TIMEOUT`). Every other rule of review-only applies: a
+    finding is `HUMAN_DECISION_REQUIRED`, secret-like content in the change
+    is `SECRET_DETECTED`, changed dependencies stop the preflight.
+
+Output: standard output has `verdict=APPROVE` or `verdict=STOPPED`,
+`lane=<lane>` once the lane is known and `run-id=<id>` once the run has one,
+ready for `>> "$GITHUB_OUTPUT"`; standard error the code and the message.
+`--out` gets `ci-review.json` and, after a run, the run's `report.json` and
+`ledger.jsonl` byte for byte, for the job's artifact and for
+`ringi verify <run-id>` in a later step. `ci-review.json` (`schemaVersion:
+1`) has `verdict`, `code` and `error` (when not approved), `pullRequest`,
+`base`, `head`, `lane`, `reviewProfile`, `runId`, `findings` (the open
+findings) and `measurement`, the data per commit for routing:
+`durationMs`, `runAttempt`, `maxAttempts`, `timeoutMinutes`,
+`reviewAttempts` (attempts of the review profile), `contextBytes` (the
+prompt bytes of the review lanes, `null` without lanes) and `costUsd`,
+always `null`: no provider reports a cost to the core, so the limits are the
+attempts and the time. `--summary` (`$GITHUB_STEP_SUMMARY`) gets a short
+table: verdict, open findings, time, attempts, cost; never the diff, the
+findings' text or a secret. In every text the command writes, each value of
+a credential is replaced by `[REDACTED]`; a report or ledger of the run that
+holds one is not copied and the verdict is `STOPPED` with
+`INTEGRITY_CHECK_FAILED`.
+
+| Code | When |
+| --- | --- |
+| `INVALID_CONFIGURATION` | No `ci.review`, an invalid profile or event, a commit that does not match, a missing credential, an unclean checkout. |
+| `PROFILE_UNCOMMITTED` | The profile of the base is not committed. |
+| `HUMAN_DECISION_REQUIRED` | Over the budget, a change of a trusted input, or a finding of the review. |
+| `DIFF_FAILED`, `DIFF_TOO_LARGE` | Git cannot read a commit, a parent or the diff. |
+| `INVALID_TASK`, `INVALID_TASK_PATH` | The generated task is refused, or its file cannot be written. |
+| `TIMEOUT` | Over `ci.review.timeoutMinutes`. |
+| `INTEGRITY_CHECK_FAILED` | Evidence would hold a credential. |
+| any code of `ringi run` | The review-only run stopped. |
+
+Exit codes: `0` only for `APPROVE`, `1` for any other verdict (and when the
+evidence cannot be written), `2` for invalid arguments or outside a Git
+repository. A skipped review job is never a pass: the aggregator requires
+its success with `--review-job`.
 
 ## The example workflow
 
@@ -279,6 +498,39 @@ checks them in its text:
 - no job of a lane has `continue-on-error`: a failed job would then count
   as a success in `needs`, and the aggregator could not see the failure.
 
+### With review
+
+[`examples/github-actions/ringi-ci-review.yml`](../examples/github-actions/ringi-ci-review.yml)
+is the same workflow with a `review` job; use one of the two. It is a
+second file and not an option of the first because the first must stay a
+workflow without any secret, and a complete one because the aggregator can
+only `needs` jobs of its own workflow. Its test checks, in addition:
+
+- the `review` job has `environment: ringi-review` (create it with required
+  reviewers and put the secret there, not in the repository's secrets) and
+  runs for every pull request that is not a draft, in both lanes;
+- `secrets.` appears once, in the `env` of the step `Review`, never in a
+  `run:` script;
+- the base is checked out to `trusted` (`ref: base.sha`) and installed with
+  `--ignore-scripts`; the merge commit is checked out to `review` as data,
+  switched to a branch at the base and given the base's dependencies before
+  `ringi ci review` puts the pull request's tree in place; every `ringi` of
+  the job is `trusted/node_modules/.bin/ringi`, never `pnpm exec`;
+- the reviewer CLI is installed in an exact version;
+- `ringi verify <run-id>` runs after the review;
+- the lane jobs put out `checks`, and the aggregator runs with
+  `--enforce-checks --review-job review` (without the review job on a push
+  to the default branch, which has no review);
+- the permissions stay `contents: read`. A job that comments on the pull
+  request would need `pull-requests: write`; keep it a separate job without
+  the environment and the secret. The example has none.
+
+The evidence directory is not uploaded by the example: that needs
+`actions/upload-artifact` pinned to a full commit SHA, which the example
+does not pin yet. Add the step with the SHA of a release you reviewed; it
+uploads `ci-review.json`, `report.json` and `ledger.jsonl`, none of which
+holds the secret.
+
 `merge_group` (the merge queue) is not supported: the workflow does not run
 for it, so in a merge queue the required check would be missing. Do not add
 `merge_group` to this workflow without classifying the queue's commits.
@@ -307,6 +559,19 @@ required check:
   for lack of minutes or a spending limit is not retried automatically or
   by hand in a loop: wait for the quota or raise the limit, then re-run the
   failed jobs once.
+- **The review has a budget per workflow run, and the approval of the
+  environment is the limit of the cost across runs.** `ci.review.maxAttempts`
+  bounds the attempts of the review job in one run (`$GITHUB_RUN_ATTEMPT`,
+  re-runs included); over it the job is red before any model starts. Ringi
+  Gate keeps no count across runs: a new run of the same commit (an edit of
+  the pull request, a reopen) starts again at attempt 1, and only the
+  person who approves the environment decides whether it reviews again, so
+  approve it only when the commit has not been reviewed yet. The time of
+  the review is bounded by `ci.review.timeoutMinutes`; set the job's
+  `timeout-minutes` above it plus the checkouts, the installations and the
+  preflight (the example: 30 and 50), so that `ringi ci review` stops first
+  with `TIMEOUT` and its evidence, and the job's limit is only a backstop.
+  There is no cost limit: no provider reports a cost to the core.
 - **No way around the required check.** No merge by an administrator over
   a red or missing check, no removing the requirement, no `[skip ci]` to
   merge, no change of the workflow that skips a lane. An exception is a
@@ -340,8 +605,9 @@ replace objects or the user's Git configuration. Otherwise the lane is
   owner review.
 - **Not that the jobs run the profile's checks.** The profile names the
   checks of each lane and the classifier prints them; which job runs which
-  check is the workflow's, and the aggregator only checks the results of
-  the jobs it is told about.
+  check is the workflow's. With `--enforce-checks` the aggregator compares
+  the checks the lane jobs say they ran with the classification's; the
+  jobs' outputs are still written by the workflow.
 - **Not that the base is the right one.** The classifier compares the two
   commits it is given; the workflow chooses them (in the example: the
   merge commit and its first parent, checked against the pull request's

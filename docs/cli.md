@@ -9,8 +9,9 @@ five commands:
 - `ringi run <task.md> [options]` runs the writer, the gates and the
   independent review;
 - `ringi verify <runId>` verifies the evidence ledger of a run;
-- `ringi ci classify|aggregate` chooses the lane of a change in CI and
-  aggregates the required check (see [ringi ci](#ringi-ci)).
+- `ringi ci classify|aggregate|review` chooses the lane of a change in CI,
+  aggregates the required check and reviews a pull request with a model
+  (see [ringi ci](#ringi-ci)).
 
 From version 0.1.0 the npm package `ringi-gate` installs the command
 (see [Installation from npm](../README.md#installation-from-npm)). The
@@ -489,16 +490,20 @@ repository.
 ## `ringi ci`
 
 ```sh
-ringi ci classify --base <sha> --head <sha> [--json]
+ringi ci classify --base <sha> --head <sha> [--json] [--checks]
 ringi ci aggregate --lane docs|full --needs <file> \
-  --classify-job <job> --docs-jobs <job,...> --full-jobs <job,...>
+  --classify-job <job> --docs-jobs <job,...> --full-jobs <job,...> \
+  [--review-job <job>] [--enforce-checks]
+ringi ci review --base <sha> --head <sha> --event <file> \
+  --attempt <n> --out <dir> [--summary <file>]
 ```
 
 The CI adapter for GitHub Actions, described in [ci.md](ci.md) with the
-example workflow and the budget policy. It needs the `ci` section of the
-profile ([profile.md](profile.md#ci)); without it `classify` stops with
-`INVALID_CONFIGURATION`. Read-only: no model, no network, no secret; the
-only processes are read-only Git commands.
+threat model, the example workflows and the budget policy. It needs the
+`ci` section of the profile ([profile.md](profile.md#ci)); without it
+`classify` stops with `INVALID_CONFIGURATION`. `classify` and `aggregate`
+are read-only: no model, no network, no secret; the only processes are
+read-only Git commands.
 
 - `classify` chooses the lane (`docs` or `full`) of the diff between two
   commits and prints `lane=<lane>`, or the classification with `--json`.
@@ -506,5 +511,13 @@ only processes are read-only Git commands.
   classified (a STOP code, never a lane), `2` for invalid arguments or
   outside a Git repository.
 - `aggregate` reads `toJSON(needs)` from `<file>` and is the required
-  check. Exit codes: `0` only when it is green, `1` when it is red, `2` for
-  invalid arguments or a needs file that cannot be read.
+  check; `--review-job` requires the review job, `--enforce-checks`
+  compares the lane jobs' checks with the classification's. Exit codes:
+  `0` only when it is green, `1` when it is red, `2` for invalid arguments
+  or a needs file that cannot be read.
+- `review` (with `ci.review`) runs `ringi run --review-only` on a task
+  generated from the pull request, in a checkout of the base with the merge
+  commit's tree, with only the `git` checks as gates and the credentials
+  handed to the reviewer alone; it is the only subcommand that starts a
+  model. Exit codes: `0` only for `APPROVE`, `1` for any other verdict, `2`
+  for invalid arguments or outside a Git repository.

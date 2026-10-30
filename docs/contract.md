@@ -38,12 +38,13 @@ The `ringi` command and its exit codes are described in [cli.md](cli.md).
   runner.
 - `verify`: [cli.md](cli.md#ringi-verify); `0` for `ok`, `1` for `fail` or
   `unverified`, `2` for invalid arguments or outside a Git repository.
-- `ci`: [ci.md](ci.md), subcommands `classify` and `aggregate`.
+- `ci`: [ci.md](ci.md), subcommands `classify`, `aggregate` and `review`.
   `classify`: `0` when the diff is classified (either lane), `1` when it
   cannot be (a STOP code, never a lane), `2` for invalid arguments or
   outside a Git repository. `aggregate`: `0` only for a green required
   check, `1` for a red one, `2` for invalid arguments or a needs file that
-  cannot be read.
+  cannot be read. `review`: `0` only for `APPROVE`, `1` for any other
+  verdict, `2` for invalid arguments or outside a Git repository.
 <!-- /contract:cli-commands -->
 
 Options (of every command together; `ringi run` takes the options of
@@ -56,11 +57,17 @@ the same options, report and codes):
 - `--dry-run`: `init` writes nothing; `run` runs the preflight and prints
   the plan.
 - `--json`: machine output of `doctor`, `run`, `verify` and `ci classify`.
-- `--base`, `--head`: `ci classify`, the two commits of the diff (full
-  SHAs).
+- `--base`, `--head`: `ci classify` and `ci review`, the two commits of
+  the diff (full SHAs).
+- `--checks`: `ci classify`, also print the lane's checks.
 - `--lane`, `--needs`, `--classify-job`, `--docs-jobs`, `--full-jobs`:
   `ci aggregate`, the lane, the `toJSON(needs)` file and the jobs of the
   classification and of each lane ([ci.md](ci.md#ringi-ci-aggregate)).
+- `--review-job`, `--enforce-checks`: `ci aggregate`, the review job and
+  the comparison of the lane jobs' checks.
+- `--event`, `--attempt`, `--out`, `--summary`: `ci review`, the event,
+  the attempt of the job, the evidence directory and the job summary
+  ([ci.md](ci.md#ringi-ci-review)).
 - `--task-mode`: `implementation` (default) or `analysis`.
 - `--review-only`: [cli.md](cli.md#review-only).
 - `--checkpoint`, `--resume`: [cli.md](cli.md#checkpoints-and-resume).
@@ -101,9 +108,11 @@ starts: an unknown key, at the top level or inside any section, is
 Extension rule: a new optional key, at the top level or in a section, is a
 minor change when a profile without it behaves exactly as before. Keys
 reserved for later (any key of `routing` other than `rules`, any key of
-`ci` other than `docsPaths` and `lanes`, any lane of `ci.lanes` other than
-`docs` and `full`) stay `INVALID_CONFIGURATION` until a version defines
-them.
+`ci` other than `docsPaths`, `lanes` and `review`, any lane of `ci.lanes`
+or `ci.review.profiles` other than `docs` and `full`, any key of
+`ci.review` other than `profiles`, `maxAttempts`, `timeoutMinutes` and
+`credentials`, a cost limit among them) stay `INVALID_CONFIGURATION` until
+a version defines them.
 
 Names in `routing.rules` share one namespace with the task classes: a rule
 named after a class is that class's rule, and any other name is an
@@ -190,7 +199,8 @@ the runner that wrote it (see [cli.md](cli.md#checkpoints-and-resume)).
 
 `ringi ci classify` is described in [ci.md](ci.md#ringi-ci-classify).
 Without `--json` its standard output is exactly one line, `lane=docs` or
-`lane=full`; the summary on standard error is presentation. With `--json`
+`lane=full`, and with `--checks` a second one, `checks=` and the `checks`
+below as a JSON array; the summary on standard error is presentation. With `--json`
 the output has its own `schemaVersion: 1` and exactly these fields:
 
 - `schemaVersion`: `1`.
@@ -213,6 +223,15 @@ is never a lane: with `--json` it prints a stop report with exactly
 `schemaVersion` (`1`), `status` (`STOPPED`), `code` and `error`. The
 output of `ringi ci aggregate` is presentation; its exit code is the
 contract.
+
+`ringi ci review` ([ci.md](ci.md#ringi-ci-review)): its standard output
+lines `verdict=` (`APPROVE` or `STOPPED`), `lane=` and `run-id=`, and
+`ci-review.json` with its own `schemaVersion: 1` and the fields `verdict`,
+`code` and `error` (not approved), `pullRequest`, `base`, `head`, `lane`,
+`reviewProfile`, `runId`, `findings` and `measurement` (`durationMs`,
+`runAttempt`, `maxAttempts`, `timeoutMinutes`, `reviewAttempts`,
+`contextBytes`, `costUsd`). Fields are only added in 1.x. The job summary
+is presentation.
 
 ## STOP codes
 

@@ -189,6 +189,49 @@ and its modules, `package.json` and the lockfile with code owner review. The
 `docs` lane skips checks, not review: documentation that is a contract or
 instructions still needs review of its content.
 
+## Review in CI
+
+`ringi ci review` (opt-in with `ci.review`) is the only part of CI with a
+secret, the reviewer CLI's credential. Its threat model is in
+[docs/ci.md](docs/ci.md#threat-model); in short:
+
+- With `pull_request` the workflow comes from the pull request, so the YAML
+  protects nothing against an author with write access. The boundary of the
+  secret is a GitHub `environment` with required reviewers (a person
+  approves every run) and GitHub's rule that a pull request from a fork
+  gets no secrets (its review is red, never skipped). Nothing more is
+  promised.
+- In the job with the secret, `ringi-gate`, `ringi.config.mjs` and the
+  prompts come from a checkout of the base commit, installed without
+  install scripts; the pull request's tree is data, never installed or run.
+  A pull request that changes the profile, agent instructions or settings
+  (`AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`),
+  Corepack's `.corepack.env`, a dependency input (`package.json`, lockfiles, `.npmrc`, `.pnpmfile.cjs`
+  and the core's other dependency input names, at any depth), a `.patch`
+  file or `node_modules`, or that adds a symbolic link, is refused before
+  any model (`HUMAN_DECISION_REQUIRED`). The core's preflight runs pnpm,
+  which reads the dependency inputs, but only in the base's version, since
+  a pull request that changes them never gets that far. The gates of the
+  review are only `git` checks, and the merge commit must have the base
+  and the head of the event as its parents.
+- The secret is only in the `env` of the review step. `ringi ci review`
+  removes every variable whose name ends in `_KEY` or `_TOKEN` from its
+  environment before its first process and hands the configured ones only
+  to the reviewer's process; its outputs replace their values with
+  `[REDACTED]`, and evidence that would hold one is not copied. A
+  configured credential shorter than 8 characters is refused. Removing a
+  variable only stops its inheritance: a process of the same user could
+  read `/proc/<pid>/environ`, which is why no input of the pull request
+  reaches a program that runs in the job.
+- The cost: `ci.review.maxAttempts` bounds the attempts in one workflow
+  run; across runs the limit is the approval of the environment.
+- No `pull_request_target` with a checkout of the pull request, no
+  `workflow_run` that trusts artifacts of a pull request run.
+
+Not covered: an approval of the environment given without looking at the
+change, a reviewer CLI that leaks its own credential, and the reviewer
+CLI's admin-managed settings.
+
 ## What the runner does not guarantee
 
 - The checkpoint signature detects a checkpoint changed without the key. It

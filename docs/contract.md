@@ -38,6 +38,12 @@ The `ringi` command and its exit codes are described in [cli.md](cli.md).
   runner.
 - `verify`: [cli.md](cli.md#ringi-verify); `0` for `ok`, `1` for `fail` or
   `unverified`, `2` for invalid arguments or outside a Git repository.
+- `ci`: [ci.md](ci.md), subcommands `classify` and `aggregate`.
+  `classify`: `0` when the diff is classified (either lane), `1` when it
+  cannot be (a STOP code, never a lane), `2` for invalid arguments or
+  outside a Git repository. `aggregate`: `0` only for a green required
+  check, `1` for a red one, `2` for invalid arguments or a needs file that
+  cannot be read.
 <!-- /contract:cli-commands -->
 
 Options (of every command together; `ringi run` takes the options of
@@ -49,7 +55,12 @@ the same options, report and codes):
 - `--version`: `ringi (Ringi Gate) <version>`.
 - `--dry-run`: `init` writes nothing; `run` runs the preflight and prints
   the plan.
-- `--json`: machine output of `doctor`, `run` and `verify`.
+- `--json`: machine output of `doctor`, `run`, `verify` and `ci classify`.
+- `--base`, `--head`: `ci classify`, the two commits of the diff (full
+  SHAs).
+- `--lane`, `--needs`, `--classify-job`, `--docs-jobs`, `--full-jobs`:
+  `ci aggregate`, the lane, the `toJSON(needs)` file and the jobs of the
+  classification and of each lane ([ci.md](ci.md#ringi-ci-aggregate)).
 - `--task-mode`: `implementation` (default) or `analysis`.
 - `--review-only`: [cli.md](cli.md#review-only).
 - `--checkpoint`, `--resume`: [cli.md](cli.md#checkpoints-and-resume).
@@ -84,12 +95,15 @@ starts: an unknown key, at the top level or inside any section, is
 - `reviewLanes`: [profile.md](profile.md#reviewlanes).
 - `routing`: [profile.md](profile.md#routing).
 - `providerModules`: [profile.md](profile.md#providermodules).
+- `ci`: [profile.md](profile.md#ci); read only by `ringi ci`.
 <!-- /contract:profile-keys -->
 
 Extension rule: a new optional key, at the top level or in a section, is a
 minor change when a profile without it behaves exactly as before. Keys
-reserved for later (any key of `routing` other than `rules`) stay
-`INVALID_CONFIGURATION` until a version defines them.
+reserved for later (any key of `routing` other than `rules`, any key of
+`ci` other than `docsPaths` and `lanes`, any lane of `ci.lanes` other than
+`docs` and `full`) stay `INVALID_CONFIGURATION` until a version defines
+them.
 
 Names in `routing.rules` share one namespace with the task classes: a rule
 named after a class is that class's rule, and any other name is an
@@ -171,6 +185,34 @@ nor `publicationApproved`:
 The round files (`round-<n>-*.json`), the diagnostic logs and the
 checkpoint file are outside the contract; the checkpoint is checked only by
 the runner that wrote it (see [cli.md](cli.md#checkpoints-and-resume)).
+
+## CI classification
+
+`ringi ci classify` is described in [ci.md](ci.md#ringi-ci-classify).
+Without `--json` its standard output is exactly one line, `lane=docs` or
+`lane=full`; the summary on standard error is presentation. With `--json`
+the output has its own `schemaVersion: 1` and exactly these fields:
+
+- `schemaVersion`: `1`.
+- `lane`: `docs` or `full`.
+- `checks`: the check names of the lane, from the profile's `ci.lanes`.
+- `files`: one entry per record of the diff, each with `path`, `oldPath`
+  (only for `renamed` and `copied`: the source), `status` (`added`,
+  `copied`, `deleted`, `modified`, `renamed` or `type-changed`) and
+  `reason`: `docs` for plain documentation; otherwise a reason of a mode
+  (`executable`, `symlink`, `submodule`), or else the first of
+  `unsafe-name`, `dot-segment`, `ascii-folding-name`, `instruction-file`,
+  `excluded-by-docs-policy`, `protected-path`, `not-markdown`, `outside-docs-paths` that applies to
+  the source, or else to the path.
+- `reasons`: why the lane is `full`, the distinct reasons of its files or
+  `empty-diff`; empty for the docs lane.
+
+Lanes, statuses and reasons are only added in 1.x; a new reason may only
+move a change from `docs` to `full`. A classification that does not happen
+is never a lane: with `--json` it prints a stop report with exactly
+`schemaVersion` (`1`), `status` (`STOPPED`), `code` and `error`. The
+output of `ringi ci aggregate` is presentation; its exit code is the
+contract.
 
 ## STOP codes
 
@@ -261,7 +303,7 @@ major change. Messages (`error`) are outside the contract.
 | `PROCESS_ERROR` | yes | A process could not be run, or exited 0 without reading its whole input. |
 | `PROCESS_FAILED` | yes | The implementer process failed. |
 | `PROFILE_MODIFIED` | no | `ringi.config.mjs` or a module it imports changed during the run. |
-| `PROFILE_UNCOMMITTED` | no | `ringi run`, `ringi doctor`: the profile or a module it imports is not committed or differs from `HEAD`. |
+| `PROFILE_UNCOMMITTED` | no | `ringi run`, `ringi doctor`, `ringi ci classify`: the profile or a module it imports is not committed or differs from `HEAD`. |
 | `PROTECTED_BRANCH` | no | The branch is `main` or `master`. |
 | `PROVIDER_CONTRACT_VIOLATION` | no | A provider module's argv or environment breaks a core check. |
 | `PROVIDER_ROLE_NOT_ALLOWED` | no | A provider module's declaration does not allow the role. |

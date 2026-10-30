@@ -182,9 +182,17 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   report, `schemaVersion` 2). The provider-specific names stay as
   deprecated aliases until 2.0; the built-in providers stay `experimental`.
 
+- CI adapter for GitHub Actions, part 1 (unreleased): `ringi ci classify`
+  chooses the `docs` or `full` lane from the real diff of a pull request,
+  fail-closed; `ringi ci aggregate` is the one required check; the example
+  workflow and the CI budget policy are in [docs/ci.md](docs/ci.md). No
+  model and no secret in CI.
+
 ## Later (after 1.0, not implemented)
 
-- A CI adapter (GitHub Actions first), a CI budget policy and CI evidence.
+- CI adapter, part 2: review in CI (opt-in), its evidence (report and
+  ledger as artifacts, a job summary) and a review budget per pull request,
+  without secrets for pull requests from forks.
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.

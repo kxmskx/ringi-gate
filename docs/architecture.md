@@ -20,6 +20,7 @@ and what may change is in [contract.md](contract.md).
 | `scripts/agent-review-profile.mjs` | The project profile (binding point). See [profile.md](profile.md). |
 | `bin/ringi.mjs`, `scripts/ringi-cli.mjs` | The `ringi` command: `init`, `doctor` and `run`. `run` is the flow of `agent-review-loop.mjs` with the profile from `ringi.config.mjs` (`loadProjectProfile` in the core). See [cli.md](cli.md). |
 | `scripts/ringi-init.mjs`, `scripts/ringi-doctor.mjs` | `ringi init` (profile and task templates, never overwrites) and `ringi doctor` (read-only checks with the core's preflight functions). |
+| `scripts/ringi-ci.mjs`, `scripts/ringi-ci-lanes.mjs` | `ringi ci`: the options and output of `classify` and `aggregate`, and the classifier of a diff and the aggregator of the required check (see [ci.md](ci.md)). |
 
 `scripts/agent-review-loop.mjs` treats the parent directory of `scripts/` as
 the repository it works on; the scripts are bound to a project by placing

@@ -167,6 +167,28 @@ on.
   written stops the run with `INTEGRITY_CHECK_FAILED`. `ringi verify <runId>`
   checks the ledger against the key and the report, read-only.
 
+## The CI classifier
+
+`ringi ci classify` (see [docs/ci.md](docs/ci.md)) is a trust boundary of
+CI: it decides from the real diff between two commits, read from Git
+objects without replace objects, without the user's and the system's Git
+configuration and without `GIT_` variables of the environment, whether a
+change may run only the light checks of the `docs` lane. Everything it
+cannot prove to be plain documentation, an empty diff included, is the
+`full` lane; a diff it cannot read is no lane at all, and the required
+check of `ringi ci aggregate` is then red. The declaration of a pull request
+(title, labels, description, commit messages) is never an input.
+
+The example workflow uses `pull_request`, never `pull_request_target`, a
+read-only token (`contents: read`), no secret and checkouts without
+persisted credentials. With `pull_request` the workflow, the profile and
+the installed Ringi Gate come from the pull request's merge commit: the
+classifier routes a change of them to the `full` lane, but cannot stop a
+pull request that rewrites the workflow. Protect `.github/`, the profile
+and its modules, `package.json` and the lockfile with code owner review. The
+`docs` lane skips checks, not review: documentation that is a contract or
+instructions still needs review of its content.
+
 ## What the runner does not guarantee
 
 - The checkpoint signature detects a checkpoint changed without the key. It

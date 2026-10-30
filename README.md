@@ -419,6 +419,12 @@ before any process starts. In short:
 - **`locale`** (optional): `'en'` (default) or `'pl'`, the language of the
   runner's messages, of the implementer and reviewer prompts and of the
   default task schema.
+- **`ci`** (optional): the paths of plain documentation and the checks of
+  the `docs` and `full` lanes for `ringi ci`, which chooses the lane of a
+  pull request in GitHub Actions from its real diff (fail-closed: anything
+  but plain documentation is `full`) and aggregates one required check. No
+  model and no secret in CI; see [docs/ci.md](docs/ci.md) and the example
+  workflow [examples/github-actions/ringi-ci.yml](examples/github-actions/ringi-ci.yml).
 
 Reference and examples: [docs/profile.md](docs/profile.md),
 [examples/project-profile.mjs](examples/project-profile.mjs).

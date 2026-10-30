@@ -2,13 +2,15 @@
 
 `ringi` runs Ringi Gate on the Git repository of the current directory, with
 the project profile from `ringi.config.mjs` at that repository's root. It has
-four commands:
+five commands:
 
 - `ringi init` prepares a project: a profile and a task template;
 - `ringi doctor` checks the repository and the machine before a run;
 - `ringi run <task.md> [options]` runs the writer, the gates and the
   independent review;
-- `ringi verify <runId>` verifies the evidence ledger of a run.
+- `ringi verify <runId>` verifies the evidence ledger of a run;
+- `ringi ci classify|aggregate` chooses the lane of a change in CI and
+  aggregates the required check (see [ringi ci](#ringi-ci)).
 
 From version 0.1.0 the npm package `ringi-gate` installs the command
 (see [Installation from npm](../README.md#installation-from-npm)). The
@@ -483,3 +485,26 @@ Exit codes: `0` when the ledger verifies (`ok`), `1` at the first mismatch
 (also a missing ledger or report) or for `unverified`, `2` for invalid
 arguments (not exactly one run id, an unknown option) or outside a Git
 repository.
+
+## `ringi ci`
+
+```sh
+ringi ci classify --base <sha> --head <sha> [--json]
+ringi ci aggregate --lane docs|full --needs <file> \
+  --classify-job <job> --docs-jobs <job,...> --full-jobs <job,...>
+```
+
+The CI adapter for GitHub Actions, described in [ci.md](ci.md) with the
+example workflow and the budget policy. It needs the `ci` section of the
+profile ([profile.md](profile.md#ci)); without it `classify` stops with
+`INVALID_CONFIGURATION`. Read-only: no model, no network, no secret; the
+only processes are read-only Git commands.
+
+- `classify` chooses the lane (`docs` or `full`) of the diff between two
+  commits and prints `lane=<lane>`, or the classification with `--json`.
+  Exit codes: `0` when classified (either lane), `1` when the diff cannot be
+  classified (a STOP code, never a lane), `2` for invalid arguments or
+  outside a Git repository.
+- `aggregate` reads `toJSON(needs)` from `<file>` and is the required
+  check. Exit codes: `0` only when it is green, `1` when it is red, `2` for
+  invalid arguments or a needs file that cannot be read.

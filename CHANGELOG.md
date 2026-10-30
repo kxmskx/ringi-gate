@@ -5,6 +5,44 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Added
+
+- The CI adapter for GitHub Actions, part 1 (see
+  [docs/ci.md](docs/ci.md)); no model and no secret in CI. Optional
+  `ci: { docsPaths, lanes }` in the profile: `docsPaths` in the dialect and
+  with the validator of review lane `paths` (an exact file must end in
+  `.md`), `lanes: { docs, full }` with check names of the profile, the
+  `docs` lane a subset of the `full` lane; any other key of `ci` or
+  `ci.lanes` is `INVALID_CONFIGURATION`, reserved. A profile without `ci`
+  behaves as before.
+- `ringi ci classify --base <sha> --head <sha> [--json]`: the lane of the
+  real diff between two commits (`git diff-tree -r -z --raw` with renames
+  and copies, without the user's Git configuration or replace objects).
+  `docs` only when every file, both ends of a rename or copy included, is a
+  `.md` file under `docsPaths` in mode `100644`, not `AGENTS.md`,
+  `CLAUDE.md`, `SECURITY.md` or `SKILL.md` in any letter case, not excluded
+  by the docs candidate rule (its base exclusions and the profile's
+  `docsCandidatePolicy` exclusions, with the core's own code), not a file
+  of the profile, without a segment starting with a dot; anything else, an
+  empty diff included, is `full` with its reasons. `--head` must be `HEAD`
+  of the checkout. A diff that cannot be classified stops with an existing
+  code (`DIFF_FAILED`, `DIFF_TOO_LARGE`, `INVALID_CONFIGURATION`,
+  `PROFILE_UNCOMMITTED`, `TIMEOUT`, `INTERRUPTED`, `UNEXPECTED_ERROR`) and
+  is never a lane; `GIT_DIR` or `GIT_WORK_TREE` in the environment is exit
+  code `2` without a code.
+- `ringi ci aggregate --lane <lane> --needs <file> --classify-job <job>
+  --docs-jobs <jobs> --full-jobs <jobs>`: the required check from
+  `toJSON(needs)`, green only when the classification and every job of the
+  lane succeeded and every other job was skipped.
+- `examples/github-actions/ringi-ci.yml`: the example workflow
+  (`pull_request` with the draft, ready and `edited` events, `push` to the
+  default branch, `ringi-gate` installed with pnpm without install scripts, `contents: read`, actions pinned to a commit SHA, concurrency per
+  pull request, a draft never green, an aggregator that always runs under a
+  fixed name), checked by `examples/validate-examples.test.mjs`, and the
+  CI budget policy in `docs/ci.md`.
+
 ## 1.0.0 — 2026-10-30
 
 The first stable version: the contract in

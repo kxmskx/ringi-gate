@@ -112,6 +112,8 @@ const REQUIRED_FILES = [
   'scripts/ringi-cli.mjs',
   'scripts/ringi-init.mjs',
   'scripts/ringi-doctor.mjs',
+  'scripts/ringi-ci.mjs',
+  'scripts/ringi-ci-lanes.mjs',
   'scripts/agent-review-loop.mjs',
   'scripts/agent-review-loop-lib.mjs',
   'scripts/agent-review-dashboard.mjs',

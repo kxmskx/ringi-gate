@@ -55,6 +55,7 @@ import {
   SOL_PHASE_OWNERSHIP_CONTRACT,
   buildClaudePrompt,
   buildCodexPrompt,
+  fileNameLine,
 } from './agent-review-prompts.mjs';
 import {
   LEDGER_MAC,
@@ -1022,15 +1023,6 @@ function routingNotLooser(scale, from, to) {
         ))) &&
     lanesOf(from).every((id) => lanesOf(to).includes(id)) &&
     (from.addChecks ?? []).every((check) => (to.addChecks ?? []).includes(check))
-  );
-}
-
-// A changed file name as one JSON string that cannot start a new line:
-// JSON.stringify leaves U+0085, U+2028 and U+2029 as they are.
-function fileNameLine(file) {
-  return JSON.stringify(file).replace(
-    /[\u{85}\u{2028}\u{2029}]/gu,
-    (character) => `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`,
   );
 }
 
@@ -8406,17 +8398,26 @@ function reportPermissionDenials(denials) {
 // The command of the sandbox check: an exclusive write to a file in the
 // core's temporary directory and to one in the Git directory, then a TCP
 // connection to the core's listener on 127.0.0.1 (no host outside the
-// machine, so that a host without network gives the same result). One line
-// with the nonce and the result of each attempt.
+// machine, so that a host without network gives the same result). When .git
+// is a file (a linked worktree or a submodule), a fifth argument names it and
+// the command also opens it for writing, without truncating or writing: a
+// refusal shows that the sandbox does not let the file be written in place
+// (readGitPointerBaseline covers a file replaced during the round). One
+// line with the nonce and the result of each attempt.
 const SANDBOX_CHECK_SCRIPT = [
   "const fs = require('node:fs');",
   "const net = require('node:net');",
-  'const [nonce, outside, git, port] = process.argv.slice(1);',
+  'const [nonce, outside, git, port, pointer] = process.argv.slice(1);',
   'const write = (path) => {',
   "  try { fs.writeFileSync(path, '', { flag: 'wx' }); return 'written'; }",
   "  catch (error) { return String(error.code || 'error'); }",
   '};',
+  'const open = (path) => {',
+  "  try { fs.closeSync(fs.openSync(path, 'r+')); return 'opened'; }",
+  "  catch (error) { return String(error.code || 'error'); }",
+  '};',
   'const result = { outside: write(outside), git: write(git) };',
+  'if (pointer !== undefined) result.pointer = open(pointer);',
   'let done = false;',
   'const finish = (network) => {',
   '  if (done) return;',
@@ -8432,24 +8433,58 @@ const SANDBOX_CHECK_SCRIPT = [
 ].join('\n');
 const SANDBOX_DENIED_WRITE = new Set(['EPERM', 'EACCES', 'EROFS']);
 
-// The Git directory of the sandbox check: .git itself, or for a linked
-// worktree or a submodule (.git is a file) the directory named on its
-// gitdir line (the first line of the file), as Git resolves it. Undefined
-// when neither holds, also for a .git that is a symbolic link.
+// The Git directory of the sandbox check: { directory } with .git itself,
+// or for a linked worktree or a submodule (.git is a file) the directory
+// that file names, as Git resolves it: the file is a single line
+// `gitdir: <path>`, trailing line ends removed, a relative path taken from
+// the repository root. The file itself is the pointer ({ path, contents }),
+// which the check must find unwritable and unchanged. Undefined when neither
+// holds, also for a .git that is a symbolic link (to a directory or a file)
+// and for a file with more than one line.
 async function sandboxCheckGitDirectory(repositoryRoot) {
   const dotGit = join(repositoryRoot, '.git');
   const stats = await lstat(dotGit).catch(() => undefined);
-  if (stats?.isDirectory()) return dotGit;
+  if (stats?.isDirectory()) return { directory: dotGit };
   if (!stats?.isFile() || stats.size > 4096) return undefined;
-  const [firstLine] = (await readFile(dotGit, 'utf8').catch(() => '')).split(
-    '\n',
-  );
-  const match = /^gitdir: (.+)$/.exec(firstLine);
+  const contents = await readFile(dotGit).catch(() => undefined);
+  if (!contents) return undefined;
+  const text = contents.toString('utf8').replace(/[\r\n]+$/, '');
+  const match = /^gitdir: ([^\r\n]+)$/.exec(text);
   if (!match) return undefined;
-  const directory = resolve(repositoryRoot, match[1].trim());
+  const directory = resolve(repositoryRoot, match[1]);
   return (await lstat(directory).catch(() => undefined))?.isDirectory()
-    ? directory
+    ? { directory, pointer: { path: dotGit, contents } }
     : undefined;
+}
+
+// The pointer file as it is now: the same bytes, still a regular file and
+// not a symbolic link. Any error reads as changed.
+async function sandboxCheckPointerUnchanged(pointer) {
+  try {
+    const stats = await lstat(pointer.path);
+    if (!stats.isFile()) return false;
+    return (await readFile(pointer.path)).equals(pointer.contents);
+  } catch {
+    return false;
+  }
+}
+
+// The .git file of a linked worktree or a submodule before a writer round
+// ({ path, contents }), undefined when .git is not a regular file (a
+// directory runs as before). The sandbox check shows that the sandbox
+// refuses to write the file in place; the comparison after the round
+// detects a file renamed or removed and created again, with other bytes or
+// as a symbolic link, before the core runs any Git command.
+async function readGitPointerBaseline(repositoryRoot) {
+  const path = join(repositoryRoot, '.git');
+  const stats = await lstat(path).catch(() => undefined);
+  if (!stats?.isFile()) return undefined;
+  return { path, contents: await readFile(path) };
+}
+
+async function assertGitPointerUnchanged(pointer) {
+  if (pointer && !(await sandboxCheckPointerUnchanged(pointer)))
+    throw gitMutationError(['gitPointer'], 'post-implementer');
 }
 
 // A path counts as present unless lstat says it is missing, so that an
@@ -8466,8 +8501,9 @@ function sandboxCheckPathPresent(path) {
 // check command in the CLI's sandbox of the round's mode, with the round's
 // environment and an empty CODEX_HOME (no user configuration). The round
 // starts only on evidence: both writes (one to the repository's Git
-// directory) refused with a permission error and no file left, the
-// connection refused and none received, exit code 0 and exactly one result
+// directory) refused with a permission error and no file left, for a .git
+// file also its opening for writing refused and its bytes unchanged, no
+// connection made and none received, exit code 0 and exactly one result
 // line with this check's nonce. Anything else, including a sandbox that
 // cannot start, a timeout or a CLI that cannot be run, is
 // IMPLEMENTER_PREFLIGHT_FAILED; an interrupt stays INTERRUPTED.
@@ -8487,8 +8523,9 @@ async function runSandboxCheck({
       msg('preflight.sandboxUnconfirmed', { id: adapter.id, round, reason }),
       { code: 'IMPLEMENTER_PREFLIGHT_FAILED', stage: 'preflight' },
     );
-  const gitDirectory = await sandboxCheckGitDirectory(repositoryRoot);
-  if (!gitDirectory) throw fail('git-directory');
+  const resolved = await sandboxCheckGitDirectory(repositoryRoot);
+  if (!resolved) throw fail('git-directory');
+  const { directory: gitDirectory, pointer } = resolved;
   const nonce = randomBytes(12).toString('hex');
   const directory = join(tempRoot, `sandbox-check-${nonce}`);
   const codexHome = join(directory, 'home');
@@ -8519,6 +8556,7 @@ async function runSandboxCheck({
       outside,
       git,
       String(port),
+      ...(pointer ? [pointer.path] : []),
     ];
     const args = copyProviderArgs(
       sandboxCheckArgs({ taskMode, command: [...command] }),
@@ -8585,12 +8623,21 @@ async function runSandboxCheck({
       throw fail('outside-write');
     if (sandboxCheckPathPresent(git) || report?.git === 'written')
       throw fail('git-write');
+    if (
+      pointer &&
+      (report?.pointer === 'opened' ||
+        !(await sandboxCheckPointerUnchanged(pointer)))
+    )
+      throw fail('git-pointer-write');
     if (connections > 0 || report?.network === 'connected') throw fail('network');
     if (result.code !== 0) throw fail(`exit ${result.code}`);
     if (
       !report ||
       !SANDBOX_DENIED_WRITE.has(report.outside) ||
       !SANDBOX_DENIED_WRITE.has(report.git) ||
+      (pointer
+        ? !SANDBOX_DENIED_WRITE.has(report.pointer)
+        : Object.hasOwn(report, 'pointer')) ||
       typeof report.network !== 'string'
     )
       throw fail('no-evidence');
@@ -11202,6 +11249,8 @@ async function runWorkflow(options) {
         }
         // A signed payload is validated again like the writer's output: a
         // malformed one is a damaged checkpoint, as in readCheckpointFile.
+        // A writer report with a NEEDS_HUMAN response is one too: that
+        // response stops the run before its checkpoint is saved.
         let codexReport;
         try {
           if (!isCheckpointFindings(candidate.findings)) throw new Error();
@@ -11211,6 +11260,12 @@ async function runWorkflow(options) {
               candidate.findings.pending,
               selectedTaskMode,
             );
+          if (
+            codexReport?.findingResponses.some(
+              ({ status }) => status === 'NEEDS_HUMAN',
+            )
+          )
+            throw new Error();
         } catch {
           throw checkpointStop('checkpoint.structure', { runId: resume });
         }
@@ -11950,6 +12005,9 @@ async function runWorkflow(options) {
             adapter: roleProvider(roles().implementer, 'implementer'),
             stage: 'implementer',
           });
+      const gitPointer = reviewOnly
+        ? undefined
+        : await readGitPointerBaseline(cwd);
       // Checks after the gates on a failure path (a gate or the reviewer failed): the Git
       // directory and private index comparison is attached to the STOP
       // report, like post-implementer.
@@ -11990,6 +12048,7 @@ async function runWorkflow(options) {
           completed: null,
         };
         solRuns.push(solExecution);
+        let pointerChecked = false;
         emit({
           type: 'stage:start',
           id: codexStageId,
@@ -12030,6 +12089,9 @@ async function runWorkflow(options) {
               emit({ type: 'activity', role: 'ASTRA', ...implementerActor, entry }),
             verbose,
           });
+          // Before any Git command of the core after the round.
+          pointerChecked = true;
+          await assertGitPointerUnchanged(gitPointer);
           solExecution.status = 'COMPLETED';
           solExecution.completed = {
             model: selectedCodexModel,
@@ -12040,6 +12102,13 @@ async function runWorkflow(options) {
         } catch (error) {
           solExecution.status = 'FAILED';
           let failure = error;
+          if (!pointerChecked) {
+            try {
+              await assertGitPointerUnchanged(gitPointer);
+            } catch (pointerError) {
+              failure = appendIntegrityViolation(error, pointerError);
+            }
+          }
           if (implementerState) {
             try {
               await assertImplementerStateUnchanged({
@@ -12049,7 +12118,7 @@ async function runWorkflow(options) {
                 stage: 'post-implementer',
               });
             } catch (integrityError) {
-              failure = appendIntegrityViolation(error, integrityError);
+              failure = appendIntegrityViolation(failure, integrityError);
             }
           }
           throw await profileViolationFirst(failure, 'post-implementer');

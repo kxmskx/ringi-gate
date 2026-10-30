@@ -1,7 +1,9 @@
 # Architecture
 
 This document describes the runner as implemented in `scripts/` today. Planned
-changes are listed in [ROADMAP.md](../ROADMAP.md), not here.
+changes are listed in [ROADMAP.md](../ROADMAP.md), not here. What version
+1.0 promises (CLI, profile, report, STOP codes, ledger, provider modules)
+and what may change is in [contract.md](contract.md).
 
 ## Components
 
@@ -128,7 +130,7 @@ because it rests on the model's report. Probes with the adapter's argv as it is
 | No user configuration (`--ignore-user-config --strict-config`) | `--safe-mode` (CLAUDE.md, skills, plugins, hooks, MCP servers, custom commands and agents disabled), `--restricted` (user, project and local settings files ignored), `--strict-mcp-config` (no MCP server without `--mcp-config`, which is not passed), `--disable-slash-commands`. |
 | Guards first on `PATH` (`codex` also `-c allow_login_shell=false`, so that login profiles do not reorder `PATH`; the core's empty private `ZDOTDIR` keeps the user's `.zshenv` out; `/etc/zshenv` still applies) | The same `processEnvironment` and environment as `codex`: guard directory first on `PATH`, the same empty `ZDOTDIR`. |
 | Isolated environment without credentials | The same isolated offline environment as `codex`: no key or token in the environment, and `CLAUDE_CONFIG_DIR` is removed as for `codex` (the CLI uses its default configuration directory and stored login). This covers environment variables only: commands can read files under the user's home, as with `codex`. |
-| Git state | `codex`: the `workspace-write` sandbox keeps `.git` read-only as documented by Codex; the Git directory is not fingerprinted, but before every round the core runs a check command through `codex sandbox` in the round's mode (`sandboxCheckArgs`, without a model, with an empty `CODEX_HOME`), and a write to the Git directory (`.git`, or the directory a `.git` file names) or to the core's temporary directory or a connection to a local listener that is not refused, a sandbox that does not start, a timeout, or missing evidence is `IMPLEMENTER_PREFLIGHT_FAILED` before the implementer process. `claude`: preflight refuses repository layouts outside the fingerprint; the CLI's process group and the groups the process watch saw are killed when it exits (best effort; a survivor or an unreadable process table is `IMPLEMENTER_PROCESS_SURVIVED`, and a background Bash command that escaped between two readings outlives it, see the known limits); the Git directory fingerprint is compared around every round, and a change is `UNEXPECTED_GIT_MUTATION` (stage `post-implementer`) before any gate, and again after the gates and after the review; the core's own Git commands use a private index built from `HEAD` (below). |
+| Git state | `codex`: the `workspace-write` sandbox keeps `.git` read-only as documented by Codex; the Git directory is not fingerprinted, but before every round the core runs a check command through `codex sandbox` in the round's mode (`sandboxCheckArgs`, without a model, with an empty `CODEX_HOME`), and a write to the Git directory (`.git`, or the directory a `.git` file names), an opening for writing of a `.git` file itself (which names that directory) or a change of it, a write to the core's temporary directory or a connection to a local listener that is not refused, a `.git` that is a symbolic link or a `.git` file other than one `gitdir:` line, a sandbox that does not start, a timeout, or missing evidence is `IMPLEMENTER_PREFLIGHT_FAILED` before the implementer process; after the round, before any Git command of the core, a `.git` file whose bytes or type changed (renamed or removed and created again) is `UNEXPECTED_GIT_MUTATION` (stage `post-implementer`). `claude`: preflight refuses repository layouts outside the fingerprint; the CLI's process group and the groups the process watch saw are killed when it exits (best effort; a survivor or an unreadable process table is `IMPLEMENTER_PROCESS_SURVIVED`, and a background Bash command that escaped between two readings outlives it, see the known limits); the Git directory fingerprint is compared around every round, and a change is `UNEXPECTED_GIT_MUTATION` (stage `post-implementer`) before any gate, and again after the gates and after the review; the core's own Git commands use a private index built from `HEAD` (below). |
 | Output matches the schema (`--output-schema`, `-o`) | `--output-format json` and `--json-schema` with the same writer schema. Only a result envelope with `type: 'result'` and `is_error: false` counts; `structured_output` or a JSON text `result` then goes through the same report validation. Anything else is `INVALID_AGENT_OUTPUT`. |
 | Correction rounds resume the session (`exec resume <id>`) | `--resume <id>` with the session ID read from the previous envelope (`session_id`, a UUID). A missing or malformed ID, or a resumed round that reports another ID, is `INVALID_AGENT_OUTPUT`. |
 | Analysis sentinel and artifact | Unchanged core checks. |
@@ -780,7 +782,8 @@ is valid, the report and the dry-run plan also carry `taskSchemaVersion`, the
 `APPROVE` or `STOPPED`; a stopped run also has `code`, `stage` and `error`.
 The roles appear under the neutral fields `implementer` and `reviewer`
 (provider, model, effort, review profile, attempt count) in the report, in
-`agents` and in the `metadata` event; the earlier provider-specific fields
+the dry-run plan's `agents` (a run report has no `agents`) and in the
+`metadata` event; the earlier provider-specific fields
 (`sol`, `agents.codex*`, `agents.claude*`, `findings.rejectedByCodex`) stay
 as aliases with equal values. In each round, `implementer` and `reviewer`
 only name the keys that hold the agent outputs (`rounds[].codex`,
@@ -800,7 +803,9 @@ the runner.
 
 Codes are stable identifiers in the report and do not depend on the
 language. Messages are in English, or in Polish with `locale: 'pl'` in the
-profile (see [profile.md](profile.md#locale)). A selection, grouped by stage:
+profile (see [profile.md](profile.md#locale)). A selection, grouped by stage
+(the full list, with the meaning of each code and whether it is resumable,
+is in [contract.md](contract.md#stop-codes)):
 
 | Stage | Codes |
 | --- | --- |

@@ -118,7 +118,9 @@ else is taken from the ledger; the gates and the review run again.
   does not protect even against someone without the key. With the key
   present, `ringi verify` reports such a ledger as `unverified` (exit code
   `1`), because a ledger written without the key and one whose macs were
-  removed look the same.
+  removed look the same. This includes every ledger of a run from before the
+  key was created (the first run with `--checkpoint` creates it): such a run
+  stays `unverified` once the key exists.
 
 The ledger is therefore never a source of trusted state for the runner. See
 [SECURITY.md](../SECURITY.md).

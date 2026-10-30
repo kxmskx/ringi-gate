@@ -646,6 +646,17 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
           const run = ringi(project, ['run', 'tasks/missing.md', ...options, '--json'], env());
           assert.equal(run.status, 1, run.stderr);
           const stopped = JSON.parse(run.stdout);
+          // The stop before the run (docs/contract.md): these fields only,
+          // no runId and no publicationApproved.
+          assert.deepEqual(Object.keys(stopped), [
+            'schemaVersion',
+            'status',
+            'code',
+            'stage',
+            'error',
+            'resume',
+          ]);
+          assert.equal(stopped.schemaVersion, 1);
           assert.equal(stopped.status, 'STOPPED');
           assert.equal(stopped.code, 'INVALID_CONFIGURATION');
           assert.equal(stopped.stage, 'preflight');

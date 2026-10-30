@@ -1262,6 +1262,8 @@ test('runner surface contract: prompts named exports and no imports', async () =
       'SOL_PHASE_OWNERSHIP_CONTRACT',
       'buildClaudePrompt',
       'buildCodexPrompt',
+      // The one escaping of changed file names (prompt and coverage message).
+      'fileNameLine',
     ],
     'prompts named exports',
   );
@@ -1624,6 +1626,307 @@ test('runner surface contract: stage values', async () => {
       'workflow',
     ],
     'stage values',
+  );
+});
+
+// The 1.0 contract (docs/contract.md). Each list below is part of it: a
+// change of any of them must change this test and the document together.
+// The document marks each list with <!-- contract:<name> --> and
+// <!-- /contract:<name> -->. Its entries are the backticked values of each
+// list item before its first ': ', or the first cell of each table row with
+// the second cell (a STOP code with its resumable flag).
+async function contractDocumentList(name) {
+  const text = await readFile(
+    new URL('../docs/contract.md', import.meta.url),
+    'utf8',
+  );
+  const start = text.indexOf(`<!-- contract:${name} -->`);
+  const end = text.indexOf(`<!-- /contract:${name} -->`);
+  assert.ok(start >= 0 && end > start, `docs/contract.md: list ${name}`);
+  const entries = [];
+  for (const line of text.slice(start, end).split('\n')) {
+    const row = /^\| `([^`]+)` \| (yes|no) \|/.exec(line);
+    if (row) entries.push(`${row[1]} ${row[2]}`);
+    else if (line.startsWith('- '))
+      for (const [, value] of line.split(': ')[0].matchAll(/`([^`]+)`/g))
+        entries.push(value);
+  }
+  return entries;
+}
+
+// Codes set with code: '...' outside the core (the ringi command, doctor and
+// the earlier entry point).
+async function commandStopCodes() {
+  const codes = new Set();
+  for (const name of ['ringi-cli.mjs', 'ringi-doctor.mjs', 'agent-review-loop.mjs']) {
+    const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
+    for (const [, code] of source.matchAll(/\bcode: '([A-Z][A-Z_]+)'/g)) codes.add(code);
+  }
+  return [...codes].sort();
+}
+
+const CONTRACT_STOP_CODES_OUTSIDE_CORE = [
+  'INVALID_CONFIGURATION',
+  // ringi run and ringi doctor only: the profile is not committed.
+  'PROFILE_UNCOMMITTED',
+  'UNEXPECTED_ERROR',
+];
+
+test('contract: STOP codes are the codes of the core and the ringi command, each in docs/contract.md with its resumable flag', async () => {
+  const core = collectRunnerSurfaceLiterals(
+    await readFile(new URL('./agent-review-loop-lib.mjs', import.meta.url), 'utf8'),
+    'code',
+  );
+  assertSurfaceContract(
+    await commandStopCodes(),
+    CONTRACT_STOP_CODES_OUTSIDE_CORE,
+    'stop codes outside the core',
+  );
+  const codes = [...new Set([...core, ...CONTRACT_STOP_CODES_OUTSIDE_CORE])].sort();
+  assertSurfaceContract(
+    await contractDocumentList('stop-codes'),
+    codes.map(
+      (code) =>
+        `${code} ${loopExports.RESUMABLE_STOP_CODES.includes(code) ? 'yes' : 'no'}`,
+    ),
+    'docs/contract.md stop codes',
+  );
+});
+
+test('contract: stage values in docs/contract.md are the stage values of the core', async () => {
+  assertSurfaceContract(
+    [...(await contractDocumentList('stages'))].sort(),
+    collectRunnerSurfaceLiterals(
+      await readFile(new URL('./agent-review-loop-lib.mjs', import.meta.url), 'utf8'),
+      'stage',
+    ),
+    'docs/contract.md stages',
+  );
+});
+
+test('contract: top-level profile keys', async () => {
+  const syntax = ts.createSourceFile(
+    'agent-review-loop-lib.mjs',
+    await readFile(new URL('./agent-review-loop-lib.mjs', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const initializers = new Map();
+  const index = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name))
+      initializers.set(node.name.text, node.initializer);
+    ts.forEachChild(node, index);
+  };
+  index(syntax);
+  // RUNNER_PROFILE_KEYS: the keys of DEFAULT_RUNNER_PROFILE and the optional
+  // keys listed after them.
+  const defaults = initializers.get('DEFAULT_RUNNER_PROFILE').arguments[0];
+  const listed = initializers.get('RUNNER_PROFILE_KEYS').arguments[0].elements;
+  const keys = [
+    ...defaults.properties.map((property) => property.name.text),
+    ...listed.filter(ts.isStringLiteral).map((element) => element.text),
+  ];
+  assert.equal(
+    listed.filter((element) => !ts.isStringLiteral(element)).length,
+    1,
+    'only the spread of the default keys',
+  );
+  const expected = [
+    'checkSets',
+    'checks',
+    'createPresenters',
+    'docsCandidatePolicy',
+    'implementer',
+    'locale',
+    'providerModules',
+    'requiredGateRules',
+    'reviewLanes',
+    'reviewer',
+    'routing',
+    'taskClasses',
+    'taskSchema',
+    'tempPrefix',
+    'title',
+  ];
+  assertSurfaceContract([...keys].sort(), expected, 'profile keys');
+  assertSurfaceContract(
+    [...(await contractDocumentList('profile-keys'))].sort(),
+    expected,
+    'docs/contract.md profile keys',
+  );
+  // Fail-closed: an unknown key is INVALID_CONFIGURATION.
+  assert.throws(
+    () => internal.resolveRunnerProfile({ ...TEST_PROFILE, futureKey: true }),
+    (error) => error.code === 'INVALID_CONFIGURATION',
+  );
+});
+
+// Top-level report fields. Each run below adds the keys its report has;
+// every key must be one of the contract's, and the contract names no key
+// that is not documented in docs/contract.md.
+const CONTRACT_REPORT_FIELDS = [
+  'branch',
+  'checkpoint',
+  'code',
+  'diagnosticLog',
+  'diagnostics',
+  'durationMs',
+  'error',
+  'findingPolicy',
+  'findings',
+  'finishedAt',
+  'head',
+  'implementer',
+  'integrityViolations',
+  'lane',
+  'ledger',
+  'nextStep',
+  'projectProfile',
+  'publicationApproved',
+  'quality',
+  'reportPath',
+  'resume',
+  'resumedFrom',
+  'review',
+  'reviewer',
+  'rounds',
+  'routing',
+  'runId',
+  'runMode',
+  'runner',
+  'schemaVersion',
+  'sol',
+  'stage',
+  'startedAt',
+  'status',
+  'task',
+  'taskMode',
+  'taskSchemaVersion',
+  'warnings',
+];
+// Fields the runs of the test below do not produce (other options or
+// stops); every other field of the contract must appear in one of them.
+const CONTRACT_REPORT_FIELDS_NOT_EXERCISED = [
+  'integrityViolations',
+  'lane',
+  'projectProfile',
+  'resumedFrom',
+  'routing',
+  'warnings',
+];
+
+test('contract: top-level report fields', async () => {
+  assertSurfaceContract(
+    [...(await contractDocumentList('report-fields'))].sort(),
+    CONTRACT_REPORT_FIELDS,
+    'docs/contract.md report fields',
+  );
+  const reports = [];
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    // A checkpointed run stopped by the reviewer (code, stage, error,
+    // resume, checkpoint).
+    reports.push((await stopAtReview(directory, stateDirectory)).report);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+  const reviewOnly = await createRepository();
+  try {
+    await writeFile(join(reviewOnly, 'implementation.txt'), 'written by hand\n');
+    reports.push((await runReviewOnlyFixture(reviewOnly, {})).report);
+  } finally {
+    await rm(reviewOnly, { recursive: true, force: true });
+  }
+  for (const report of reports) {
+    const extra = Object.keys(report).filter(
+      (key) => !CONTRACT_REPORT_FIELDS.includes(key),
+    );
+    assert.deepEqual(extra, [], `report ${report.status}: fields outside the contract`);
+    for (const key of ['schemaVersion', 'status', 'publicationApproved', 'runId', 'ledger'])
+      assert.ok(Object.hasOwn(report, key), key);
+  }
+  assertSurfaceContract(
+    [...new Set(reports.flatMap((report) => Object.keys(report)))].sort(),
+    CONTRACT_REPORT_FIELDS.filter(
+      (key) => !CONTRACT_REPORT_FIELDS_NOT_EXERCISED.includes(key),
+    ),
+    'report fields of the runs',
+  );
+});
+
+test('contract: ledger event types and version', async () => {
+  const expected = [
+    'preflight',
+    'fingerprints',
+    'resume',
+    'routing',
+    'writer-round',
+    'gate',
+    'integrity',
+    'snapshot',
+    'review-attempt',
+    'review-lane',
+    'findings',
+    'checkpoint',
+    'stop',
+    'result',
+  ];
+  assert.equal(ledgerExports.LEDGER_VERSION, 1);
+  assertSurfaceContract(
+    [...ledgerExports.LEDGER_EVENT_TYPES].sort(),
+    [...expected].sort(),
+    'ledger event types',
+  );
+  assertSurfaceContract(
+    [...(await contractDocumentList('ledger-events'))].sort(),
+    [...expected].sort(),
+    'docs/contract.md ledger events',
+  );
+});
+
+test('contract: CLI commands and options', async () => {
+  // Every option literal of the ringi command and of the run parser.
+  const options = new Set();
+  for (const name of ['ringi-cli.mjs', 'agent-review-dashboard.mjs']) {
+    const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
+    for (const [, option] of source.matchAll(/'(--?[a-z][a-z-]*)'/g)) options.add(option);
+  }
+  const expected = [
+    '--checkpoint',
+    '--codex-model',
+    '--dry-run',
+    '--help',
+    '--implementer-effort',
+    '--implementer-model',
+    '--json',
+    '--no-animation',
+    '--resume',
+    '--review-only',
+    '--review-profile',
+    '--sol-effort',
+    '--task-mode',
+    '--verbose',
+    '--version',
+    '-h',
+  ];
+  assertSurfaceContract([...options].sort(), expected, 'CLI options');
+  assertSurfaceContract(
+    [...(await contractDocumentList('cli-options'))].sort(),
+    expected,
+    'docs/contract.md CLI options',
+  );
+  const { COMMAND_HELP } = await import('./ringi-cli.mjs');
+  assertSurfaceContract(
+    Object.keys(COMMAND_HELP).sort(),
+    ['doctor', 'init', 'run', 'verify'],
+    'ringi commands',
+  );
+  assertSurfaceContract(
+    [...(await contractDocumentList('cli-commands'))].sort(),
+    ['doctor', 'init', 'run', 'verify'],
+    'docs/contract.md commands',
   );
 });
 
@@ -2186,12 +2489,24 @@ async function waitForProcessExit(pid, timeoutMs = 3_000) {
 }
 
 // The answer of a working codex sandbox to the core's sandbox check before a
-// round (runSandboxCheck): both writes and the connection refused. The nonce
-// is the fourth argument after '--'.
+// round (runSandboxCheck): both writes and the connection refused, and the
+// opening of a .git file (the eighth argument after '--', only when .git is
+// a file) refused. The nonce is the fourth argument after '--'.
 function workingSandboxCheck(args) {
-  const nonce = args[args.indexOf('--') + 4];
+  const command = args.slice(args.indexOf('--') + 1);
+  const nonce = command[3];
   const report = { outside: 'EPERM', git: 'EPERM', network: 'EPERM' };
+  if (command.length > 7) report.pointer = 'EPERM';
   return result(`RINGI-SANDBOX-CHECK ${nonce} ${JSON.stringify(report)}\n`);
+}
+
+// The arguments of the sandbox check command after '--' by name; pointer is
+// undefined when .git is a directory.
+function sandboxCheckCommand(args) {
+  const [, , , nonce, outside, git, port, pointer, ...rest] = args.slice(
+    args.indexOf('--') + 1,
+  );
+  return { nonce, outside, git, port, pointer, rest };
 }
 
 function createMockRunner({ failCheck, interruptCheck, onRun } = {}) {
@@ -25325,7 +25640,15 @@ test('sandbox check: in a linked worktree or a submodule (.git is a file) the ca
     const linked = { ...fixture, repositoryRoot: worktree };
     const working = createMockRunner();
     await internal.runSandboxCheck({ runner: working, ...linked });
-    assert.equal(realpathSync(dirname(working.sandboxChecks[0].args.at(-2))), gitDirectory);
+    assert.equal(
+      realpathSync(dirname(sandboxCheckCommand(working.sandboxChecks[0].args).git)),
+      gitDirectory,
+    );
+    // The .git file itself is the pointer the command opens for writing.
+    assert.equal(
+      sandboxCheckCommand(working.sandboxChecks[0].args).pointer,
+      join(worktree, '.git'),
+    );
     // Without a sandbox the write to the Git directory is found and removed;
     // no raw error from .git being a file.
     await assert.rejects(
@@ -25336,7 +25659,7 @@ test('sandbox check: in a linked worktree or a submodule (.git is a file) the ca
       internal.runSandboxCheck({
         runner: {
           run: async (_program, args) => {
-            await writeFile(args.at(-2), '');
+            await writeFile(sandboxCheckCommand(args).git, '');
             return workingSandboxCheck(args);
           },
           isCancelled: () => false,
@@ -25363,7 +25686,11 @@ test('sandbox check: in a linked worktree or a submodule (.git is a file) the ca
       ...fixture,
       repositoryRoot: submodule,
     });
-    assert.equal(dirname(nested.sandboxChecks[0].args.at(-2)), moduleDirectory);
+    assert.equal(dirname(sandboxCheckCommand(nested.sandboxChecks[0].args).git), moduleDirectory);
+    assert.equal(
+      sandboxCheckCommand(nested.sandboxChecks[0].args).pointer,
+      join(submodule, '.git'),
+    );
     assert.deepEqual(await canaries(moduleDirectory), []);
 
     // No Git directory: a gitdir line to nothing, a .git without one, no .git.
@@ -25382,6 +25709,253 @@ test('sandbox check: in a linked worktree or a submodule (.git is a file) the ca
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+// SANDBOXCHECK-1 M3: in a linked worktree or a submodule .git is a file in
+// the writable working tree. A writer that could rewrite its gitdir line
+// would make the core's later Git commands read the configuration of
+// another directory, so the check also requires the sandbox to refuse
+// opening that file for writing, and the file to be unchanged after it.
+test('sandbox check: a .git file that the sandbox lets open for writing, or that changes during the check, is IMPLEMENTER_PREFLIGHT_FAILED (git-pointer-write)', async () => {
+  const fixture = await sandboxCheckFixture();
+  const submodule = join(fixture.tempRoot, 'super', 'sub');
+  const moduleDirectory = join(fixture.tempRoot, 'super', '.git', 'modules', 'sub');
+  const otherDirectory = join(fixture.tempRoot, 'super', 'sub', 'fake-git');
+  const pointerPath = join(submodule, '.git');
+  const pointerText = 'gitdir: ../.git/modules/sub\n';
+  const linked = { ...fixture, repositoryRoot: submodule };
+  const reporting = (report, before = async () => {}) => ({
+    run: async (_program, args) => {
+      await before(args);
+      const { nonce } = sandboxCheckCommand(args);
+      return result(`RINGI-SANDBOX-CHECK ${nonce} ${JSON.stringify(report)}\n`);
+    },
+    isCancelled: () => false,
+  });
+  const denied = { outside: 'EPERM', git: 'EPERM', network: 'EPERM' };
+  try {
+    await mkdir(moduleDirectory, { recursive: true });
+    await mkdir(otherDirectory, { recursive: true });
+    await writeFile(pointerPath, pointerText);
+    // A working sandbox passes with the pointer refused.
+    await internal.runSandboxCheck({ runner: createMockRunner(), ...linked });
+
+    const cases = [
+      // The sandbox lets the command open the .git file for writing.
+      ['git-pointer-write', reporting({ ...denied, pointer: 'opened' })],
+      // The .git file names another Git directory after the check.
+      [
+        'git-pointer-write',
+        reporting({ ...denied, pointer: 'EPERM' }, async () => {
+          await writeFile(pointerPath, 'gitdir: fake-git\n');
+        }),
+      ],
+      // The same bytes behind a symbolic link.
+      [
+        'git-pointer-write',
+        reporting({ ...denied, pointer: 'EPERM' }, async () => {
+          await writeFile(join(fixture.tempRoot, 'pointer-target'), pointerText);
+          await rm(pointerPath);
+          await symlink(join(fixture.tempRoot, 'pointer-target'), pointerPath);
+        }),
+      ],
+      // The .git file is gone after the check.
+      [
+        'git-pointer-write',
+        reporting({ ...denied, pointer: 'EPERM' }, async () => {
+          await rm(pointerPath);
+        }),
+      ],
+      // No evidence about the pointer: missing, or not a permission error.
+      ['no-evidence', reporting(denied)],
+      ['no-evidence', reporting({ ...denied, pointer: 'ENOENT' })],
+      ['no-evidence', reporting({ ...denied, pointer: 'EISDIR' })],
+    ];
+    for (const [reason, runner] of cases) {
+      await rm(pointerPath, { force: true });
+      await writeFile(pointerPath, pointerText);
+      await assert.rejects(
+        internal.runSandboxCheck({ runner, ...linked }),
+        sandboxUnconfirmed(reason),
+        reason,
+      );
+      assert.deepEqual(
+        (await readdir(moduleDirectory)).filter((name) =>
+          name.startsWith('ringi-sandbox-check-'),
+        ),
+        [],
+        reason,
+      );
+    }
+
+    // With a .git directory the command gets no pointer, and a report that
+    // has one is not evidence of this check.
+    const plain = createMockRunner();
+    await internal.runSandboxCheck({ runner: plain, ...fixture });
+    assert.equal(sandboxCheckCommand(plain.sandboxChecks[0].args).pointer, undefined);
+    await assert.rejects(
+      internal.runSandboxCheck({
+        runner: reporting({ ...denied, pointer: 'EPERM' }),
+        ...fixture,
+      }),
+      sandboxUnconfirmed('no-evidence'),
+    );
+  } finally {
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+// CONTRACT-1 L-1: the real check command (no sandbox) opens the .git file
+// it gets for writing without changing it, and reports a permission error
+// for a file it may not write.
+test('sandbox check: the check command opens a writable .git file without changing it and reports a read-only one as a permission error', async (t) => {
+  const fixture = await sandboxCheckFixture();
+  const submodule = join(fixture.tempRoot, 'super', 'sub');
+  const moduleDirectory = join(fixture.tempRoot, 'super', '.git', 'modules', 'sub');
+  const pointerPath = join(submodule, '.git');
+  const text = 'gitdir: ../.git/modules/sub\n';
+  const reportOf = async (mode) => {
+    await chmod(pointerPath, mode);
+    const runner = unsandboxedCodex();
+    let stdout = '';
+    const run = runner.run;
+    runner.run = async (...args) => {
+      const answer = await run(...args);
+      stdout = answer.stdout;
+      return answer;
+    };
+    // Without a sandbox the outside write succeeds, so the check stops.
+    await assert.rejects(
+      internal.runSandboxCheck({ runner, ...fixture, repositoryRoot: submodule }),
+      sandboxUnconfirmed('outside-write'),
+    );
+    const line = stdout.split('\n').find((entry) => entry.startsWith('RINGI-SANDBOX-CHECK '));
+    return JSON.parse(line.split(' ').slice(2).join(' '));
+  };
+  try {
+    await mkdir(submodule, { recursive: true });
+    await mkdir(moduleDirectory, { recursive: true });
+    await writeFile(pointerPath, text);
+    assert.equal((await reportOf(0o644)).pointer, 'opened');
+    assert.equal(await readFile(pointerPath, 'utf8'), text);
+    if (process.getuid?.() === 0) {
+      t.diagnostic('root may open a 0444 file for writing; skipped');
+      return;
+    }
+    assert.equal((await reportOf(0o444)).pointer, 'EACCES');
+    assert.equal(await readFile(pointerPath, 'utf8'), text);
+  } finally {
+    await chmod(pointerPath, 0o644).catch(() => {});
+    await rm(fixture.tempRoot, { recursive: true, force: true });
+  }
+});
+
+// CONTRACT-1 M-1: the sandbox check shows that the .git file cannot be
+// written in place; a writer round that replaced it anyway (renamed or
+// removed, then created again with other bytes or as a symbolic link) stops
+// right after the round, before any gate or Git command of the core.
+test('a .git file replaced during a writer round stops with UNEXPECTED_GIT_MUTATION (post-implementer); an unchanged one runs on', async () => {
+  const replacements = [
+    ['unchanged', async () => {}],
+    ['renamed, other bytes', async (dotGit, text) => {
+      await rename(dotGit, `${dotGit}-old`);
+      await writeFile(dotGit, `${text}\n`);
+    }],
+    ['removed, same bytes as a link', async (dotGit, text) => {
+      await writeFile(`${dotGit}-target`, text);
+      await rm(dotGit);
+      await symlink(`${dotGit}-target`, dotGit);
+    }],
+  ];
+  for (const [name, replace] of replacements) {
+    const directory = await createRepository();
+    const gitDirectory = `${directory}-gitdir`;
+    try {
+      // A Git directory outside the working tree, named by a .git file.
+      await rename(join(directory, '.git'), gitDirectory);
+      const text = `gitdir: ${gitDirectory}\n`;
+      await writeFile(join(directory, '.git'), text);
+      const runner = createMockRunner();
+      const run = runFixture(directory, {
+        runner,
+        codexRound: async ({ round, findings }) => {
+          await writeFile(join(directory, 'implementation.txt'), `runda ${round}\n`);
+          await replace(join(directory, '.git'), text);
+          return completedCodex(round, {}, findings);
+        },
+      });
+      if (name === 'unchanged') {
+        assert.equal((await run).report.status, 'APPROVE', name);
+        continue;
+      }
+      const error = await stopOf(run);
+      assert.equal(error.code, 'UNEXPECTED_GIT_MUTATION', name);
+      assert.equal(error.stage, 'post-implementer', name);
+      assert.match(error.message, /gitPointer/, name);
+      assert.equal(ranGate(runner, 'pnpm check'), false, name);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      await rm(gitDirectory, { recursive: true, force: true });
+      await rm(`${directory}-target`, { force: true });
+    }
+  }
+});
+
+// SANDBOXCHECK-1 L5 and L6: the .git file is resolved as Git resolves it (a
+// single gitdir line, trailing line ends removed); a .git that is a symbolic
+// link, to a directory or to a gitdir file, is refused before the check.
+test('sandbox check: a .git file with more than one line, or a .git that is a symbolic link, is IMPLEMENTER_PREFLIGHT_FAILED (git-directory) without starting the check', async () => {
+  const fixture = await sandboxCheckFixture();
+  const root = join(fixture.tempRoot, 'layouts');
+  const moduleDirectory = join(fixture.tempRoot, 'modules', 'sub');
+  try {
+    await mkdir(root, { recursive: true });
+    await mkdir(moduleDirectory, { recursive: true });
+    const dotGit = join(root, '.git');
+    // One line, with LF or CRLF line ends: accepted.
+    for (const contents of [
+      `gitdir: ${moduleDirectory}\n`,
+      `gitdir: ${moduleDirectory}\r\n`,
+      `gitdir: ${moduleDirectory}`,
+    ]) {
+      await writeFile(dotGit, contents);
+      const runner = createMockRunner();
+      await internal.runSandboxCheck({ runner, ...fixture, repositoryRoot: root });
+      assert.equal(
+        dirname(sandboxCheckCommand(runner.sandboxChecks[0].args).git),
+        moduleDirectory,
+        JSON.stringify(contents),
+      );
+    }
+    const refused = async (label) => {
+      const runner = createMockRunner();
+      await assert.rejects(
+        internal.runSandboxCheck({ runner, ...fixture, repositoryRoot: root }),
+        sandboxUnconfirmed('git-directory'),
+        label,
+      );
+      assert.equal(runner.sandboxChecks.length, 0, label);
+    };
+    // A second line: Git would not resolve the first line alone.
+    for (const contents of [
+      `gitdir: ${moduleDirectory}\nextra\n`,
+      `gitdir: ${moduleDirectory}\r\ngitdir: ${moduleDirectory}\n`,
+      `\ngitdir: ${moduleDirectory}\n`,
+    ]) {
+      await writeFile(dotGit, contents);
+      await refused(JSON.stringify(contents));
+    }
+    // A symbolic link to a Git directory, and to a gitdir file.
+    await rm(dotGit);
+    await symlink(moduleDirectory, dotGit);
+    await refused('link to a directory');
+    await rm(dotGit);
+    await writeFile(join(fixture.tempRoot, 'gitdir-file'), `gitdir: ${moduleDirectory}\n`);
+    await symlink(join(fixture.tempRoot, 'gitdir-file'), dotGit);
+    await refused('link to a gitdir file');
+  } finally {
     await rm(fixture.tempRoot, { recursive: true, force: true });
   }
 });
@@ -25924,6 +26498,49 @@ test('review only: the CLI parser accepts --review-only and refuses the analysis
   }
 });
 
+// REVIEWONLY-1 L3: the writer does not run, so the dashboard shows no
+// implementer model as a plan (presentation only; the report is unchanged).
+test('review only: the dashboard shows the implementer as not run instead of its planned model', () => {
+  const metadata = {
+    type: 'metadata',
+    branch: 'chore/test-loop',
+    runId: 'run-review-only',
+    solModel: 'gpt-6.1-sol',
+    solEffort: 'high',
+    reviewProfile: 'critical',
+    reviewAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
+    reviewFallbackAllowed: false,
+  };
+  for (const runMode of [undefined, 'review-only']) {
+    const reviewOnly = runMode === 'review-only';
+    const event = { ...metadata, ...(reviewOnly ? { runMode } : {}) };
+    const state = createDashboardState({ taskPath: 'task.md', maxRounds: 1, nowMs: 0 });
+    reduceDashboardEvent(state, event, 0);
+    reduceDashboardEvent(
+      state,
+      { type: 'stage:start', id: 'sol-1', badge: 'SOL', label: 'Implementation' },
+      0,
+    );
+    const panel = renderDashboard(state, { width: 100, nowMs: 1 });
+    assert.equal(/gpt-6\.1-sol/.test(panel), !reviewOnly, String(runMode));
+    if (reviewOnly) assert.match(panel, /Plan implementer not run \(review-only\)/);
+
+    const output = createMemoryOutput();
+    const dashboard = createTerminalDashboard({ output, taskPath: 'task.md', environment: {} });
+    assert.equal(dashboard.mode, 'append');
+    dashboard.start();
+    dashboard.event(event);
+    dashboard.dispose();
+    const lines = output.value();
+    assert.equal(lines.includes('gpt-6.1-sol'), !reviewOnly, String(runMode));
+    assert.equal(
+      /IMPLEMENTER\s+not run \(review-only\)/.test(lines),
+      reviewOnly,
+      String(runMode),
+    );
+  }
+});
+
 // Checkpoints and resume. Every test passes its own state directory; the
 // file-wide XDG_STATE_HOME covers the default.
 const CHECKPOINT_RUN_ID = '2026-08-08T12-00-00-000Z--1234abcd';
@@ -26233,10 +26850,59 @@ test('resume refuses a signed checkpoint of any phase past the round limit', asy
         round: 4,
       }));
       assert.equal(error.code, 'HUMAN_DECISION_REQUIRED');
-      assert.match(error.message, /3/);
+      // The round limit message itself (checkpoint.roundLimit), not any 3
+      // (the run id has digits).
+      assert.match(
+        error.message,
+        /wykorzystał wszystkie rundy \(3\); wznowienie nie zeruje limitu rund\.$/,
+      );
     });
   }
 });
+
+// A checkpoint change with one pending finding that the writer report
+// answers with NEEDS_HUMAN, valid as a writer report on its own.
+function needsHumanCheckpoint(payload) {
+  const finding = {
+    findingId: `finding-${'a'.repeat(24)}`,
+    severity: 'HIGH',
+    file: 'implementation.txt',
+    anchor: 'round',
+    category: 'correctness',
+    location: 'implementation.txt:1',
+    impact: 'Synthetic impact.',
+    recommendation: 'Synthetic recommendation.',
+  };
+  const codexReport = {
+    ...payload.codexReport,
+    status: 'NEEDS_HUMAN_DECISION',
+    findingResponses: [
+      {
+        findingId: finding.findingId,
+        status: 'NEEDS_HUMAN',
+        analysis: '',
+        evidence: '',
+        fix: '',
+        regressionTest: '',
+        checks: [],
+        question: 'Which behaviour is intended?',
+      },
+    ],
+  };
+  assert.equal(
+    internal.validateCodexReport(codexReport, [finding], 'implementation'),
+    codexReport,
+  );
+  return {
+    codexReport,
+    findings: {
+      ...payload.findings,
+      history: [finding],
+      latest: [finding],
+      pending: [finding],
+    },
+  };
+}
 
 test('resume validates the signed writer report and findings again', async (t) => {
   const cases = [
@@ -26254,6 +26920,9 @@ test('resume validates the signed writer report and findings again', async (t) =
     ['identities that are not pairs', (payload) => ({
       findings: { ...payload.findings, identities: ['x'] },
     })],
+    // RESUME-1 L-c: a valid writer report with a NEEDS_HUMAN response; a
+    // real run stops on it before the checkpoint is saved.
+    ['a writer report with a NEEDS_HUMAN response', needsHumanCheckpoint],
   ];
   for (const [name, change] of cases) {
     await t.test(name, async () => {
@@ -26305,6 +26974,36 @@ test('an invalid writer report after a Git directory change is not resumable', a
     );
     assert.equal(refused.code, 'HUMAN_DECISION_REQUIRED');
     assert.match(refused.message, /nie można wznowić/);
+  } finally {
+    await removeCheckpointFixture(directory, stateDirectory);
+  }
+});
+
+// The counterpart of the test above (RESUME-1 L-b): the same invalid writer
+// report without a Git directory change stays a resumable
+// INVALID_AGENT_OUTPUT without integrity violations.
+test('an invalid writer report without a Git directory change stays resumable', async () => {
+  const directory = await createRepository();
+  const stateDirectory = await createStateDirectory();
+  try {
+    const stopped = await stopOf(
+      checkpointRun(directory, stateDirectory, {
+        runner: claudeVersionRunner(),
+        codexRound: async ({ round, findings }) => {
+          if (round === 1) {
+            await writeFile(join(directory, 'implementation.txt'), 'runda 1\n');
+            return completedCodex(round, {}, findings);
+          }
+          return { ...completedCodex(round), report: { status: 'COMPLETED' } };
+        },
+        claudeReview: async ({ round }) => requestChanges(round ?? 1),
+        workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE, maxRounds: 3 },
+      }),
+    );
+    assert.equal(stopped.code, 'INVALID_AGENT_OUTPUT');
+    assert.equal(stopped.report.integrityViolations, undefined);
+    assert.equal(stopped.report.checkpoint.resumable, true);
+    assert.match(stopped.report.resume, /--resume/);
   } finally {
     await removeCheckpointFixture(directory, stateDirectory);
   }
@@ -28234,6 +28933,41 @@ test('context packages: a changed lane file is caught by the snapshot hash befor
     assert.equal(claudeCalls, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// DELEGATE-2 L-a: the two branches of the lane file check with a snapshot
+// that is consistent with its own hash. A snapshot built without the lane's
+// paths has no lane file (INTEGRITY_CHECK_FAILED); one built with other
+// paths holds another part, written before the hash (SNAPSHOT_CHANGED).
+test('context packages: a lane file missing from the snapshot, or holding another part written before the hash, stops before any reviewer', async () => {
+  const lane = { id: 'code', focus: 'logic errors', paths: ['src/', 'baseline.txt'] };
+  const cases = [
+    ['INTEGRITY_CHECK_FAILED', [{ id: lane.id, focus: lane.focus }]],
+    ['SNAPSHOT_CHANGED', [{ ...lane, paths: ['baseline.txt'] }]],
+  ];
+  for (const [code, snapshotLanes] of cases) {
+    const directory = await createRepository();
+    try {
+      await mkdir(join(directory, 'src'));
+      await writeFile(join(directory, 'src', 'app.js'), 'export const app = 1;\n');
+      await writeFile(join(directory, 'baseline.txt'), 'changed baseline\n');
+      const { claudeCalls } = await rejectsReviewOnly(
+        directory,
+        {
+          createSnapshot: (options) =>
+            createReviewSnapshot({
+              ...options,
+              profile: { ...options.profile, reviewLanes: snapshotLanes },
+            }),
+          workflow: { profile: { ...TEST_PROFILE, reviewLanes: [lane] } },
+        },
+        { code, stage: 'reviewer' },
+      );
+      assert.equal(claudeCalls, 0, code);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 

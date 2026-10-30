@@ -5,7 +5,8 @@ command, gives a working fail-closed agent pipeline on someone else's
 project, with a README that shows what the code does today rather than what
 is planned.
 
-Everything below "Planned" is a plan, not a feature. The
+Everything below "Next: 1.0" and "Later (after 1.0)" is a plan, not a
+feature. The
 [README](README.md) and [docs/](docs/) describe only what is implemented.
 
 ## Done
@@ -172,15 +173,30 @@ Everything below "Planned" is a plan, not a feature. The
   The options still win; the report and the ledger show the routing. See
   [docs/profile.md](docs/profile.md#routing).
 
-## Planned (not implemented)
+- Contract review before 1.0. [docs/contract.md](docs/contract.md) lists
+  what 1.0 promises (CLI, profile keys, report fields, STOP codes, ledger
+  events, provider modules) and what stays outside; contract tests pin the
+  lists against the code.
 
-- Token and cost measurements of review lanes, once a reviewer provider
-  reports them to the runner.
+## Next: 1.0
+
+- Release 1.0: the contract in [docs/contract.md](docs/contract.md) is
+  frozen; after it, a breaking change needs a major version (and, for the
+  report, `schemaVersion` 2). The open decisions before it are the
+  provider-specific aliases and the stability of the built-in providers.
+
+## Later (after 1.0, not implemented)
+
+- A CI adapter (GitHub Actions first), a CI budget policy and CI evidence.
+- Provider modules for other agent CLIs, each with a checked security
+  declaration and conformance fixtures from the real CLI, on the open
+  provider interface.
 - Risk routing, part 2 (open decision): a model as coordinator that
   proposes a routing within the profile's rules, only if measurements of
   part 1 show a gain. Expensive and publication decisions stay with a
   human.
-
+- Token and cost measurements of review lanes, once a reviewer provider
+  reports them to the runner.
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).
 - Entry point, branding and a presentation boundary (the terminal dashboard
@@ -200,14 +216,8 @@ Everything below "Planned" is a plan, not a feature. The
   reviewer: whether a project `.claude/settings.json` in the reviewed copy
   reaches the reviewer's environment, and evidence of the available tools
   beyond the model's report.
-- Provider modules for other agent CLIs, each with a checked security
-  declaration and conformance fixtures from the real CLI, on the open
-  provider interface.
 - Prompts as configuration (today a profile only chooses their locale).
-- A CI adapter (GitHub Actions first), a CI budget policy and CI evidence.
 - Tests split into a generic part and synthetic example repositories
   (Node.js/pnpm first).
-- Documentation of the configuration contract, the task format, the report
-  format (`schemaVersion`), the stop codes and the threat model.
 - After the first publication: npm trusted publishing configured for the
   package, so that `release.yml` publishes the versions after 0.1.0.

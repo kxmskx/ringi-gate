@@ -46,6 +46,44 @@ is published by hand, without provenance; later versions are published by
   `ringi verify` older than routing rejects a ledger with a `routing` event.
   `schemaVersion` stays 1 and a profile without `routing` runs exactly as
   before.
+- `docs/contract.md`: what version 1.0 promises and what changes only in a
+  major version: the CLI commands, options and exit codes, the top-level
+  profile keys, the top-level report fields (`schemaVersion` 1), every STOP
+  code with its meaning and whether it is resumable, the ledger event
+  types, the provider module interface, what is outside the contract, and
+  what 1.0 promises for an `experimental` provider. Contract tests pin each
+  list against the code and the document.
+
+### Changed
+
+- `codex` implementer in a linked worktree or a submodule (`.git` is a
+  file): the sandbox check before every round also opens that `.git` file
+  for writing, without changing it, and requires the sandbox to refuse it
+  with a permission error and the file to be unchanged afterwards;
+  otherwise `IMPLEMENTER_PREFLIGHT_FAILED` (`git-pointer-write` or
+  `no-evidence`) before the implementer. That shows the sandbox refuses to
+  write the file in place. After every writer round of any implementer,
+  before any Git command of the core, the core also compares the file's
+  bytes and type with those before the round: a file renamed or removed and created again
+  (other bytes, or a symbolic link) stops the run with
+  `UNEXPECTED_GIT_MUTATION` (stage `post-implementer`). Before, the
+  implementer could have pointed the file's `gitdir:` line to another
+  directory if the sandbox left it writable. The `.git` file must now be a
+  single `gitdir: <path>` line, as Git reads it; a second line is
+  `IMPLEMENTER_PREFLIGHT_FAILED` (`git-directory`), like a `.git` that is a
+  symbolic link. A repository whose `.git` is a directory runs the same
+  check as before.
+- `--resume` refuses a signed checkpoint whose writer report answers a
+  finding with `NEEDS_HUMAN` (`INTEGRITY_CHECK_FAILED`, like any other
+  malformed checkpoint): a run stops on that answer before it saves the
+  checkpoint, so only a forged checkpoint can carry it.
+- Review-only runs: the terminal dashboard shows the implementer as not run
+  instead of its unused model. The report is unchanged.
+- `ringi verify --help` says when a ledger is `unverified`, and
+  `docs/ledger.md` that ledgers of runs from before the key was created stay
+  `unverified` once it exists.
+- Documentation: a run report has no `agents` field; it is a field of the
+  dry-run plan, as the code always did.
 
 ## 0.2.5 — 2026-10-29
 

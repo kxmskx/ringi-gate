@@ -5,7 +5,12 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
-## Unreleased
+## 1.0.0 — 2026-10-30
+
+The first stable version: the contract in
+[docs/contract.md](docs/contract.md) is frozen, and a breaking change of
+it needs a major version. The provider-specific names stay as deprecated
+aliases until 2.0; the built-in providers stay `experimental`.
 
 ### Added
 

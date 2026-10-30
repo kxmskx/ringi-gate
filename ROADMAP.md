@@ -5,8 +5,7 @@ command, gives a working fail-closed agent pipeline on someone else's
 project, with a README that shows what the code does today rather than what
 is planned.
 
-Everything below "Next: 1.0" and "Later (after 1.0)" is a plan, not a
-feature. The
+Everything below "Later (after 1.0)" is a plan, not a feature. The
 [README](README.md) and [docs/](docs/) describe only what is implemented.
 
 ## Done
@@ -178,12 +177,10 @@ feature. The
   events, provider modules) and what stays outside; contract tests pin the
   lists against the code.
 
-## Next: 1.0
-
 - Release 1.0: the contract in [docs/contract.md](docs/contract.md) is
   frozen; after it, a breaking change needs a major version (and, for the
-  report, `schemaVersion` 2). The open decisions before it are the
-  provider-specific aliases and the stability of the built-in providers.
+  report, `schemaVersion` 2). The provider-specific names stay as
+  deprecated aliases until 2.0; the built-in providers stay `experimental`.
 
 ## Later (after 1.0, not implemented)
 

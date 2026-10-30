@@ -108,14 +108,16 @@ directory (.agent-review-loop/runs/<runId>/ledger.jsonl): the prev chain,
 seq, every mac with the checkpoint key, report.ledger and the fingerprints
 of report.json, and for a resumed run the ledger it continues. Read-only:
 the key is never created. Without the key only the chain is verified, which
-does not prove that the ledger is authentic. See docs/ledger.md.
+does not prove that the ledger is authentic. With the key, a ledger without
+mac is unverified: written before the key existed, or with its macs removed.
+See docs/ledger.md.
 
 Options:
   --json      Print the result as JSON
   -h, --help  Show this help
 
-Exit code: 0 when the ledger verifies, 1 at the first mismatch, 2 for invalid
-arguments or outside a Git repository.
+Exit code: 0 when the ledger verifies, 1 at the first mismatch or when it is
+unverified, 2 for invalid arguments or outside a Git repository.
 `,
 };
 

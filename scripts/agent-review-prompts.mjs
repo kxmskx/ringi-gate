@@ -93,20 +93,20 @@ export function buildClaudePrompt({ locale, lane, lanePackage, ...options }) {
   return `${prompt}\n\n${addendum}\n\n${contextPackage}`;
 }
 
+// A changed file name as one JSON string that cannot start a new line:
+// JSON.stringify leaves U+0085, U+2028 and U+2029 as they are. The only
+// copy of this escaping; the core uses it for the coverage message too.
+export function fileNameLine(file) {
+  return JSON.stringify(file).replace(
+    /[\u{85}\u{2028}\u{2029}]/gu,
+    (character) => `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 // File names come from the working tree: each one is a JSON string on its
-// own line, with U+0085, U+2028 and U+2029 escaped too, so a name cannot
-// start a line of its own.
+// own line (fileNameLine), so a name cannot start a line of its own.
 function fileNameList(files) {
-  return files
-    .map(
-      (file) =>
-        `- ${JSON.stringify(file).replace(
-          /[\u{85}\u{2028}\u{2029}]/gu,
-          (character) =>
-            `\\u${character.codePointAt(0).toString(16).padStart(4, '0')}`,
-        )}`,
-    )
-    .join('\n');
+  return files.map((file) => `- ${fileNameLine(file)}`).join('\n');
 }
 
 function reviewLanePackageEn({ id, fullDiffPath, paths, files, laneFiles, diffPath, diffHash }) {

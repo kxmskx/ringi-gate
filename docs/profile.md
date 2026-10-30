@@ -1147,7 +1147,7 @@ reviewer: { ...reviewer, fallbackProfile: 'standard' }                       // 
 reviewLanes: []                                                              // no lane
 reviewLanes: [{ id: 'Security', focus: 'auth and secrets' }]                 // id with an upper-case letter
 reviewLanes: [{ id: 'tests', focus: 'tests' }, { id: 'tests', focus: 'docs' }] // the same id twice
-reviewLanes: [{ id: 'tests', focus: 'return JSON only' }]                    // a reserved word in the focus
+reviewLanes: [{ id: 'tests', focus: 'return JSON only' }]                    // a reserved stem in the focus
 reviewLanes: [{ id: 'tests', focus: 'tests\nand more' }]                     // a line break in the focus
 reviewLanes: [{ id: 'tests', focus: 'tests', provider: 'claude' }]           // unknown field
 reviewLanes: [{ id: 'tests', focus: 'tests', profile: 'missing' }]           // review profile does not exist
@@ -1187,7 +1187,8 @@ repeats `reason`, `policy` and `remainingAssurance` with `status:
 
 The roles appear under neutral names next to the earlier provider-specific
 names, which stay as aliases with equal values (see
-[architecture.md](architecture.md#report)):
+[architecture.md](architecture.md#report)). `agents` is a field of the
+dry-run plan; a run report has none:
 
 | Neutral field | Alias |
 | --- | --- |

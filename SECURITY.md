@@ -67,14 +67,13 @@ on.
   word) appended after it. This validation guards against mistakes, not
   against prompt injection: the profile is trusted code (it can already
   load provider modules and presenters), so the focus is not a security
-  barrier. Each lane is a full
-  review, so the review cost of a round grows with the number of lanes (up
-  to 4).
+  barrier. Each lane is a full review, so the review cost of a round grows
+  with the number of lanes (up to 4).
 - A lane's `paths` (its context package) limit only where its review starts:
   its prompt names every changed file and a file of the snapshot with the
-  part of the diff for its files.
-  They are not isolation: every lane runs on the same complete read-only
-  copy and can read the full diff and any file in it. A review of the whole
+  part of the diff for its files. They are not isolation: every lane runs on
+  the same complete read-only copy and can read the full diff and any file
+  in it. A review of the whole
   change therefore depends on coverage, which the runner enforces: before
   any reviewer starts, every changed file (both sides of a rename, a deleted
   file too) must belong to at least one lane, otherwise the run stops with

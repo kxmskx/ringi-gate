@@ -255,8 +255,9 @@ changes relative to `HEAD` (modified, deleted and new, non-ignored files),
 nothing staged.
 
 - The preflight is the same, apart from the writer: its CLI is neither
-  required nor probed (`agents.codex` and `agents.implementer.version` are
-  `null`), there is no sandbox check and no writer layout check. `ringi
+  required nor probed (in the dry-run plan `agents.codex` and
+  `agents.implementer.version` are `null`), there is no sandbox check and no
+  writer layout check. `ringi
   doctor` is unchanged and still checks the implementer's CLI.
 - The fingerprints (dependencies, the repository manifest, `HEAD`, the
   branch, the profile and the runner) are taken from the working tree at the
@@ -301,7 +302,11 @@ the merged findings and their `lanes` in the report. With
 belongs to no lane stops the run with `INVALID_CONFIGURATION` before any
 reviewer starts, in every mode. Without an interactive terminal, the line
 that ends a lane's attempt shows the size of the lane's prompt and its
-number of diff files (`prompt 4178 B · diff files 1`).
+number of diff files (`prompt 4178 B · diff files 1`). The lanes run in
+parallel, so with `--verbose` the output of their processes is interleaved,
+and the dashboard's reviewer phase shows a fallback when any lane of the
+round used one; the report's `reviewer.lanes` and `review.runs` give each
+lane's own result.
 
 ### Routing
 

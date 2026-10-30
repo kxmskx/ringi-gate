@@ -325,8 +325,13 @@ const phaseName = (badge) =>
         ? 'GATES'
         : badge;
 
+// A review-only run starts no writer, so the model it would have used is not
+// shown as a plan.
+const isReviewOnly = (state) =>
+  (state.runMode ?? state.result?.runMode) === 'review-only';
+
 const phaseLabel = (name, state) =>
-  name === 'IMPLEMENTER'
+  name === 'IMPLEMENTER' && !isReviewOnly(state)
     ? cleanText(
         state.solModel ??
           state.result?.sol?.plannedModel ??
@@ -433,6 +438,7 @@ export function reduceDashboardEvent(state, event, nowMs) {
       reviewFallbackAllowed:
         event.reviewFallbackAllowed ?? state.reviewFallbackAllowed,
       taskMode: event.taskMode ?? state.taskMode,
+      runMode: event.runMode ?? state.runMode,
       quality: event.quality ?? state.quality,
       effectiveGates: event.effectiveGates ?? state.effectiveGates,
     });
@@ -615,7 +621,7 @@ export function renderDashboard(
           passed: gates.passed,
           active: cleanText(gates.active?.label),
         });
-  const plan = `Plan implementer ${cleanText(state.solModel)}/${cleanText(state.solEffort)} · review ${cleanText(state.reviewProfile)}`;
+  const plan = `Plan implementer ${isReviewOnly(state) ? 'not run (review-only)' : `${cleanText(state.solModel)}/${cleanText(state.solEffort)}`} · review ${cleanText(state.reviewProfile)}`;
   const agent =
     latest && ['SOL', 'CLAUDE'].includes(latest.badge) ? latest : undefined;
   const agentLine = agent
@@ -730,7 +736,8 @@ export function renderDashboard(
   if (outcome) {
     const report = state.result;
     lines.push(...finalDiagnostics);
-    if (report.sol)
+    if (isReviewOnly(state)) lines.push('Implementer not run (review-only)');
+    else if (report.sol)
       lines.push(
         `Implementer plan ${cleanText(report.sol.plannedModel)}/${cleanText(report.sol.plannedEffort)} · effective ${cleanText(report.sol.effectiveModel)}/${cleanText(report.sol.effectiveEffort)}`,
       );
@@ -813,7 +820,9 @@ function appendEventLines(state, event, nowMs) {
             }),
           ]
         : []),
-      `IMPLEMENTER  plan ${state.solModel && state.solEffort ? `${state.solModel}/${state.solEffort}` : '—'}`,
+      isReviewOnly(state)
+        ? 'IMPLEMENTER  not run (review-only)'
+        : `IMPLEMENTER  plan ${state.solModel && state.solEffort ? `${state.solModel}/${state.solEffort}` : '—'}`,
       t(locale, 'dashboard.appendReview', {
         profile: cleanText(state.reviewProfile),
         attempts: state.reviewAttempts.length,

@@ -85,6 +85,7 @@ import {
 // separate files and run with npm test without changing scripts.test.
 import './ringi-cli.test.mjs';
 import './ringi-ci.test.mjs';
+import './ringi-ci-review.test.mjs';
 import './ringi-package.test.mjs';
 import {
   dashboardPhases,
@@ -1164,6 +1165,7 @@ test('runner surface contract: internal keys', () => {
       'runCodexRound',
       'runSandboxCheck',
       'safeAgentEnvironment',
+      'taskSchemaRoles',
       'validateAnalysisIntegrityReport',
       'validateClaudeReview',
       'validateCodexReport',
@@ -1671,6 +1673,7 @@ async function commandStopCodes() {
     'ringi-doctor.mjs',
     'ringi-ci.mjs',
     'ringi-ci-lanes.mjs',
+    'ringi-ci-review.mjs',
     'agent-review-loop.mjs',
   ]) {
     const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
@@ -1680,11 +1683,17 @@ async function commandStopCodes() {
 }
 
 const CONTRACT_STOP_CODES_OUTSIDE_CORE = [
-  // ringi ci classify: codes of the core for a diff that cannot be
-  // classified.
+  // ringi ci classify and review: codes of the core for a diff that cannot
+  // be read.
   'DIFF_FAILED',
   'DIFF_TOO_LARGE',
+  // ringi ci review: the budget or the trusted inputs (a person decides),
+  // evidence that would hold a credential.
+  'HUMAN_DECISION_REQUIRED',
+  'INTEGRITY_CHECK_FAILED',
   'INVALID_CONFIGURATION',
+  // ringi ci review: the file of the generated task.
+  'INVALID_TASK_PATH',
   // ringi run, ringi doctor and ringi ci classify: the profile is not
   // committed.
   'PROFILE_UNCOMMITTED',
@@ -1914,12 +1923,16 @@ test('contract: CLI commands and options', async () => {
     for (const [, option] of source.matchAll(/'(--?[a-z][a-z-]*)'/g)) options.add(option);
   }
   const expected = [
+    '--attempt',
     '--base',
     '--checkpoint',
+    '--checks',
     '--classify-job',
     '--codex-model',
     '--docs-jobs',
     '--dry-run',
+    '--enforce-checks',
+    '--event',
     '--full-jobs',
     '--head',
     '--help',
@@ -1929,10 +1942,13 @@ test('contract: CLI commands and options', async () => {
     '--lane',
     '--needs',
     '--no-animation',
+    '--out',
     '--resume',
+    '--review-job',
     '--review-only',
     '--review-profile',
     '--sol-effort',
+    '--summary',
     '--task-mode',
     '--verbose',
     '--version',
@@ -9750,6 +9766,50 @@ test('prompts: the prompt module produces text byte-identical to the legacy core
     prompt,
     legacyClaudePrompt({ task: contractTask, ...snapshot }),
   );
+});
+
+test('reviewer credentials (ringi ci review): only in the reviewer process environment, validated', async () => {
+  const environments = [];
+  const runner = {
+    run: async (_program, _args, options) => {
+      environments.push(options.env);
+      return result(JSON.stringify({ structured_output: approveReview().review }));
+    },
+    isCancelled: () => false,
+  };
+  const snapshot = {
+    root: '/synthetic/snapshot',
+    instructionsPath: 'AGENTS.md',
+    diffPath: 'full.diff',
+    gatesPath: 'trusted-gates.json',
+    correctionContextPath: 'correction-context.json',
+  };
+  const task = { path: 'task.md', markdown: taskMarkdown };
+  await internal.runClaudeReview({ runner, task, snapshot, timeoutMs: 1000 });
+  await internal.runClaudeReview({
+    runner,
+    task,
+    snapshot,
+    timeoutMs: 1000,
+    credentials: { REVIEWER_API_KEY: 'synthetic-credential-value' },
+  });
+  assert.equal(Object.hasOwn(environments[0], 'REVIEWER_API_KEY'), false);
+  assert.deepEqual(environments[1], {
+    ...environments[0],
+    REVIEWER_API_KEY: 'synthetic-credential-value',
+  });
+  for (const credentials of [
+    {},
+    { PATH: '/tmp' },
+    { NODE_OPTIONS_KEY_X: 'x' },
+    { REVIEWER_API_KEY: '' },
+    { REVIEWER_API_KEY: 'line\nbreak' },
+  ])
+    await assert.rejects(
+      internal.runClaudeReview({ runner, task, snapshot, timeoutMs: 1000, credentials }),
+      { code: 'INVALID_CONFIGURATION' },
+    );
+  assert.equal(environments.length, 2);
 });
 
 test('Codex args enforce model, reasoning, sandbox, no approval and the Git guard', async () => {
@@ -26145,6 +26205,36 @@ async function rejectsReviewOnly(directory, overrides, expected) {
   assert.equal(runner.sandboxChecks.length, 0);
   return { runner, claudeCalls };
 }
+
+test('review only for ringi ci review: only the git gates run, the reviewer alone gets the credentials', async () => {
+  const directory = await createRepository();
+  try {
+    await writeFile(join(directory, 'implementation.txt'), 'written by hand\n');
+    let credentials;
+    const { report, runner } = await runReviewOnlyFixture(directory, {
+      claudeReview: async (options) => {
+        credentials = options.credentials;
+        return approveReview(options);
+      },
+      workflow: {
+        gitGatesOnly: true,
+        reviewerCredentials: { REVIEWER_API_KEY: 'synthetic-credential-value' },
+      },
+    });
+    assert.equal(report.status, 'APPROVE');
+    assert.deepEqual(report.quality.effectiveGates, ['git diff --check']);
+    assert.deepEqual(credentials, { REVIEWER_API_KEY: 'synthetic-credential-value' });
+    assert.equal(
+      runner.calls.some(
+        ({ program, args }) => program === 'pnpm' && !args.includes('--version') && !args.includes('install'),
+      ),
+      false,
+    );
+    assert.equal(JSON.stringify(report).includes('synthetic-credential-value'), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('review only: the uncommitted changes pass the gates and one review; APPROVE without the writer', async () => {
   const directory = await createRepository();

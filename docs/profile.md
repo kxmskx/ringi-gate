@@ -1092,9 +1092,48 @@ ci: {
   the `docs` lane is a subset, so routing a change to `full` never drops a
   check (see [ci.md](ci.md#lanes)).
 
-Any other key of `ci` or of `ci.lanes` is `INVALID_CONFIGURATION`, reserved
-for later options. The lanes name checks; which workflow jobs run them is
-set in the workflow (see [ci.md](ci.md#ringi-ci-aggregate)).
+- `review` (optional; only `ringi ci review` reads it, see
+  [ci.md](ci.md#ringi-ci-review) and its threat model): the review by a
+  model in CI. Without it `ci` is exactly the section above.
+
+  ```js
+  review: {
+    profiles: { docs: 'economy', full: 'critical' },
+    maxAttempts: 2,
+    timeoutMinutes: 30,
+    credentials: ['ANTHROPIC_API_KEY'],
+  },
+  ```
+
+  Every key is required:
+  - `profiles`: exactly `docs` and `full`, each the name of a review
+    profile of `reviewer.profiles`. The `docs` lane gets its own, usually
+    cheaper, profile; there is no way to give it none.
+  - `maxAttempts`: an integer from 1 to 10, the attempts of the review job
+    in one workflow run (`run_attempt`, re-runs included). Across runs the
+    limit is the approval of the environment (see
+    [ci.md](ci.md#budget-policy)).
+  - `timeoutMinutes`: an integer from 1 to 360, the time limit of the
+    review run; the job's `timeout-minutes` must be larger.
+  - `credentials`: 1 to 4 distinct names of environment variables, each in
+    upper case and ending in `_KEY` or `_TOKEN`, none starting with
+    `GITHUB_`, `ACTIONS_`, `RUNNER_`, `GIT_`, `NODE_`, `NPM_`, `PNPM_` or
+    `COREPACK_` (so never `PATH`, `NODE_OPTIONS` or a variable of the
+    runner), handed to the reviewer's process and to no other one. They
+    name the variables the reviewer CLI reads (for Claude Code
+    `ANTHROPIC_API_KEY`); the values come from the workflow, never from
+    the profile, and a value shorter than 8 characters is refused.
+
+  The review runs the full-track class (`implementation`) with only the
+  `git` checks of its check set as gates, so that set must have one (the
+  profile is `INVALID_CONFIGURATION` otherwise). There is no cost limit:
+  no provider reports a cost, so the key stays reserved and the limits are
+  the attempts and the time.
+
+Any other key of `ci`, of `ci.lanes`, of `ci.review` or of
+`ci.review.profiles` is `INVALID_CONFIGURATION`, reserved for later
+options. The lanes name checks; which workflow jobs run them is set in the
+workflow (see [ci.md](ci.md#ringi-ci-aggregate)).
 
 ### `title`, `tempPrefix`, `createPresenters`
 

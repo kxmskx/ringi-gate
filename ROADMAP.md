@@ -187,12 +187,18 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   fail-closed; `ringi ci aggregate` is the one required check; the example
   workflow and the CI budget policy are in [docs/ci.md](docs/ci.md). No
   model and no secret in CI.
+- CI adapter, part 2 (unreleased): `ringi ci review` with `ci.review`
+  (opt-in), under the threat model of [docs/ci.md](docs/ci.md#threat-model):
+  the secret in an `environment` with required reviewers, the base as the
+  only code of the review job, the pull request as data; its evidence
+  (`ci-review.json`, report and ledger, a job summary, `ringi verify`), a
+  budget per workflow run (attempts and time; across runs, the approval of
+  the environment) and the measurement for routing;
+  the aggregator requires the review and can compare the lane jobs' checks.
+  Uploading the evidence as an artifact waits for a pinned
+  `actions/upload-artifact`.
 
 ## Later (after 1.0, not implemented)
-
-- CI adapter, part 2: review in CI (opt-in), its evidence (report and
-  ledger as artifacts, a job summary) and a review budget per pull request,
-  without secrets for pull requests from forks.
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.

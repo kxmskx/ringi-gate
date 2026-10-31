@@ -22,11 +22,15 @@ import {
   isNeedsObject,
   parseJobList,
 } from './ringi-ci-lanes.mjs';
+import { runCiReview, scrubber, takeCredentials } from './ringi-ci-review.mjs';
 
-export const CI_HELP = `Usage: ringi ci classify --base <sha> --head <sha> [--json]
+export const CI_HELP = `Usage: ringi ci classify --base <sha> --head <sha> [--json] [--checks]
        ringi ci aggregate --lane docs|full --needs <file>
                           --classify-job <job> --docs-jobs <job,...>
-                          --full-jobs <job,...>
+                          --full-jobs <job,...> [--review-job <job>]
+                          [--enforce-checks]
+       ringi ci review --base <sha> --head <sha> --event <file>
+                       --attempt <n> --out <dir> [--summary <file>]
 
 classify chooses the lane of the change between two commits from the real
 diff (git diff-tree), with the ci section of ringi.config.mjs, which must be
@@ -42,21 +46,43 @@ aggregate is the required check: it reads toJSON(needs) of GitHub Actions
 from <file> and is green only when the classification job succeeded with
 that lane, every job of the lane succeeded and every other job was skipped.
 
+review (ci.review of the profile) reviews a pull request with a model: run
+it with a trusted ringi-gate in a clean checkout of the base (--base, HEAD)
+that has the merge commit (--head). It checks the budget, the credentials
+and the trusted inputs, puts the merge commit's tree in the working tree
+and runs ringi run --review-only on a task generated from the pull request
+of --event, with only the git checks as gates. It prints verdict=, lane=
+and run-id= for $GITHUB_OUTPUT and writes the evidence to --out.
+
 Options:
-  --base <sha>, --head <sha>  classify: full commit SHAs (40 lowercase hex)
+  --base <sha>, --head <sha>  classify, review: full commit SHAs (40
+                              lowercase hex)
   --json                      classify: print the classification as JSON
+  --checks                    classify: also print checks=<JSON array>
   --lane docs|full            aggregate: the lane of the classification
   --needs <file>              aggregate: the needs context as JSON
   --classify-job <job>        aggregate: the id of the classification job
   --docs-jobs <job,...>       aggregate: the jobs of the docs lane
   --full-jobs <job,...>       aggregate: the jobs of the full lane (every
                               docs lane job among them)
+  --review-job <job>          aggregate: the review job, required in both
+                              lanes with verdict=APPROVE
+  --enforce-checks            aggregate: the checks of the lane jobs must
+                              be the classification's checks
+  --event <file>              review: the pull_request event (JSON)
+  --attempt <n>               review: the attempt of the job (re-runs
+                              included), at most ci.review.maxAttempts
+  --out <dir>                 review: where ci-review.json, report.json and
+                              ledger.jsonl are written
+  --summary <file>            review: the job summary is appended to it
   -h, --help                  Show this help
 
 Exit code of classify: 0 when classified (either lane), 1 when the diff
 cannot be classified (a STOP code), 2 for invalid arguments or outside a Git
 repository. Exit code of aggregate: 0 only for a green check, 1 for a red
-one, 2 for invalid arguments or a needs file that cannot be read.
+one, 2 for invalid arguments or a needs file that cannot be read. Exit code
+of review: 0 only for APPROVE, 1 for any other result (a STOP code), 2 for
+invalid arguments or outside a Git repository.
 `;
 
 // At most this many files outside plain documentation are named in the
@@ -96,10 +122,11 @@ export async function ciCommand(args) {
   const [subcommand, ...rest] = args;
   if (subcommand === 'classify') return classifyCommand(rest);
   if (subcommand === 'aggregate') return aggregateCommand(rest);
+  if (subcommand === 'review') return reviewCommand(rest);
   return usageError(
     undefined,
     subcommand === undefined
-      ? 'missing subcommand (classify or aggregate).'
+      ? 'missing subcommand (classify, aggregate or review).'
       : `unknown subcommand ${JSON.stringify(subcommand)}.`,
   );
 }
@@ -119,7 +146,7 @@ function classifyStopped(error, json) {
 }
 
 async function classifyCommand(args) {
-  const parsed = parseOptions(args, ['--base', '--head'], ['--json']);
+  const parsed = parseOptions(args, ['--base', '--head'], ['--json', '--checks']);
   if (parsed.error) return usageError('classify', parsed.error);
   const { values } = parsed;
   for (const name of ['--base', '--head']) {
@@ -173,6 +200,10 @@ async function classifyCommand(args) {
     return 0;
   }
   write(process.stdout, `lane=${result.lane}`);
+  // For ringi ci aggregate --enforce-checks: the lane's checks as one JSON
+  // line (a check name has no control character).
+  if (values['--checks'] === true)
+    write(process.stdout, `checks=${JSON.stringify(result.checks)}`);
   const outside = result.files.filter(({ reason }) => reason !== 'docs');
   write(
     process.stderr,
@@ -194,13 +225,11 @@ async function classifyCommand(args) {
 }
 
 async function aggregateCommand(args) {
-  const parsed = parseOptions(args, [
-    '--lane',
-    '--needs',
-    '--classify-job',
-    '--docs-jobs',
-    '--full-jobs',
-  ]);
+  const parsed = parseOptions(
+    args,
+    ['--lane', '--needs', '--classify-job', '--docs-jobs', '--full-jobs', '--review-job'],
+    ['--enforce-checks'],
+  );
   if (parsed.error) return usageError('aggregate', parsed.error);
   const { values } = parsed;
   for (const name of ['--lane', '--needs', '--classify-job', '--docs-jobs', '--full-jobs'])
@@ -221,6 +250,15 @@ async function aggregateCommand(args) {
     return usageError('aggregate', 'every job of --docs-jobs must also be in --full-jobs.');
   if (full.includes(classifyJob))
     return usageError('aggregate', '--classify-job must not be a job of a lane.');
+  const reviewJob = values['--review-job'];
+  if (
+    reviewJob !== undefined &&
+    (!isJobId(reviewJob) || reviewJob === classifyJob || full.includes(reviewJob))
+  )
+    return usageError(
+      'aggregate',
+      '--review-job must be a job id, neither the classification job nor a job of a lane.',
+    );
   let needs;
   try {
     const metadata = await stat(values['--needs']);
@@ -242,13 +280,95 @@ async function aggregateCommand(args) {
     );
     return 2;
   }
-  const result = aggregateNeeds({ lane, needs, classifyJob, jobs: { docs, full } });
+  const result = aggregateNeeds({
+    lane,
+    needs,
+    classifyJob,
+    jobs: { docs, full },
+    reviewJob,
+    enforceChecks: values['--enforce-checks'] === true,
+  });
   write(
     process.stdout,
     [
-      `required check: ${result.status} (lane ${lane}; required jobs: ${result.required.join(', ')})`,
+      `required check: ${result.status} (lane ${lane}; required jobs: ${[...result.required, ...(reviewJob === undefined ? [] : [reviewJob])].join(', ')})`,
       ...result.reasons.map((reason) => `  ${reason}`),
     ].join('\n'),
   );
   return result.status === 'success' ? 0 : 1;
+}
+
+async function reviewCommand(args) {
+  const parsed = parseOptions(args, [
+    '--base',
+    '--head',
+    '--event',
+    '--attempt',
+    '--out',
+    '--summary',
+  ]);
+  if (parsed.error) return usageError('review', parsed.error);
+  const { values } = parsed;
+  for (const name of ['--base', '--head', '--event', '--attempt', '--out'])
+    if (!Object.hasOwn(values, name)) return usageError('review', `${name} is required.`);
+  for (const name of ['--base', '--head'])
+    if (!COMMIT_SHA.test(values[name]))
+      return usageError(
+        'review',
+        `${name} must be a full commit SHA (40 lowercase hexadecimal characters).`,
+      );
+  if (!/^[1-9][0-9]{0,5}$/.test(values['--attempt']))
+    return usageError('review', '--attempt must be a positive integer (GITHUB_RUN_ATTEMPT).');
+  // Every credential-named variable leaves this process's environment
+  // before its first child process (see runCiReview).
+  const secrets = takeCredentials(process.env);
+  const runner = createProcessRunner({ output: { write() {} } });
+  let root;
+  try {
+    root = await findRepositoryRoot(runner, process.cwd());
+  } catch (error) {
+    write(
+      process.stderr,
+      error instanceof AgentWorkflowError && error.code === 'INVALID_CONFIGURATION'
+        ? `ringi ci review: ${error.message}`
+        : 'ringi ci review: not inside a Git repository.',
+    );
+    return 2;
+  }
+  let result;
+  try {
+    result = await runCiReview({
+      runner,
+      root,
+      base: values['--base'],
+      head: values['--head'],
+      event: values['--event'],
+      attempt: Number(values['--attempt']),
+      outDirectory: values['--out'],
+      summaryPath: values['--summary'],
+      secrets,
+    });
+  } catch (error) {
+    // The evidence could not be written: red, without a verdict.
+    write(
+      process.stderr,
+      `ringi ci review: UNEXPECTED_ERROR: ${scrubber(secrets)(error instanceof Error ? error.message : String(error))}`,
+    );
+    return 1;
+  }
+  write(
+    process.stdout,
+    [
+      `verdict=${result.verdict}`,
+      ...(result.lane === null ? [] : [`lane=${result.lane}`]),
+      ...(result.runId === null ? [] : [`run-id=${result.runId}`]),
+    ].join('\n'),
+  );
+  write(
+    process.stderr,
+    result.verdict === 'APPROVE'
+      ? `ringi ci review: APPROVE (lane ${result.lane}, review profile ${result.reviewProfile}).`
+      : `ringi ci review: ${result.code}: ${result.error}`,
+  );
+  return result.verdict === 'APPROVE' ? 0 : 1;
 }

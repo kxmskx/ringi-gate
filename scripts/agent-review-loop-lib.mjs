@@ -997,11 +997,28 @@ const MAX_ROUTING_ESCALATIONS = 16;
 const MAX_ROUTING_REASON_LENGTH = 500;
 const ROUTING_ALL_LANES = 'all';
 
-// CI (ci, read by ringi ci): docsPaths and lanes are its only keys; others
-// are reserved for later options. lanes has exactly the docs and the full
-// lane.
-const CI_KEYS = new Set(['docsPaths', 'lanes']);
+// CI (ci, read by ringi ci): docsPaths, lanes and the optional review are
+// its only keys; others are reserved for later options. lanes and
+// review.profiles have exactly the docs and the full lane. review has no
+// cost limit: no provider reports a cost to the core, so the key stays
+// reserved until one does.
+const CI_KEYS = new Set(['docsPaths', 'lanes', 'review']);
 const CI_LANE_KEYS = new Set(['docs', 'full']);
+const CI_REVIEW_KEYS = new Set([
+  'profiles',
+  'maxAttempts',
+  'timeoutMinutes',
+  'credentials',
+]);
+const MAX_CI_REVIEW_ATTEMPTS = 10;
+const MAX_CI_REVIEW_TIMEOUT_MINUTES = 360;
+const MAX_CI_REVIEW_CREDENTIALS = 4;
+// The names of the environment variables that carry the reviewer CLI's
+// credentials in CI: an API key or a token, never a variable that changes
+// how a program runs (PATH, NODE_OPTIONS, LD_PRELOAD, GIT_*) and never a
+// variable of the CI runner, Git, Node.js or a package manager.
+const CI_REVIEW_CREDENTIAL_NAME =
+  /^(?!(?:GITHUB|ACTIONS|RUNNER|GIT|NODE|NPM|PNPM|COREPACK)_)[A-Z][A-Z0-9_]{0,62}_(?:KEY|TOKEN)$/;
 
 // True when routing rule `to` is at least as strict as rule `from`: its
 // review effort is not lower, its lanes and added checks are supersets.
@@ -3634,6 +3651,32 @@ function safeAgentEnvironment(source = process.env) {
     if (source[key]) env[key] = source[key];
   }
   return env;
+}
+
+// The reviewer's credentials of ringi ci review: 1 to 4 variables named as
+// in ci.review.credentials, each a non-empty value without a control
+// character, none of them a variable of safeAgentEnvironment. Frozen copy,
+// or INVALID_CONFIGURATION.
+function validReviewerCredentials(value) {
+  const entries =
+    isPlainObject(value) ? Object.entries(value) : undefined;
+  if (
+    !entries ||
+    entries.length === 0 ||
+    entries.length > MAX_CI_REVIEW_CREDENTIALS ||
+    !entries.every(
+      ([name, secret]) =>
+        CI_REVIEW_CREDENTIAL_NAME.test(name) &&
+        typeof secret === 'string' &&
+        secret.length > 0 &&
+        !/[\x00-\x1f\x7f]/.test(secret),
+    )
+  )
+    throw new AgentWorkflowError(
+      'The reviewer credentials of ringi ci review are not valid.',
+      { code: 'INVALID_CONFIGURATION', stage: 'preflight' },
+    );
+  return Object.freeze(Object.fromEntries(entries));
 }
 
 async function createIsolatedCodexEnvironment({
@@ -6274,6 +6317,56 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
   // and the full lane, names from checks, neither empty. The docs lane is a
   // subset of the full lane: a change routed to the full lane never drops a
   // check of the docs lane.
+  // ci.review (ringi ci review): the review profile of each lane, names of
+  // reviewer.profiles (the docs lane gets a cheaper review, never none);
+  // the budget per workflow run: the attempts of the review job in one run
+  // (run_attempt, re-runs included; every new run needs a new approval of
+  // the environment) and the time limit of the review in minutes; the names
+  // of the
+  // environment variables handed to the reviewer as its credentials. The
+  // review runs the full-track class with only the git checks of its check
+  // set as gates, so that set needs at least one.
+  const resolveCiReview = (value) => {
+    const review = record(value, CI_REVIEW_KEYS);
+    if (Object.keys(review).length !== CI_REVIEW_KEYS.size) invalid();
+    const reviewProfiles = record(review.profiles, CI_LANE_KEYS);
+    if (
+      Object.keys(reviewProfiles).length !== CI_LANE_KEYS.size ||
+      !Object.values(reviewProfiles).every(
+        (name) => typeof name === 'string' && Object.hasOwn(profiles, name),
+      )
+    )
+      invalid();
+    const bounded = (number, max) =>
+      Number.isSafeInteger(number) && number >= 1 && number <= max;
+    if (
+      !bounded(review.maxAttempts, MAX_CI_REVIEW_ATTEMPTS) ||
+      !bounded(review.timeoutMinutes, MAX_CI_REVIEW_TIMEOUT_MINUTES)
+    )
+      invalid();
+    const credentials = uniqueList(
+      review.credentials,
+      (name) =>
+        typeof name === 'string' && CI_REVIEW_CREDENTIAL_NAME.test(name),
+    );
+    if (
+      credentials.length === 0 ||
+      credentials.length > MAX_CI_REVIEW_CREDENTIALS ||
+      !resolved.checkSets[
+        resolved.taskClasses[DEFAULT_TASK_CLASS].checkSet
+      ].some((name) => resolved.checks[name].program === 'git')
+    )
+      invalid();
+    return Object.freeze({
+      profiles: Object.freeze({
+        docs: reviewProfiles.docs,
+        full: reviewProfiles.full,
+      }),
+      maxAttempts: review.maxAttempts,
+      timeoutMinutes: review.timeoutMinutes,
+      credentials,
+    });
+  };
   if (Object.hasOwn(fields, 'ci')) {
     const ci = record(resolved.ci, CI_KEYS);
     const lanes = record(ci.lanes, CI_LANE_KEYS);
@@ -6297,6 +6390,9 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
     resolved.ci = Object.freeze({
       docsPaths,
       lanes: Object.freeze({ docs, full }),
+      ...(Object.hasOwn(ci, 'review')
+        ? { review: resolveCiReview(ci.review) }
+        : {}),
     });
   }
   return Object.freeze(resolved);
@@ -8933,6 +9029,9 @@ async function runClaudeReview({
   lanePackage,
   timeoutMs,
   verbose = false,
+  // ringi ci review: the reviewer's credentials (validReviewerCredentials),
+  // added to its allowlisted environment.
+  credentials,
 }) {
   const selectedTaskMode = resolveTaskMode(taskMode);
   if (
@@ -8993,7 +9092,12 @@ async function runClaudeReview({
       env: providerEnvironment(
         adapter,
         'reviewer',
-        safeAgentEnvironment(),
+        credentials === undefined
+          ? safeAgentEnvironment()
+          : {
+              ...safeAgentEnvironment(),
+              ...validReviewerCredentials(credentials),
+            },
         undefined,
         'reviewer',
       ),
@@ -10546,6 +10650,13 @@ async function runWorkflow(options) {
     // Review only: no writer; the uncommitted changes relative to HEAD at
     // the start are the candidate of a single review round.
     reviewOnly = false,
+    // ringi ci review only (see docs/ci.md#threat-model): the gates are the
+    // git checks of the task alone, since the candidate is a pull request
+    // whose scripts must not run next to the reviewer's secret; and the
+    // reviewer's credentials, { NAME: value }, added to the reviewer's
+    // environment and to no other process. Without them nothing changes.
+    gitGatesOnly = false,
+    reviewerCredentials,
     // Signed checkpoints after every phase (checkpoint), or the run id of a
     // checkpointed run to continue (resume, which checkpoints too). The
     // signing key is in stateDirectory: by default resolved from
@@ -10574,6 +10685,15 @@ async function runWorkflow(options) {
   let runner = processRunner;
   const coreGitIndex = {};
   let selectedProfile;
+  // gitGatesOnly: the git checks of a list of check names, in its order.
+  const gitChecksOnly = (names) =>
+    gitGatesOnly
+      ? names.filter((name) => selectedProfile.checks[name]?.program === 'git')
+      : names;
+  const reviewerCredentialOptions =
+    reviewerCredentials === undefined
+      ? {}
+      : { credentials: validReviewerCredentials(reviewerCredentials) };
   let runDirectory;
   let tempRoot;
   let report;
@@ -10982,6 +11102,19 @@ async function runWorkflow(options) {
       taskMode: selectedTaskMode,
       profile: selectedProfile,
     });
+    if (gitGatesOnly) {
+      if (!reviewOnly || selectedTaskMode !== 'implementation')
+        throw new AgentWorkflowError(msg('profile.invalid'), {
+          code: 'INVALID_CONFIGURATION',
+          stage: 'preflight',
+        });
+      task.checks = gitChecksOnly(task.checks);
+      if (task.checks.length === 0)
+        throw new AgentWorkflowError(msg('profile.invalid'), {
+          code: 'INVALID_CONFIGURATION',
+          stage: 'preflight',
+        });
+    }
     quality = { ...task.quality, effectiveGates: [...task.checks] };
     if (reviewOnly) {
       // The review is the purpose of the run: a class without it is
@@ -11028,7 +11161,9 @@ async function runWorkflow(options) {
     const applyRouting = (escalatedBy) => {
       const ruleName = escalatedBy?.to ?? (classRule ? task.taskClass : null);
       const rule = ruleName === null ? undefined : routingRules[ruleName];
-      task.checks = [...new Set([...classChecks, ...(rule?.addChecks ?? [])])];
+      task.checks = gitChecksOnly([
+        ...new Set([...classChecks, ...(rule?.addChecks ?? [])]),
+      ]);
       quality = { ...quality, effectiveGates: [...task.checks] };
       if (reviewProfile === undefined)
         reviewPolicy = resolveReviewProfile(
@@ -11857,6 +11992,7 @@ async function runWorkflow(options) {
               profile: policy.profile,
               reviewer,
               reviewAttempt: claudeReview,
+              ...reviewerCredentialOptions,
               lane: { id: lane.id, focus: lane.focus },
               ...(lanePackage === undefined ? {} : { lanePackage }),
               beforeAttempt: serialStateCheck,
@@ -12714,6 +12850,7 @@ async function runWorkflow(options) {
             profile: reviewPolicy.profile,
             reviewer,
             reviewAttempt: claudeReview,
+            ...reviewerCredentialOptions,
             beforeAttempt: () =>
               assertReviewStateUnchanged({
                 runner,
@@ -13415,6 +13552,8 @@ export const internal = {
   asciiLowerCase,
   hasAsciiFoldingCharacter,
   docsPolicyExcludes,
+  // ringi ci review: the section names of the generated task.
+  taskSchemaRoles,
   diffFileSections,
   reviewLanePackages,
   reviewerPrompt,

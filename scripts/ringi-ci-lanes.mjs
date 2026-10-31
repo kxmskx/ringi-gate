@@ -81,10 +81,17 @@ function diffFailed(message) {
   return new AgentWorkflowError(message, { code: 'DIFF_FAILED', stage: STAGE });
 }
 
-// A Git command of the classifier. A failing command or one that cannot run
-// is DIFF_FAILED, an output over the limit DIFF_TOO_LARGE; a timeout or an
-// interruption keeps its own code. None of them is a lane.
-async function ciGit(runner, cwd, args, exactStdoutLimitBytes, label) {
+// A Git command of the classifier (and of ringi ci review). A failing
+// command or one that cannot run is DIFF_FAILED, an output over the limit
+// DIFF_TOO_LARGE; a timeout or an interruption keeps its own code. None of
+// them is a lane.
+export async function ciGit(
+  runner,
+  cwd,
+  args,
+  exactStdoutLimitBytes = MAX_GIT_SCALAR_BYTES,
+  label = `git ${args[0]}`,
+) {
   try {
     return await internal.requiredRun(
       runner,
@@ -231,10 +238,24 @@ export async function classifyDiff({
   docsCandidatePolicy,
   protectedPaths,
 }) {
-  for (const [name, sha] of [
-    ['--base', base],
-    ['--head', head],
-  ]) {
+  await verifyCommits(runner, cwd, { '--base': base, '--head': head });
+  const checkout = await readCheckoutHead(runner, cwd);
+  if (checkout !== head)
+    throw new AgentWorkflowError(
+      `--head ${head} is not HEAD of the checkout (${checkout}); the profile is read from HEAD, so check out --head first.`,
+      { code: 'INVALID_CONFIGURATION', stage: STAGE },
+    );
+  return classifyRecords(await readRawDiff(runner, cwd, base, head), {
+    ci,
+    docsCandidatePolicy,
+    protectedPaths,
+  });
+}
+
+// Each value a full SHA of a commit of the repository at cwd, resolving to
+// itself; the keys name them in the messages.
+export async function verifyCommits(runner, cwd, commits) {
+  for (const [name, sha] of Object.entries(commits)) {
     if (!COMMIT_SHA.test(sha))
       throw new AgentWorkflowError(
         `${name} must be a full commit SHA (40 lowercase hexadecimal characters).`,
@@ -250,7 +271,10 @@ export async function classifyDiff({
     if (commit.stdout.trim() !== sha)
       throw diffFailed(`${name} ${sha} resolves to another object.`);
   }
-  const checkout = (
+}
+
+export async function readCheckoutHead(runner, cwd) {
+  return (
     await ciGit(
       runner,
       cwd,
@@ -259,11 +283,10 @@ export async function classifyDiff({
       'HEAD of the checkout cannot be read',
     )
   ).stdout.trim();
-  if (checkout !== head)
-    throw new AgentWorkflowError(
-      `--head ${head} is not HEAD of the checkout (${checkout}); the profile is read from HEAD, so check out --head first.`,
-      { code: 'INVALID_CONFIGURATION', stage: STAGE },
-    );
+}
+
+// The parsed raw diff between two verified commits.
+export async function readRawDiff(runner, cwd, base, head) {
   const diff = await ciGit(
     runner,
     cwd,
@@ -271,11 +294,7 @@ export async function classifyDiff({
     MAX_RAW_DIFF_BYTES,
     `git diff-tree ${base} ${head}`,
   );
-  return classifyRecords(parseRawDiff(diff.stdout), {
-    ci,
-    docsCandidatePolicy,
-    protectedPaths,
-  });
+  return parseRawDiff(diff.stdout);
 }
 
 // GitHub Actions job ids.
@@ -302,13 +321,69 @@ export function isJobId(value) {
 // lane that was skipped. A missing job, a job that belongs to no lane and
 // any other result is red; the reasons say why. jobs: { docs, full }, the
 // docs jobs a subset of the full ones (as the lanes of the profile).
-export function aggregateNeeds({ lane, needs, classifyJob, jobs }) {
+//
+// Optional, for ringi ci review (each absent: nothing changes):
+// reviewJob, the id of the review job, required in both lanes: its result
+// is success, its output verdict APPROVE and its output lane the lane (the
+// lane the review classified from the base's profile). enforceChecks: the
+// output checks of the classification job (a JSON array of check names) is
+// exactly the union of the output checks of the jobs of the lane, each a
+// JSON array of the check names the job ran.
+export function aggregateNeeds({
+  lane,
+  needs,
+  classifyJob,
+  jobs,
+  reviewJob,
+  enforceChecks = false,
+}) {
   const reasons = [];
   const entry = (job) => (Object.hasOwn(needs, job) ? needs[job] : undefined);
   const result = (job) => {
     const value = entry(job)?.result;
     return JOB_RESULTS.has(value) ? value : 'unknown';
   };
+  if (reviewJob !== undefined) {
+    const review = entry(reviewJob);
+    if (review === undefined)
+      reasons.push(`the review job ${JSON.stringify(reviewJob)} is not in needs`);
+    else if (result(reviewJob) !== 'success')
+      reasons.push(
+        `the review job ${JSON.stringify(reviewJob)} did not succeed (${result(reviewJob)})`,
+      );
+    else if (review.outputs?.verdict !== 'APPROVE')
+      reasons.push(
+        `the review job ${JSON.stringify(reviewJob)} has no output verdict=APPROVE`,
+      );
+    else if (review.outputs?.lane !== lane)
+      reasons.push(
+        `the review job ${JSON.stringify(reviewJob)} has no output lane=${lane}`,
+      );
+  }
+  if (enforceChecks) {
+    const expected = checkList(entry(classifyJob)?.outputs?.checks);
+    const ran = new Set();
+    for (const job of jobs[lane]) {
+      const checks = checkList(entry(job)?.outputs?.checks);
+      if (checks === undefined)
+        reasons.push(
+          `the ${lane} lane job ${JSON.stringify(job)} has no output checks (a JSON array of check names)`,
+        );
+      else for (const check of checks) ran.add(check);
+    }
+    if (expected === undefined)
+      reasons.push(
+        `the classification job ${JSON.stringify(classifyJob)} has no output checks (a JSON array of check names)`,
+      );
+    else {
+      for (const check of expected)
+        if (!ran.has(check))
+          reasons.push(`the check ${JSON.stringify(check)} of the ${lane} lane ran in no job of the lane`);
+      for (const check of [...ran].sort())
+        if (!expected.includes(check))
+          reasons.push(`the check ${JSON.stringify(check)} is not a check of the ${lane} lane`);
+    }
+  }
   const classification = entry(classifyJob);
   if (classification === undefined) {
     reasons.push(`the classification job ${JSON.stringify(classifyJob)} is not in needs`);
@@ -331,7 +406,8 @@ export function aggregateNeeds({ lane, needs, classifyJob, jobs }) {
       );
   }
   for (const job of Object.keys(needs).sort()) {
-    if (job === classifyJob || required.includes(job)) continue;
+    if (job === classifyJob || job === reviewJob || required.includes(job))
+      continue;
     if (!jobs.full.includes(job))
       reasons.push(`the job ${JSON.stringify(job)} of needs belongs to no lane`);
     else if (result(job) !== 'skipped')
@@ -345,6 +421,27 @@ export function aggregateNeeds({ lane, needs, classifyJob, jobs }) {
     required: [...required],
     reasons,
   };
+}
+
+// The output checks of a job: a JSON array of 1 to 100 distinct, non-empty
+// check names of at most 200 characters; undefined for anything else.
+function checkList(value) {
+  if (typeof value !== 'string' || value.length > 64 * 1024) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+  return Array.isArray(parsed) &&
+    parsed.length > 0 &&
+    parsed.length <= 100 &&
+    parsed.every(
+      (check) => typeof check === 'string' && check.length > 0 && check.length <= 200,
+    ) &&
+    new Set(parsed).size === parsed.length
+    ? parsed
+    : undefined;
 }
 
 // toJSON(needs): an object of job ids, each an object with its result.

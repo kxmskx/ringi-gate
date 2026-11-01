@@ -576,8 +576,9 @@ case-insensitive file system may fold more: for example U+017F (long s) to
 `S` or U+212A (Kelvin sign) to `k`, so a name written with them could reach
 an excluded name. To stay fail-closed, the core rejects every docs candidate
 path that contains a non-ASCII character whose Unicode upper- or lower-case
-form contains an ASCII letter (such as U+017F, U+212A, U+0130, U+0131 or the
-ligature U+FB01). Other non-ASCII names, for example Polish file names, are
+form, or the other case of that form, contains an ASCII letter (such as
+U+017F, U+212A, U+0130, U+0131, the ligature U+FB01 or U+1E9E, whose
+lower-case U+00DF uppercases to `SS`). Other non-ASCII names, for example Polish file names, are
 not affected.
 
 The built-in default, the rule used before profiles could declare it:

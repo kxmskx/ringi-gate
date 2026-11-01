@@ -10447,6 +10447,26 @@ test('the programmatic profile contract rejects Object.prototype names fail-clos
   );
 });
 
+test('a review profile name JSON cannot describe stops with INVALID_REVIEW_PROFILE', () => {
+  const cyclic = {};
+  cyclic.self = cyclic;
+  for (const [value, described] of [
+    [1n, '<bigint>'],
+    [cyclic, '<object>'],
+  ]) {
+    assert.throws(
+      () => resolveReviewProfile(value),
+      (error) => {
+        assert.ok(error instanceof AgentWorkflowError);
+        assert.equal(error.code, 'INVALID_REVIEW_PROFILE');
+        assert.equal(error.stage, 'preflight');
+        assert.ok(error.message.includes(` ${described}.`), error.message);
+        return true;
+      },
+    );
+  }
+});
+
 test('a single Claude attempt enforces model, effort and read-only tools without CLI fallback', async () => {
   const directory = await createRepository();
   const calls = [];
@@ -16035,9 +16055,11 @@ function docsCandidateOutcome(path, profile) {
 
 // Non-ASCII characters written as code points so they are visible in the
 // source: U+212A (Kelvin sign, lowercases to "k"), U+017F (long s,
-// uppercases to "S") and a Polish name with no characters folding to ASCII.
+// uppercases to "S"), U+1E9E (capital sharp s, lowercases to U+00DF, which
+// uppercases to "SS") and a Polish name with no characters folding to ASCII.
 const KELVIN_SIGN = String.fromCodePoint(0x212a);
 const LONG_S = String.fromCodePoint(0x17f);
+const CAPITAL_SHARP_S = String.fromCodePoint(0x1e9e);
 const POLISH_NAME = String.fromCodePoint(
   0x7a, 0x61, 0x17c, 0xf3, 0x142, 0x107,
 );
@@ -16594,7 +16616,8 @@ test('task classes: the profile extends and narrows exclusions beyond the base, 
     },
   );
   // The core rejects non-ASCII characters folding to ASCII letters (U+017F,
-  // U+212A) in every profile, even when the folded name is not excluded.
+  // U+212A, U+1E9E in two steps) in every profile, even when the folded
+  // name is not excluded.
   for (const [profile, paths] of [
     [
       otherCase,
@@ -16603,6 +16626,7 @@ test('task classes: the profile extends and narrows exclusions beyond the base, 
         `docs/${LONG_S}KILL.md`,
         `docs/s${KELVIN_SIGN}ill.md`,
         `docs/note${LONG_S}.md`,
+        `docs/note${CAPITAL_SHARP_S}.md`,
       ],
     ],
     [extended, [`guides/${LONG_S}kills/a.md`, `guides/boo${KELVIN_SIGN}.rst`]],

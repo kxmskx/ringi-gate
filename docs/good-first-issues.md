@@ -10,18 +10,6 @@ already assigned. General rules are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 Items marked **Needs a decision before code** need a quick agreement in the
 issue first.
 
-## Reject U+1E9E in docs candidate paths
-
-Issue: [#2](https://github.com/kxmskx/ringi-gate/issues/2).
-
-Docs-only changes reject paths with a non-ASCII character whose case mapping contains an ASCII letter, since a case-insensitive file system could fold it into an excluded name ([profile.md](profile.md#docscandidatepolicy)).
-
-`hasAsciiFoldingCharacter` checks `toUpperCase()` and `toLowerCase()` of each character, and U+1E9E (capital sharp s) gets through: it lowercases to U+00DF, which has no ASCII letter, but `'ß'.toUpperCase()` is `SS`.
-
-Fix: also check `toLowerCase().toUpperCase()` (and `toUpperCase().toLowerCase()` if it helps). Add a test where a docs candidate path with U+1E9E is rejected with `DOCS_CANDIDATE_REJECTED`, and one showing that ordinary non-ASCII names, such as Polish file names, still pass. Update the examples in `docs/profile.md` if they change.
-
-Files: `scripts/agent-review-loop-lib.mjs`, `scripts/agent-review-loop.test.mjs`.
-
 ## Align the CLI fallback report with the documentation (decision first)
 
 Issue: [#3](https://github.com/kxmskx/ringi-gate/issues/3).
@@ -35,16 +23,6 @@ That doesn't match the docs. The README says run reports carry `publicationAppro
 The test `schemaVersion: CLI fallback preserves JSON and exit codes` pins the current shape and exit code on purpose, so it has to change together with whichever side gets fixed.
 
 Agree on one option in the issue first: either the fallback report gains `publicationApproved: false` (and the pinned test follows), or the docs describe this report and its exit code as they are. Files: `scripts/agent-review-loop.mjs`, `scripts/ringi-cli.mjs`, `docs/architecture.md`, `docs/cli.md`, `README.md`, `scripts/agent-review-loop.test.mjs`, `scripts/ringi-cli.test.mjs`.
-
-## Safe error message for an invalid review profile name
-
-Issue: [#4](https://github.com/kxmskx/ringi-gate/issues/4).
-
-`resolveReviewProfile` puts `JSON.stringify(profile)` into its error message. For a `BigInt` or a cyclic object that call throws a `TypeError` first, so instead of `INVALID_REVIEW_PROFILE` you get `UNEXPECTED_ERROR`.
-
-The CLI only passes strings, but the `reviewProfile` option of `runAgentReviewLoop` accepts anything, and [profile.md](profile.md#reviewer) promises `INVALID_REVIEW_PROFILE` for any non-string.
-
-Describe non-string values safely (their type is enough) and add tests for a `BigInt` and a cyclic object that expect `INVALID_REVIEW_PROFILE` at stage `preflight`. Files: `scripts/agent-review-loop-lib.mjs`, `scripts/agent-review-loop.test.mjs`.
 
 ## Headings inside fenced code blocks in task files (decision first)
 

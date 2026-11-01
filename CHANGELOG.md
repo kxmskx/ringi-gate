@@ -5,6 +5,18 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
+## Unreleased
+
+### Fixed
+
+- A docs candidate path with U+1E9E (capital sharp s) is rejected with
+  `DOCS_CANDIDATE_REJECTED`: the check of characters that fold to an ASCII
+  letter also takes the other case of each case form (U+1E9E lowercases to
+  U+00DF, which uppercases to `SS`) (#2).
+- A review profile name that `JSON.stringify` cannot describe (a `BigInt`,
+  a cyclic object) stops with `INVALID_REVIEW_PROFILE` at `preflight`
+  instead of `UNEXPECTED_ERROR`; its message names the value's type (#4).
+
 ## 1.1.0 — 2026-11-01
 
 The CI adapter for GitHub Actions: `ringi ci classify`, `ringi ci

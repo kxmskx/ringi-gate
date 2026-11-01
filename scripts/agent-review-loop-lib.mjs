@@ -878,7 +878,10 @@ function asciiLowerCase(value) {
 function hasAsciiFoldingCharacter(value) {
   for (const character of value) {
     if (character.charCodeAt(0) < 0x80) continue;
-    if (/[A-Za-z]/.test(character.toUpperCase() + character.toLowerCase()))
+    // Two steps as well: U+1E9E lowercases to U+00DF, which uppercases to SS.
+    const upper = character.toUpperCase();
+    const lower = character.toLowerCase();
+    if (/[A-Za-z]/.test(upper + lower + lower.toUpperCase() + upper.toLowerCase()))
       return true;
   }
   return false;
@@ -2048,6 +2051,17 @@ function conciseProcessFailure(result) {
 // reviewer: the resolved reviewer section of a profile; default: the core's.
 // Without a profile name the reviewer's defaultProfile applies; a name that is
 // not a string is unknown, even if it converts to a profile key.
+// A profile name for an error message. JSON.stringify throws for a BigInt
+// or a cyclic object, which must still stop with INVALID_REVIEW_PROFILE;
+// such a value is described by its type alone.
+function describeProfileName(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return `<${typeof value}>`;
+  }
+}
+
 export function resolveReviewProfile(name, reviewer = DEFAULT_REVIEWER) {
   const profile = name === undefined ? reviewer.defaultProfile : name;
   if (
@@ -2055,7 +2069,7 @@ export function resolveReviewProfile(name, reviewer = DEFAULT_REVIEWER) {
     !Object.hasOwn(reviewer.profiles, profile)
   ) {
     throw new AgentWorkflowError(
-      msg('config.unknownReviewProfile', { profile: JSON.stringify(profile) }),
+      msg('config.unknownReviewProfile', { profile: describeProfileName(profile) }),
       { code: 'INVALID_REVIEW_PROFILE', stage: 'preflight' },
     );
   }

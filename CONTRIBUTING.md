@@ -18,7 +18,7 @@ local cache (some tests run the real pnpm offline from that cache).
 
 ```sh
 git clone <repository URL>
-cd ringi-core
+cd ringi-gate
 npm install
 corepack install -g --cache-only pnpm@11.20.0   # once, if pnpm 11.20.0 is not cached yet
 npm test

@@ -73,11 +73,15 @@ jobs:
           corepack enable pnpm
           pnpm install --frozen-lockfile --ignore-scripts
 
-      # A push to the default branch always runs the full lane.
+      # The first parent of the merge commit must be the base of the event
+      # (after a change of the base branch GitHub keeps the old merge commit
+      # until the next push). A push to the default branch always runs the
+      # full lane.
       - name: Choose the lane
         id: lane
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ "$EVENT_NAME" != pull_request ]; then
@@ -86,6 +90,10 @@ jobs:
             exit 0
           fi
           base="$(git rev-parse HEAD^1)"
+          if [ "$base" != "$PR_BASE" ]; then
+            echo "::error::The merge commit was computed against $base, not against the base $PR_BASE of this event. Push a commit to the pull request: GitHub computes a new merge commit only on a push."
+            exit 1
+          fi
           head="$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD^2)" = "$PR_HEAD"
           pnpm exec ringi ci classify --base "$base" --head "$head" --checks >> "$GITHUB_OUTPUT"

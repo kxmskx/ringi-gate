@@ -2048,9 +2048,6 @@ function conciseProcessFailure(result) {
   return value.length > 1_000 ? `${value.slice(0, 1_000)}…` : value;
 }
 
-// reviewer: the resolved reviewer section of a profile; default: the core's.
-// Without a profile name the reviewer's defaultProfile applies; a name that is
-// not a string is unknown, even if it converts to a profile key.
 // A profile name for an error message. JSON.stringify throws for a BigInt
 // or a cyclic object, which must still stop with INVALID_REVIEW_PROFILE;
 // such a value is described by its type alone.
@@ -2062,6 +2059,9 @@ function describeProfileName(value) {
   }
 }
 
+// reviewer: the resolved reviewer section of a profile; default: the core's.
+// Without a profile name the reviewer's defaultProfile applies; a name that is
+// not a string is unknown, even if it converts to a profile key.
 export function resolveReviewProfile(name, reviewer = DEFAULT_REVIEWER) {
   const profile = name === undefined ? reviewer.defaultProfile : name;
   if (
@@ -9800,7 +9800,7 @@ export async function loadProjectProfile({ repositoryRoot }) {
     return error;
   };
   // A file inside the repository that is not a module of the runner
-  // installation (a checkout of ringi-core inside the repository is runner
+  // installation (a checkout of ringi-gate inside the repository is runner
   // code, as before).
   const repositoryFile = (url) => {
     if (typeof url !== 'string' || !url.startsWith('file:')) return false;

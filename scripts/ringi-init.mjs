@@ -57,7 +57,7 @@ export function profileSource(gates) {
     '// Node.js built-ins.',
     '//',
     '// Every field is described in docs/profile.md of Ringi Gate',
-    '// (ringi-core). Fields left out (taskSchema, taskClasses,',
+    '// (ringi-gate). Fields left out (taskSchema, taskClasses,',
     '// docsCandidatePolicy, implementer, reviewer) take the core defaults.',
     '//',
     '// checks: the only commands the runner may run as gates. A pnpm check',

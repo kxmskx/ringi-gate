@@ -113,7 +113,7 @@ and a fingerprint check on top:
   repository that is not a fingerprinted module of the profile is refused
   when anything tries to load it as a module (for example `require` from a
   `createRequire` with another base path). The only exception is the
-  ringi-core installation itself, see below.
+  ringi-gate installation itself, see below.
 - **A failed import fails the load.** An import that is refused, does not
   resolve or that Node.js cannot load (for example an unknown file
   extension) while the profile loads stops it with `INVALID_CONFIGURATION`,
@@ -131,9 +131,9 @@ and a fingerprint check on top:
   (`INVALID_CONFIGURATION`). Later, a fingerprinted file reached through a
   symbolic link counts as changed, even with the same content.
 - **Imports outside the repository.** Refused, except modules of the
-  ringi-core installation that runs the command (for example its provider
+  ringi-gate installation that runs the command (for example its provider
   contract): they are runner code, loaded once like the runner itself, and
-  not fingerprinted. Keep the ringi-core checkout outside the repository
+  not fingerprinted. Keep the ringi-gate checkout outside the repository
   and outside any directory the writer can write to.
 - **Checked again.** The core compares every fingerprint at the end of the
   preflight (stage `preflight`), right after every writer round
@@ -578,8 +578,8 @@ an excluded name. To stay fail-closed, the core rejects every docs candidate
 path that contains a non-ASCII character whose Unicode upper- or lower-case
 form, or the other case of that form, contains an ASCII letter (such as
 U+017F, U+212A, U+0130, U+0131, the ligature U+FB01 or U+1E9E, whose
-lower-case U+00DF uppercases to `SS`). Other non-ASCII names, for example Polish file names, are
-not affected.
+lower-case U+00DF uppercases to `SS`). Other non-ASCII names, for example
+Polish file names, are not affected.
 
 The built-in default, the rule used before profiles could declare it:
 

@@ -478,11 +478,15 @@ test('example ringi ci review workflow keeps the threat model of docs/ci.md', as
   assert.match(text, /^permissions:\n {2}contents: read\n\n/m);
   assert.equal([...text.matchAll(/permissions:/g)].length, 1);
   assert.doesNotMatch(text, /write|id-token|github\.token/i);
-  // The same pinned actions as the workflow without review; every checkout
-  // without persisted credentials.
+  // The same pinned actions as the workflow without review, and
+  // actions/upload-artifact pinned to a commit SHA, used once for the
+  // evidence; every checkout without persisted credentials.
   const uses = (source) =>
     [...source.matchAll(/^\s*-?\s*uses:\s*(.+)$/gm)].map(([, value]) => value);
-  for (const value of uses(text))
+  const uploads = uses(text).filter((value) => value.startsWith('actions/upload-artifact@'));
+  assert.equal(uploads.length, 1);
+  assert.match(uploads[0], /^actions\/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+  for (const value of uses(text).filter((value) => !uploads.includes(value)))
     assert.ok(uses(plain).includes(value), value);
   const checkouts = uses(text).filter((value) => value.startsWith('actions/checkout@')).length;
   assert.equal([...text.matchAll(/^ {10}persist-credentials: false$/gm)].length, checkouts);
@@ -519,6 +523,12 @@ test('example ringi ci review workflow keeps the threat model of docs/ci.md', as
   assert.equal([...review.matchAll(/pnpm install(?! --frozen-lockfile --ignore-scripts\n)/g)].length, 0);
   const ringiCalls = [...review.matchAll(/"\$GITHUB_WORKSPACE\/trusted\/node_modules\/\.bin\/ringi" (ci review|verify) /g)];
   assert.deepEqual(ringiCalls.map(([, command]) => command), ['ci review', 'verify']);
+  // The evidence of --out is uploaded last, also after a red review.
+  assert.match(review, /--out "\$RUNNER_TEMP\/ringi-review" /);
+  assert.match(
+    review,
+    /- name: Upload the evidence\n {8}if: always\(\)\n {8}uses: actions\/upload-artifact@\S+ # v\S+\n {8}with:\n {10}name: ringi-review-\$\{\{ github\.run_attempt \}\}\n {10}path: \$\{\{ runner\.temp \}\}\/ringi-review\/\n/,
+  );
   // The reviewer CLI: one global install, of an exact version.
   assert.match(review, /^ {10}REVIEWER_CLI: '@[a-z-]+\/[a-z-]+@\d+\.\d+\.\d+'$/m);
   assert.deepEqual(

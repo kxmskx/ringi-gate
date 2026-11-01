@@ -194,8 +194,8 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   (`ci-review.json`, report and ledger, a job summary, `ringi verify`), a
   budget per workflow run (attempts and time; across runs, the approval of
   the environment) and the measurement for routing;
-  the aggregator requires the review and can compare the lane jobs' checks.
-  Uploading the evidence as an artifact waits for a pinned
+  the aggregator requires the review and can compare the lane jobs' checks;
+  the example workflow uploads the evidence as an artifact with a pinned
   `actions/upload-artifact`.
 
 ## Later (after 1.0, not implemented)

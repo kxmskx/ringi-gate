@@ -518,6 +518,9 @@ only `needs` jobs of its own workflow. Its test checks, in addition:
   the job is `trusted/node_modules/.bin/ringi`, never `pnpm exec`;
 - the reviewer CLI is installed in an exact version;
 - `ringi verify <run-id>` runs after the review;
+- the evidence directory (`--out`) is uploaded last, with `if: always()`,
+  by the one `actions/upload-artifact` of the job, pinned to a full commit
+  SHA, as the artifact `ringi-review-<run attempt>`;
 - the lane jobs put out `checks`, and the aggregator runs with
   `--enforce-checks --review-job review` (without the review job on a push
   to the default branch, which has no review);
@@ -525,11 +528,12 @@ only `needs` jobs of its own workflow. Its test checks, in addition:
   request would need `pull-requests: write`; keep it a separate job without
   the environment and the secret. The example has none.
 
-The evidence directory is not uploaded by the example: that needs
-`actions/upload-artifact` pinned to a full commit SHA, which the example
-does not pin yet. Add the step with the SHA of a release you reviewed; it
-uploads `ci-review.json`, `report.json` and `ledger.jsonl`, none of which
-holds the secret.
+The step `Upload the evidence` uploads `ci-review.json`, `report.json` and
+`ledger.jsonl`, none of which holds the secret, also after a red review or
+a failed `ringi verify`; each attempt of the job gets its own artifact, so
+a re-run keeps the evidence of the attempt before it. The example pins
+`actions/upload-artifact` v7.0.2 by its commit SHA; when you change the
+version, pin the SHA of a release you reviewed.
 
 `merge_group` (the merge queue) is not supported: the workflow does not run
 for it, so in a merge queue the required check would be missing. Do not add

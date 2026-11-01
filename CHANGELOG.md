@@ -45,7 +45,9 @@ is published by hand, without provenance; later versions are published by
 - `examples/github-actions/ringi-ci-review.yml`: the example workflow with
   the review job (`environment`, the base checked out as trusted code, the
   merge commit as data, the secret only in the env of the review step,
-  `ringi verify` after the review), checked by its own text test.
+  `ringi verify` after the review, the evidence uploaded as the artifact
+  `ringi-review-<run attempt>` by `actions/upload-artifact` v7.0.2 pinned
+  by its commit SHA), checked by its own text test.
 - `runAgentReviewLoop` options `gitGatesOnly` and `reviewerCredentials`,
   set only by `ringi ci review`.
 - The CI adapter for GitHub Actions, part 1 (see

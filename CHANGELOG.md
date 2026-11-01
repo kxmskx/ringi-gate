@@ -5,7 +5,11 @@ is tagged `v<version>` and published to npm as `ringi-gate`. Version 0.1.0
 is published by hand, without provenance; later versions are published by
 `.github/workflows/release.yml`.
 
-## Unreleased
+## 1.1.0 — 2026-11-01
+
+The CI adapter for GitHub Actions: `ringi ci classify`, `ringi ci
+aggregate` and, opt-in, `ringi ci review`. Every change is additive to
+the 1.0 contract; a profile without `ci` behaves as in 1.0.0.
 
 ### Added
 

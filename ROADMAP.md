@@ -182,12 +182,12 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   report, `schemaVersion` 2). The provider-specific names stay as
   deprecated aliases until 2.0; the built-in providers stay `experimental`.
 
-- CI adapter for GitHub Actions, part 1 (unreleased): `ringi ci classify`
+- CI adapter for GitHub Actions, part 1 (1.1.0): `ringi ci classify`
   chooses the `docs` or `full` lane from the real diff of a pull request,
   fail-closed; `ringi ci aggregate` is the one required check; the example
   workflow and the CI budget policy are in [docs/ci.md](docs/ci.md). No
   model and no secret in CI.
-- CI adapter, part 2 (unreleased): `ringi ci review` with `ci.review`
+- CI adapter, part 2 (1.1.0): `ringi ci review` with `ci.review`
   (opt-in), under the threat model of [docs/ci.md](docs/ci.md#threat-model):
   the secret in an `environment` with required reviewers, the base as the
   only code of the review job, the pull request as data; its evidence

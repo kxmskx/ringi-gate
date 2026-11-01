@@ -16,18 +16,18 @@ five commands:
 From version 0.1.0 the npm package `ringi-gate` installs the command
 (see [Installation from npm](../README.md#installation-from-npm)). The
 alternative is to run the entry point with Node.js from a checkout of
-ringi-core, for example:
+ringi-gate, for example:
 
 ```sh
-node /path/to/ringi-core/bin/ringi.mjs doctor
+node /path/to/ringi-gate/bin/ringi.mjs doctor
 ```
 
 `package.json` declares `"bin": { "ringi": "bin/ringi.mjs" }`, so a package
-manager that installs ringi-core from a checkout would link it as `ringi`;
+manager that installs ringi-gate from a checkout would link it as `ringi`;
 nothing in this repository does that for you. The examples below write
 `ringi` for whichever form you use.
 
-Keep the ringi-core checkout outside the repository you run it on and
+Keep the ringi-gate checkout outside the repository you run it on and
 outside any directory the writer can write to (for example a temporary
 directory its sandbox allows): its modules are runner code, loaded without a
 fingerprint, so a writer that could change them would change the runner of
@@ -56,7 +56,7 @@ with the profile `scripts/agent-review-profile.mjs` (see
 | --- | --- |
 | `ringi --help`, `ringi -h` | Help, exit code `0`. |
 | `ringi <command> --help` | Help of the command, exit code `0`. |
-| `ringi --version` | `ringi (Ringi Gate) <version>` with the `version` of ringi-core's `package.json`, exit code `0`. |
+| `ringi --version` | `ringi (Ringi Gate) <version>` with the `version` of ringi-gate's `package.json`, exit code `0`. |
 | no command, an unknown command or an unknown option | A one-line error and the help on standard error, exit code `2`. |
 
 Messages of the `ringi` command are in English. The messages of the runner
@@ -145,7 +145,7 @@ depends on a failed one is `warn` with `not checked: … failed`.
 
 | Check | What it verifies | Shared runner function |
 | --- | --- | --- |
-| `node` | Node.js 24 or newer | — (`engines` of ringi-core) |
+| `node` | Node.js 24 or newer | — (`engines` of ringi-gate) |
 | `git-repository` | the current directory is inside a Git working tree, and neither `GIT_DIR` nor `GIT_WORK_TREE` is set | `git rev-parse --show-toplevel` through the runner's `requiredRun` |
 | `runner-location` | the runner installation (the directory of `bin/` and `scripts/`) lies outside the repository; inside it (for example `node_modules/ringi-gate`) the check is `warn`, with the hint to install the runner outside (globally or through `npx` from the npm cache): a writer can change those files, and a change made before a run is not detected | `RUNNER_ROOT` |
 | `branch` | a branch is checked out and it is not `main` or `master` | `readBranch`, `WORKING_BRANCHES_BLOCKED` |

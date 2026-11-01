@@ -421,6 +421,11 @@ test('example ringi ci workflow keeps the rules of docs/ci.md', async () => {
   assert.doesNotMatch(job('classify'), /^ {4}if:/m);
   assert.match(job('classify'), /ringi ci classify --base "\$base" --head "\$head" >> "\$GITHUB_OUTPUT"/);
   assert.match(job('classify'), /test "\$\(git rev-parse HEAD\^2\)" = "\$PR_HEAD"/);
+  assert.match(job('classify'), /^ {10}PR_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/m);
+  assert.match(
+    job('classify'),
+    /base="\$\(git rev-parse HEAD\^1\)"\n {10}if \[ "\$base" != "\$PR_BASE" \]; then\n {12}echo "::error::[^"\n]+"\n {12}exit 1\n {10}fi\n/,
+  );
   assert.match(job('whitespace'), /^ {4}if: github\.event\.pull_request\.draft != true$/m);
   assert.match(
     job('test'),
@@ -502,6 +507,13 @@ test('example ringi ci review workflow keeps the threat model of docs/ci.md', as
     const next = jobs[jobs.indexOf(id) + 1];
     return jobsText.slice(start, next ? jobsText.indexOf(`\n  ${next}:\n`) : undefined);
   };
+  // The classification checks both parents of the merge commit, as in the
+  // workflow without review.
+  assert.match(job('classify'), /test "\$\(git rev-parse HEAD\^2\)" = "\$PR_HEAD"/);
+  assert.match(
+    job('classify'),
+    /base="\$\(git rev-parse HEAD\^1\)"\n {10}if \[ "\$base" != "\$PR_BASE" \]; then\n {12}echo "::error::[^"\n]+"\n {12}exit 1\n {10}fi\n/,
+  );
   const review = job('review');
   // The environment only on the review job; the secret only in the env of
   // its Review step, never in a run script.

@@ -277,8 +277,14 @@ container whose user owns the checkout directory.
 
 In a pull request the example workflow classifies the merge commit GitHub
 built (`--head`) against its first parent, the tip of the base branch
-(`--base`): the change the merge would make. It also checks that the second
-parent is the head of the pull request. `fetch-depth: 2` is enough.
+(`--base`): the change the merge would make. It checks that the first parent
+is the base of the event (`pull_request.base.sha`) and the second parent the
+head of the pull request, and fails otherwise. After a change of the base
+branch GitHub keeps the merge commit of the old base, for the `edited` run
+and for every later edit, until the next push to the pull request; without
+the check of the first parent the change would be classified against the
+old base. Push a commit after changing the base. `fetch-depth: 2` is
+enough.
 
 With `--checks` (for `ringi ci aggregate --enforce-checks`), the plain
 output has a second line, `checks=<JSON array>`: the checks of the lane, as
@@ -372,8 +378,9 @@ In this order, each step fail-closed:
    the head of the event. A merge commit that GitHub computed against
    another base (for example right after the base branch was changed) is
    refused (`INVALID_CONFIGURATION`), not reviewed. A re-run of the job has
-   the same event and commits; a new event (a push or an edit of the pull
-   request) brings the current merge commit.
+   the same event and commits, and an edit of the pull request keeps the
+   old merge commit (GitHub computes a new one only on a push): push a
+   commit to the pull request.
 5. Credentials: each name of `ci.review.credentials` must be set and at
    least 8 characters long; a pull request from a fork has none
    (`INVALID_CONFIGURATION`).
@@ -459,7 +466,9 @@ checks them in its text:
   `reopened`, `ready_for_review` and `converted_to_draft`, and `push` to
   the default branch (change `branches: [main]` to the name of yours).
   `edited` covers a change of the pull request's base branch: without it
-  the green check computed against the old base would stay. The price is
+  the green check computed against the old base would stay. The `edited`
+  run itself fails in `classify` (the merge commit still has the old base
+  as its first parent) until a push to the pull request. The price is
   that every edit of the title or the description runs the whole workflow
   again; no job is made conditional on what the edit changed
   (`github.event.changes.base`), since a job skipped by such a condition

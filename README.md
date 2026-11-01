@@ -265,9 +265,9 @@ The runner has no runtime dependencies beyond Node.js built-ins.
 
 From version 0.1.0 the runner is installed from npm (see
 [Installation from npm](#installation-from-npm)); below, `ringi` stands for
-that command. The alternative is a checkout: clone ringi-core and run its
+that command. The alternative is a checkout: clone ringi-gate and run its
 entry point with Node.js from the root of the target repository, so
-`ringi` stands for `node /path/to/ringi-core/bin/ringi.mjs` (see
+`ringi` stands for `node /path/to/ringi-gate/bin/ringi.mjs` (see
 [docs/cli.md](docs/cli.md)). Keep that checkout outside the target
 repository and outside any directory the implementer can write to. The run
 fingerprints the runner's own modules when it starts and stops with

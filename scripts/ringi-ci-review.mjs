@@ -281,7 +281,7 @@ async function prepareReview({ runner, root, base, head, event, attempt, secrets
   const secondParent = await gitScalar(runner, root, `${head}^2^{commit}`, `the second parent of --head ${head} cannot be read`);
   if (firstParent !== base || secondParent !== pullRequest.head)
     throw stop(
-      `--head ${head} is not the merge commit of the base ${base} and the head ${pullRequest.head} of the pull request (its parents are ${firstParent} and ${secondParent}); GitHub may not have computed the merge commit against the current base yet. A re-run of the job uses the same event and commits: a new event (a push or an edit of the pull request) starts a run with the current merge commit.`,
+      `--head ${head} is not the merge commit of the base ${base} and the head ${pullRequest.head} of the pull request (its parents are ${firstParent} and ${secondParent}); GitHub may not have computed the merge commit against the current base yet. A re-run of the job uses the same event and commits, and an edit of the pull request (its base branch included) keeps the old merge commit: push a commit to the pull request, which makes GitHub compute a new one.`,
       { code: 'INVALID_CONFIGURATION' },
     );
   const credentials = {};

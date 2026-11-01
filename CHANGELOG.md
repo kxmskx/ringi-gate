@@ -7,8 +7,24 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+## 1.1.1 — 2026-11-01
+
+Fixes found by a live check of `ringi ci` on GitHub Actions, and two
+hardened core checks. No change of the 1.0 contract.
+
 ### Fixed
 
+- The `classify` job of both example workflows checks that the first
+  parent of the merge commit is the base of the event
+  (`pull_request.base.sha`) and fails otherwise. After a change of the
+  base branch of a pull request GitHub keeps the merge commit of the old
+  base, for the `edited` run and every later edit, until the next push;
+  the job classified the change against the old base, and without
+  `ringi ci review` the required check could pass. Push a commit after
+  changing the base.
+- The message of `ringi ci review` for a merge commit of another base no
+  longer says that an edit of the pull request brings the current merge
+  commit: only a push does.
 - A docs candidate path with U+1E9E (capital sharp s) is rejected with
   `DOCS_CANDIDATE_REJECTED`: the check of characters that fold to an ASCII
   letter also takes the other case of each case form (U+1E9E lowercases to
@@ -16,6 +32,11 @@ is published by hand, without provenance; later versions are published by
 - A review profile name that `JSON.stringify` cannot describe (a `BigInt`,
   a cyclic object) stops with `INVALID_REVIEW_PROFILE` at `preflight`
   instead of `UNEXPECTED_ERROR`; its message names the value's type (#4).
+
+### Changed
+
+- `ringi init`, the documentation and CONTRIBUTING.md name the repository
+  `ringi-gate` instead of its old name.
 
 ## 1.1.0 — 2026-11-01
 

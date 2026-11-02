@@ -161,9 +161,20 @@ so installing the tarball fetches nothing.
   has no write permission, uses the same pinned actions as `test.yml`, and
   its version input reaches the steps only through the `CODEX_VERSION`
   variable; its version check, run against sample inputs, accepts only
-  `major.minor.patch` and runs before the installation; its matrix
-  expects `stop` on both Ubuntu runners and `pass` on macOS, without
-  `continue-on-error`, and the file has no `sudo`, `apt` or `sysctl`.
+  `major.minor.patch` and runs before the installation; its matrix runs
+  every host with the three repository layouts and expects `stop` on both
+  Ubuntu runners, `pass` on macOS and `pass` on `ubuntu-latest-userns`,
+  without `continue-on-error`; `sudo` and `sysctl` appear only in the one
+  step that lifts the AppArmor restriction of unprivileged user namespaces
+  in the `ubuntu-latest-userns` rows, before the probe, and the file has no
+  `apt`.
+- **Codex sandbox probe:** `scripts/probes/codex-sandbox-check.mjs` run
+  with a stand-in `codex` (no real CLI): `--layout plain`, `worktree` and
+  `submodule` build their repository (`.git` a directory, or a `gitdir:`
+  file), the core's check runs in it with the `.git` file as its pointer
+  argument, and the probe removes its temporary directory; `--expect stop`
+  with a stand-in whose sandbox cannot start; unknown or repeated options
+  exit with 2.
 
 The workflows themselves are not run by the tests.
 
@@ -175,9 +186,9 @@ Codex CLI from `PATH`, without a model and without a login. It is not part
 of `npm test` and not in the npm package. In a synthetic Git repository in
 the system temporary directory it runs the check in `implementation` and
 `analysis` mode, with an empty `CODEX_HOME` as the core does, and prints the
-CLI version, `uname -a`, the result of each mode (`pass`, or the stop code
-and message) and the argv, exit code, stdout and stderr of the
-`codex sandbox` call. On Linux it also prints the kernel settings for
+CLI version, `uname -a`, the layout (`layout=`), the result of each mode
+(`pass`, or the stop code and message) and the argv, exit code, stdout and
+stderr of the `codex sandbox` call. On Linux it also prints the kernel settings for
 unprivileged user namespaces and whether `bwrap` is on `PATH`. It removes
 its temporary directory.
 
@@ -195,11 +206,22 @@ timeout, another exit code, a failed preparation), exits with 1. The
 summary prints the result of each mode and whether the expectation was
 met.
 
+`--layout` chooses the repository: `plain` (the default; `git init`, `.git`
+is a directory), `worktree` (a linked worktree, made with `git worktree
+add` from a synthetic repository with one commit) or `submodule` (a
+submodule of a synthetic parent repository, cloned from another synthetic
+repository with `protocol.file.allow=always` given to that one Git command
+only). In the
+last two `.git` is a `gitdir:` file, so the core's check writes its canary
+in the Git directory the file names and also opens the file itself for
+writing. Every repository lies in the probe's temporary directory.
+
 Locally, with the Codex CLI installed:
 
 ```sh
 node scripts/probes/codex-sandbox-check.mjs
 node scripts/probes/codex-sandbox-check.mjs --expect stop
+node scripts/probes/codex-sandbox-check.mjs --layout worktree
 ```
 
 On macOS the first passes and the second exits with 1.
@@ -225,16 +247,23 @@ In CI, `.github/workflows/codex-sandbox.yml` installs an exact version of
 requests that change the core, the `codex` or contract module, the probes
 or the workflow, and by hand (`workflow_dispatch`) with another
 `major.minor.patch` version as input. The job gets no secrets and is not a
-required check. Each matrix entry sets the expected result: `stop` on
-both Ubuntu runners and `pass` on macOS, passed to the probe as
-`--expect "$PROBE_EXPECT"`. On the GitHub-hosted Ubuntu 24.04 runners the
-Codex CLI sandbox does not start under the default AppArmor restriction
-of unprivileged user namespaces, so the core stops every round there
+required check. The matrix runs each host with each layout (`plain`,
+`worktree`, `submodule`, passed as `--layout "$PROBE_LAYOUT"`), and each
+host sets the expected result: `stop` on both Ubuntu runners and `pass` on
+macOS, passed to the probe as `--expect "$PROBE_EXPECT"`. On the
+GitHub-hosted Ubuntu 24.04 runners the Codex CLI sandbox does not start
+under the default AppArmor restriction of unprivileged user namespaces, so
+the core stops every round there
 ([Linux probes](providers/probes/codex-implementer.md#linux)); the Linux
 jobs pass while that stop is the result, and fail when the sandbox starts
-or the core stops for another reason. Nothing in the workflow runs with
-`sudo`, installs system packages or changes kernel or AppArmor settings.
-On Linux a read-only step first prints `uname -a`, the user namespace
+or the core stops for another reason. A fourth host,
+`ubuntu-latest-userns`, is the `ubuntu-latest` runner with one step before
+the probe, `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`,
+and expects `pass`: it shows the check on a Linux host where the sandbox
+can start. The setting changes only that ephemeral runner, and it is not a
+recommendation for users. Apart from that step nothing in the workflow runs
+with `sudo`, installs system packages or changes kernel or AppArmor
+settings. On Linux a read-only step first prints `uname -a`, the user namespace
 settings, the exit code of `unshare --user --map-root-user` (with and
 without a network namespace), whether `bwrap` is on `PATH`, its version,
 the exit code of `bwrap --unshare-user --unshare-net --ro-bind / / true`

@@ -233,13 +233,13 @@ export default defineProvider({
     ...implementer,
     modes: ['implementation', 'analysis'],
     stability: 'experimental',
-    probedVersions: ['2.1.285'],
+    probedVersions: ['2.1.285', '2.1.311'],
     limitations: [
       'Not for untrusted tasks: experimental implementer.',
       'Bash inside the CLI sandbox can write in .git; the core fingerprints the Git directory around every round and detects the change afterwards instead of preventing it.',
       'Background processes started by Bash run in another process group and can outlive the CLI.',
       "Bash commands in zsh read /etc/zshenv, which the runner does not control, and $ZDOTDIR/.zshenv, where the core points ZDOTDIR to an empty read-only directory; a command that changes its mode could add a .zshenv for later commands of the run. In probes of 2.1.285 a .zshenv exported variables to commands but left the guard directory first on PATH.",
-      'In print mode the CLI ignores invalid settings without an error, so a version that no longer accepts the sandbox settings passed with --settings would drop them silently; preflight accepts any CLI version, on macOS or Linux only. The settings were probed on 2.1.285; another version runs unchecked.',
+      'In print mode the CLI ignores invalid settings without an error, so a version that no longer accepts the sandbox settings passed with --settings would drop them silently; preflight accepts any CLI version, on macOS or Linux only. The settings were probed on 2.1.285 and 2.1.311; another version runs unchecked.',
       'Admin-managed (policy) settings still apply.',
     ],
     security: {

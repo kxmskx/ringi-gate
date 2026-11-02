@@ -673,7 +673,7 @@ are absent); there an invalid value stops the run with
 
 Before the first round the runner reads the version of each role's CLI and
 calls its module's preflight. With `provider: 'codex'` any Codex CLI
-version is accepted (the declarations were probed on 0.160.0 only), and
+version is accepted (the declarations were probed on 0.160.0 and 0.164.0 only), and
 a platform other than macOS or Linux stops the run with
 `IMPLEMENTER_PREFLIGHT_FAILED` (stage `preflight`); a version command
 that fails still stops the run. When a review is
@@ -701,7 +701,7 @@ platform: any Claude Code version is accepted, and a platform without the
 Claude Code command sandbox (anything other than macOS or Linux) stops the
 run with `IMPLEMENTER_PREFLIGHT_FAILED` (stage `preflight`); a version
 command that fails still stops the run. The sandbox settings were probed
-on 2.1.285 only, and the CLI ignores unknown sandbox settings without an
+on 2.1.285 and 2.1.311 only, and the CLI ignores unknown sandbox settings without an
 error, so another version runs unchecked (a limitation of the module). When the
 reviewer uses the same provider as the implementer, the report's `reviewer`
 field gets `warnings: ['SAME_PROVIDER_REVIEW']` (weaker independence; the

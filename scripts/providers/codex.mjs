@@ -112,7 +112,7 @@ function sessionId(stdout) {
 
 // Platforms where the Codex CLI has a command sandbox: macOS and Linux. Any
 // CLI version is accepted (also one that cannot be parsed); the declarations
-// were probed on 0.160.0 only (probedVersions), the version still goes to
+// were probed on 0.160.0 and 0.164.0 only (probedVersions), the version still goes to
 // the environment report, and another version gets UNPROBED_VERSION.
 const CODEX_SANDBOX_PLATFORMS = Object.freeze(['darwin', 'linux']);
 
@@ -136,11 +136,11 @@ export default defineProvider({
     stability: 'experimental',
     limitations: [
       "The CLI has no documented setting that makes it fail when its sandbox cannot start. Before every round the core runs a check command through codex sandbox in the round's mode, without a model and with an empty CODEX_HOME: a write to the core's temporary directory and to the Git directory and a connection to a local listener must be refused, or the run stops with IMPLEMENTER_PREFLIGHT_FAILED.",
-      'The check is a lower bound, not proof for codex exec: another command path, no user configuration, and TMPDIR and /tmp out of the writable roots the round keeps. It passed on 0.164.0 on macOS only (no linked worktree or submodule probed); on a host or version where codex sandbox takes another form or other error codes, every round stops before the implementer (fail-closed). Preflight accepts any version on macOS or Linux; the declarations were probed on 0.160.0.',
+      'The check is a lower bound, not proof for codex exec: another command path, no user configuration, and TMPDIR and /tmp out of the writable roots the round keeps. It passed on 0.164.0 on macOS only, also in a linked worktree and a submodule (.git a file); on a host or version where codex sandbox takes another form or other error codes, every round stops before the implementer (fail-closed). Preflight accepts any version on macOS or Linux; the declarations were probed on 0.160.0 and 0.164.0.',
       'On the GitHub-hosted Ubuntu 24.04 runners, with the default AppArmor restriction of unprivileged user namespaces, the sandbox of Codex CLI 0.164.0 does not start, with the bundled or the distribution bwrap, so the sandbox check stops every round with IMPLEMENTER_PREFLIGHT_FAILED. No declaration was checked on Linux; a Linux host where the sandbox starts was not probed.',
       'The Git directory is not fingerprinted: the workspace-write sandbox keeps .git read-only as documented by Codex, and the sandbox check before every round confirms that a write to the Git directory is refused.',
       'Codex system (admin) configuration still applies.',
-      "Commands run in a non-login shell, and the core sets ZDOTDIR to an empty private directory, so zsh skips the user's .zshenv; it still reads /etc/zshenv, where a PATH change puts the real command before the guard (shown with a .zshenv on 0.160.0), and what it exports reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command.",
+      "Commands run in a non-login shell, and the core sets ZDOTDIR to an empty private directory, so zsh skips the user's .zshenv; it still reads /etc/zshenv, where a PATH change puts the real command before the guard (shown with a .zshenv on 0.160.0), and what it exports reaches every command. Only zsh was probed, not other shells in SHELL. Two directories of the CLI come before the guard directory on PATH; on 0.160.0 they hold no guarded command, and on 0.164.0 the guard git still came first.",
     ],
     security: {
       noApprovalPrompts: enforced('-a never'),
@@ -166,6 +166,6 @@ export default defineProvider({
     sessionId,
     preflight,
     sandboxCheckArgs,
-    probedVersions: ['0.160.0'],
+    probedVersions: ['0.160.0', '0.164.0'],
   },
 });

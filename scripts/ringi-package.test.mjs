@@ -436,35 +436,48 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
   ])
     assert.ok(text.includes(`\n      - ${path}\n`), path);
   assert.match(text, /^ {8}default: '0\.164\.0'$/m);
-  // The probe must stop on the Linux runners and pass on macOS.
+  // Every host with every layout. The probe must stop on the Linux runners
+  // and pass on macOS, and pass on ubuntu-latest only with the user namespace
+  // restriction lifted.
   assert.ok(
     text.includes(
       [
         '      matrix:',
+        '        host: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, ubuntu-latest-userns]',
+        '        layout: [plain, worktree, submodule]',
         '        include:',
-        '          - os: ubuntu-latest',
+        '          - host: ubuntu-latest',
+        '            os: ubuntu-latest',
         '            expect: stop',
-        '          - os: ubuntu-24.04-arm',
+        '          - host: ubuntu-24.04-arm',
+        '            os: ubuntu-24.04-arm',
         '            expect: stop',
-        '          - os: macos-latest',
+        '          - host: macos-latest',
+        '            os: macos-latest',
+        '            expect: pass',
+        '          - host: ubuntu-latest-userns',
+        '            os: ubuntu-latest',
         '            expect: pass',
         '    env:',
       ].join('\n'),
     ),
     'matrix',
   );
-  assert.equal([...text.matchAll(/expect: /g)].length, 3);
+  assert.equal([...text.matchAll(/expect: /g)].length, 4);
+  assert.equal([...text.matchAll(/^ +(?:- )?host: /gm)].length, 5);
+  assert.equal([...text.matchAll(/^ +(?:- )?(?:os|layout): /gm)].length, 5);
   assert.match(text, /^ {6}fail-fast: false$/m);
   assert.match(text, /^ {4}timeout-minutes: \d+$/m);
   assert.doesNotMatch(text, /continue-on-error/);
-  // Expressions only in the job name, the runner and the two variables.
+  // Expressions only in the job name, the runner and the three variables.
   assert.deepEqual(
     text.split('\n').filter((line) => line.includes('${{')).map((line) => line.trim()),
     [
-      'name: codex sandbox check (${{ matrix.os }})',
+      'name: codex sandbox check (${{ matrix.host }}, ${{ matrix.layout }})',
       'runs-on: ${{ matrix.os }}',
       "CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}",
       'PROBE_EXPECT: ${{ matrix.expect }}',
+      'PROBE_LAYOUT: ${{ matrix.layout }}',
     ],
   );
   assert.doesNotMatch(text, /latest"|@latest|codex@\$\{/);
@@ -473,8 +486,23 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
   assert.equal([...text.matchAll(/npm (?:install|i) /g)].length, 1);
   assert.match(
     text,
-    /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs --expect "\$PROBE_EXPECT"\n$/,
+    /\n {6}- name: Sandbox check\n {8}run: node scripts\/probes\/codex-sandbox-check\.mjs --expect "\$PROBE_EXPECT" --layout "\$PROBE_LAYOUT"\n$/,
   );
+  // One step changes a kernel setting: the AppArmor restriction of
+  // unprivileged user namespaces, lifted with sudo only in the
+  // ubuntu-latest-userns rows, before the diagnostics and the probe.
+  const lift = [
+    '      - name: Lift the user namespace restriction (this runner only)',
+    "        if: matrix.host == 'ubuntu-latest-userns'",
+    '        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0',
+    '',
+  ].join('\n');
+  const liftIndex = text.indexOf(`\n${lift}`);
+  assert.ok(liftIndex > text.indexOf('      - run: codex --version\n'), 'restriction step');
+  assert.ok(liftIndex < text.indexOf('- name: Linux namespace diagnostics'));
+  assert.equal(text.split(lift).length, 2);
+  assert.equal([...text.matchAll(/sudo|sysctl/g)].length, 2);
+  const withoutLift = text.replace(lift, '');
   // The namespace diagnostics run on Linux only, before the probe, read
   // only, and turn on the probe's diagnostics for the steps after them.
   const diagnostics = text.match(
@@ -487,9 +515,9 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
     diagnostics[1],
     /^ {10}status=0\n {10}bwrap --unshare-user --unshare-net --ro-bind \/ \/ true \|\| status=\$\?\n/m,
   );
-  // Nothing in the workflow runs with elevated rights, installs system
-  // packages or changes kernel or AppArmor settings.
-  assert.doesNotMatch(text, /sudo|apt|sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
+  // Apart from that step, nothing in the workflow runs with elevated rights,
+  // installs system packages or changes kernel or AppArmor settings.
+  assert.doesNotMatch(withoutLift, /sudo|apt|sysctl|apparmor_parser|aa-|systemctl|> *\/proc|tee /);
   assert.equal([...text.matchAll(/GITHUB_ENV/g)].length, 1);
   // The version check runs before the installation and accepts only
   // major.minor.patch.
@@ -520,6 +548,99 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
     env: { PATH: process.env.PATH },
   });
   assert.equal(unset.status, 1);
+});
+
+// A stand-in codex for the sandbox probe. sandbox: 'holds' answers the
+// core's check without running it, as a sandbox that refuses every attempt
+// would (and reports on stderr whether .git in its working directory is a
+// file); 'missing' exits with 1 without output, as a sandbox that cannot
+// start.
+async function createFakeCodex(directory, sandbox) {
+  await mkdir(directory, { recursive: true });
+  const script = join(directory, 'fake-codex.cjs');
+  await writeFile(
+    script,
+    [
+      "const fs = require('node:fs');",
+      'const args = process.argv.slice(2);',
+      "if (args[0] === '--version') { console.log('codex-cli 0.0.0'); process.exit(0); }",
+      "if (args[0] !== 'sandbox') process.exit(64);",
+      `if (${JSON.stringify(sandbox)} === 'missing') process.exit(1);`,
+      "const command = args.slice(args.indexOf('--') + 1);",
+      'const [, , , nonce, outside, git, port, pointer] = command;',
+      "const dotGit = fs.lstatSync('.git').isFile() ? 'file' : 'directory';",
+      "console.error(`fake codex: .git ${dotGit}, pointer ${pointer === undefined ? 'none' : pointer.endsWith('/.git') ? '.git' : 'other'}, Git directory ${fs.statSync(require('node:path').dirname(git)).isDirectory() ? 'present' : 'missing'}`);",
+      "const result = { outside: 'EPERM', git: 'EPERM' };",
+      "if (pointer !== undefined) result.pointer = 'EPERM';",
+      "result.network = 'ECONNREFUSED';",
+      'console.log(`RINGI-SANDBOX-CHECK ${nonce} ${JSON.stringify(result)}`);',
+      '',
+    ].join('\n'),
+  );
+  await writeFile(
+    join(directory, 'codex'),
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`,
+  );
+  await chmod(join(directory, 'codex'), 0o755);
+  return directory;
+}
+
+test('codex sandbox probe: --layout builds a plain repository, a linked worktree or a submodule, runs the check there and removes its directory; --expect stop and bad options', async () => {
+  const workspace = await temporaryDirectory('ringi-sandbox-probe-test-');
+  try {
+    const probe = join(runnerRoot, 'scripts', 'probes', 'codex-sandbox-check.mjs');
+    const holds = await createFakeCodex(join(workspace, 'holds'), 'holds');
+    const missing = await createFakeCodex(join(workspace, 'missing'), 'missing');
+    const temp = join(workspace, 'tmp');
+    await mkdir(temp);
+    const run = (bin, args) =>
+      spawnSync(process.execPath, [probe, ...args], {
+        encoding: 'utf8',
+        env: {
+          PATH: `${bin}:${dirname(realGit)}:/usr/bin:/bin`,
+          HOME: workspace,
+          TMPDIR: temp,
+        },
+        timeout: 60_000,
+      });
+    for (const [layout, dotGit] of [
+      ['plain', 'directory'],
+      ['worktree', 'file'],
+      ['submodule', 'file'],
+    ]) {
+      const child = run(holds, ['--layout', layout]);
+      assert.equal(child.status, 0, `${layout}: ${child.stdout}${child.stderr}`);
+      assert.match(child.stdout, new RegExp(`^layout=${layout}$`, 'm'));
+      assert.match(child.stdout, new RegExp(`\\(\\.git: ${dotGit}; Git directory: <base>/`));
+      const pointer = dotGit === 'file' ? '.git' : 'none';
+      assert.equal(
+        child.stdout.split(`fake codex: .git ${dotGit}, pointer ${pointer}, Git directory present`).length,
+        3,
+        layout,
+      );
+      assert.match(child.stdout, /^implementation: pass\nanalysis: pass\nexpected: pass \(met\)$/m);
+      assert.deepEqual(await readdir(temp), [], layout);
+    }
+    assert.match(run(holds, []).stdout, /^layout=plain$/m);
+    const stopped = run(missing, ['--expect', 'stop', '--layout', 'submodule']);
+    assert.equal(stopped.status, 0, stopped.stdout);
+    assert.match(stopped.stdout, /^expected: stop: sandbox did not start \(met\)$/m);
+    assert.equal(run(missing, ['--layout', 'worktree']).status, 1);
+    assert.equal(run(holds, ['--expect', 'stop', '--layout', 'worktree']).status, 1);
+    for (const args of [
+      ['--layout'],
+      ['--layout', 'bare'],
+      ['--layout', 'plain', '--layout', 'plain'],
+      ['--expect', 'maybe'],
+    ]) {
+      const child = run(holds, args);
+      assert.equal(child.status, 2, args.join(' '));
+      assert.match(child.stderr, /^usage: codex-sandbox-check\.mjs .*--layout <plain\|worktree\|submodule>/);
+    }
+    assert.deepEqual(await readdir(temp), []);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });
 
 // Stand-in programs: git and node (the real ones), and agent CLIs that only

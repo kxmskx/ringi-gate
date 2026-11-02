@@ -19690,7 +19690,7 @@ test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning i
     assert.equal(Object.hasOwn(probed.report.reviewer, 'warnings'), false);
     // Unprobed and unreadable versions: a warning per role, the same status.
     for (const versions of [
-      { codex: 'codex-cli 0.164.0', claude: '2.1.290 (Claude Code)' },
+      { codex: 'codex-cli 0.165.0', claude: '2.1.290 (Claude Code)' },
       { codex: 'codex-cli 0.160.0-alpha.2', claude: 'unknown' },
     ]) {
       await clean();
@@ -19720,7 +19720,7 @@ test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning i
     let stopped;
     await assert.rejects(
       runFixture(directory, {
-        runner: versionRunner({ codex: 'codex-cli 0.164.0' }),
+        runner: versionRunner({ codex: 'codex-cli 0.165.0' }),
         claudeReview: async () => requestChanges(1),
         workflow: { maxRounds: 1 },
       }),
@@ -19733,16 +19733,26 @@ test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning i
     assert.equal(stopped.report.code, 'MAX_ROUNDS');
     assert.deepEqual(stopped.report.implementer.warnings, ['UNPROBED_VERSION']);
     assert.equal(Object.hasOwn(stopped.report.reviewer, 'warnings'), false);
-    // claude in both roles on 2.1.311: probed for the reviewer only; the
-    // same-provider warning comes first.
+    // claude in both roles on 2.1.311: probed in both roles, so only the
+    // same-provider warning.
     await clean();
     const { report: claudeBoth } = await runFixture(directory, {
       runner: claudeVersionRunner('2.1.311 (Claude Code)'),
       workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
     });
     assert.equal(claudeBoth.status, 'APPROVE');
-    assert.deepEqual(claudeBoth.implementer.warnings, ['UNPROBED_VERSION']);
+    assert.equal(Object.hasOwn(claudeBoth.implementer, 'warnings'), false);
     assert.deepEqual(claudeBoth.reviewer.warnings, ['SAME_PROVIDER_REVIEW']);
+    // On 2.1.290, probed in neither role: the same-provider warning comes
+    // first.
+    await clean();
+    const { report: claudeUnprobed } = await runFixture(directory, {
+      runner: claudeVersionRunner('2.1.290 (Claude Code)'),
+      workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
+    });
+    assert.equal(claudeUnprobed.status, 'APPROVE');
+    assert.deepEqual(claudeUnprobed.implementer.warnings, ['UNPROBED_VERSION']);
+    assert.deepEqual(claudeUnprobed.reviewer.warnings, ['SAME_PROVIDER_REVIEW', 'UNPROBED_VERSION']);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -19756,8 +19766,11 @@ test('probedVersions: contract field, version reading and conformance', () => {
     validateProviderModule,
   } = contractExports;
   // Built-in values.
-  assert.deepEqual(codexModuleExports.default.implementer.probedVersions, ['0.160.0']);
-  assert.deepEqual(claudeModuleExports.default.implementer.probedVersions, ['2.1.285']);
+  assert.deepEqual(codexModuleExports.default.implementer.probedVersions, ['0.160.0', '0.164.0']);
+  assert.deepEqual(claudeModuleExports.default.implementer.probedVersions, [
+    '2.1.285',
+    '2.1.311',
+  ]);
   assert.deepEqual(claudeModuleExports.default.reviewer.probedVersions, [
     '2.1.285',
     '2.1.311',
@@ -19782,7 +19795,8 @@ test('probedVersions: contract field, version reading and conformance', () => {
     assert.equal(readCliVersion(output), version, JSON.stringify(output));
   const codexImplementer = codexModuleExports.default.implementer;
   assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.160.0'), true);
-  assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.164.0'), false);
+  assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.164.0'), true);
+  assert.equal(isProbedVersion(codexImplementer, 'codex-cli 0.165.0'), false);
   assert.equal(isProbedVersion(codexImplementer, 'not a version'), false);
   // A role without the field: no list, no warning.
   assert.equal(Object.hasOwn(exampleProvider.implementer, 'probedVersions'), false);

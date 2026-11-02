@@ -101,6 +101,7 @@ starts: an unknown key, at the top level or inside any section, is
 - `locale`: [profile.md](profile.md#locale).
 - `reviewLanes`: [profile.md](profile.md#reviewlanes).
 - `routing`: [profile.md](profile.md#routing).
+- `prompts`: [profile.md](profile.md#prompts).
 - `providerModules`: [profile.md](profile.md#providermodules).
 - `ci`: [profile.md](profile.md#ci); read only by `ringi ci`.
 <!-- /contract:profile-keys -->
@@ -111,8 +112,28 @@ reserved for later (any key of `routing` other than `rules`, any key of
 `ci` other than `docsPaths`, `lanes` and `review`, any lane of `ci.lanes`
 or `ci.review.profiles` other than `docs` and `full`, any key of
 `ci.review` other than `profiles`, `maxAttempts`, `timeoutMinutes` and
-`credentials`, a cost limit among them) stay `INVALID_CONFIGURATION` until
-a version defines them.
+`credentials`, a cost limit among them, any key of `prompts` other than
+`implementer` and `reviewer`, any key of a role in `prompts` other than
+`guidance`) stay `INVALID_CONFIGURATION` until a version defines them.
+
+`prompts` ([profile.md](profile.md#prompts)) has the shape
+`{ implementer?: { guidance }, reviewer?: { guidance } }`, at least one
+role, `guidance` a string of 1 to 4000 characters of valid Unicode, not
+only white space, with no control character but `\n` and no U+2028 or
+U+2029, taken only from the profile.
+The contract fixes where the guidance goes and what it cannot change, not
+the wording around it: in the `implementation` mode each role's prompts get
+its guidance in a section of its own after the fixed rules that precede the
+task and right before the original task (the fixed line about the JSON
+report still follows the task) (for a review lane, before its focus line and
+context package), each line quoted with `> `, between a fixed opening that
+names what the guidance does not change (the phase ownership contract, the
+task mode, the scope of the original task, the ban on Git operations and
+publication, the result schema, the zero findings policy, the reviewer's
+read-only rules, the review lanes) and a fixed closing that gives every
+rule above precedence. The `analysis` mode takes no guidance. No version
+of 1.x lets the profile replace or remove a fixed rule of a prompt. Without
+`prompts` the prompts are unchanged.
 
 Names in `routing.rules` share one namespace with the task classes: a rule
 named after a class is that class's rule, and any other name is an
@@ -163,6 +184,7 @@ fields:
 - `implementer`, `reviewer`: the roles.
 - `sol`, `review`: aliases of the roles (see below).
 - `routing`: with `routing` in the profile.
+- `promptGuidance`: with `prompts` in the profile.
 - `checkpoint`, `resumedFrom`: with `--checkpoint` or `--resume`.
 - `ledger`: every run with a run directory.
 - `runner`, `projectProfile`: fingerprints.
@@ -407,7 +429,10 @@ forbidden argument lists do today.
 
 These may change in any version:
 
-- the writer and reviewer prompts (`scripts/agent-review-prompts.mjs`);
+- the writer and reviewer prompts (`scripts/agent-review-prompts.mjs`),
+  the wording of the project guidance section included; the shape of
+  `prompts` and the place of the section are in the contract (see
+  [Profile](#profile));
 - the layout and contents of `.review-context/` in the reviewer's snapshot;
 - the terminal dashboard, `--verbose` output and the events presenters
   receive;

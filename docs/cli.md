@@ -218,6 +218,13 @@ The same run as `node scripts/agent-review-loop.mjs` (see
   from `HEAD` or are not committed at the start of the run (always
   `committed: true` with `ringi run`, see below).
 
+With [`prompts`](profile.md#prompts) in the profile, the report and the
+dry-run plan carry `promptGuidance`: the SHA-256 of the guidance each role's
+prompts get (or `null`), never its text. `--dry-run` shows only whether
+guidance is set and which one; the text is in the committed profile, and
+leaving it out keeps the plan, which CI logs may print, free of the
+project's instructions.
+
 Only a committed profile runs. Before the import, the runner hashes the
 bytes of `ringi.config.mjs` on disk as a Git blob and compares the id with
 the blob of `HEAD:ringi.config.mjs` and with its index entry (not
@@ -463,7 +470,9 @@ read-only:
   is `preflight`, and with the key every `mac` matches;
 - the report of the run: `report.ledger` names this file, its number of events
   and its last line's hash, the run id, the `runner` and `projectProfile`
-  fingerprints match the `fingerprints` event, and the last event is the
+  fingerprints match the `fingerprints` event, so does `promptGuidance`
+  (both have it with the same hashes, or neither has it; see
+  [profile.md](profile.md#prompts)), and the last event is the
   `result` with the report's `status`;
 - for a resumed run, the ledger of the run it resumed names that run, verifies
   and ends at the first line's `prev`.

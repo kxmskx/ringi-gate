@@ -87,6 +87,22 @@ on.
   the names of the changed files, each a JSON string on its own line with
   U+0085, U+2028 and U+2029 escaped too. File names are working tree
   content and stay untrusted.
+- `prompts` (see [profile.md](docs/profile.md#prompts)) adds the project's
+  guidance to the writer's and the reviewer's prompts. It is trusted
+  configuration, not a security boundary: like a lane's focus, it is text
+  of the profile, which is trusted code. The guidance is only a string of
+  the profile: the runner never reads it from a file, a path, an
+  environment variable or the working tree (a profile that builds the
+  string from a file makes that file trusted configuration too), and `ringi ci review` takes it
+  from the base's profile. It cannot replace or remove a fixed rule: it
+  goes into a section of its own after the fixed rules, each line quoted
+  with `> `, between a fixed opening that names what it does not change
+  and a fixed closing that gives every rule above precedence. The text
+  limits (no control character but a line feed, no U+2028 or U+2029,
+  4000 characters) guard against mistakes. What a prompt says does not
+  decide the result: the read-only snapshot, the gates, the Git guard and
+  the zero findings policy are enforced by the runner whatever the
+  guidance says. The report and the ledger hold only its SHA-256.
 - `routing` (see [profile.md](docs/profile.md#routing)) does not widen any
   permission or budget beyond the profile. Its only key is `rules`; a rule
   either belongs to a class by its name or is an escalation rule that
@@ -202,7 +218,8 @@ secret, the reviewer CLI's credential. Its threat model is in
   gets no secrets (its review is red, never skipped). Nothing more is
   promised.
 - In the job with the secret, `ringi-gate`, `ringi.config.mjs` and the
-  prompts come from a checkout of the base commit, installed without
+  prompts (the project guidance of `prompts` included) come from a
+  checkout of the base commit, installed without
   install scripts; the pull request's tree is data, never installed or run.
   A pull request that changes the profile, agent instructions or settings
   (`AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`),

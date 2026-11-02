@@ -197,6 +197,12 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   the aggregator requires the review and can compare the lane jobs' checks;
   the example workflow uploads the evidence as an artifact with a pinned
   `actions/upload-artifact`.
+- Prompts as configuration, part 1 (unreleased): `prompts` in the profile
+  (opt-in) adds the project's guidance for the writer and the reviewer in a
+  quoted section of its own before the original task, after every fixed
+  rule, which it cannot change; the report, the dry-run plan and the ledger
+  carry only its SHA-256 (`promptGuidance`), and `ringi verify` checks it.
+  See [docs/profile.md](docs/profile.md#prompts).
 
 ## Later (after 1.0, not implemented)
 - Provider modules for other agent CLIs, each with a checked security
@@ -229,7 +235,9 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   reviewer: whether a project `.claude/settings.json` in the reviewed copy
   reaches the reviewer's environment, and evidence of the available tools
   beyond the model's report.
-- Prompts as configuration (today a profile only chooses their locale).
+- Prompts as configuration, part 2: guidance for the `analysis` mode,
+  if a project needs it (the key stays reserved). Part 1 is under
+  Unreleased in the changelog.
 - Tests split into a generic part and synthetic example repositories
   (Node.js/pnpm first).
 - After the first publication: npm trusted publishing configured for the

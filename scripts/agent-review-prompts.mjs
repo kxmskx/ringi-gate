@@ -4,7 +4,9 @@
 // locale, task mode and writer model already validated, together with the
 // analysis contract constants it enforces, so the texts here cannot diverge
 // from the checks in the core. Profiles cannot override prompts (deliberately,
-// for safety); they only choose the locale.
+// for safety): they choose the locale and may add the project's guidance for
+// a role (projectGuidanceSection), which goes into a section of its own and
+// changes no fixed text.
 
 export const SOL_PHASE_OWNERSHIP_CONTRACT = `KONTRAKT WŁASNOŚCI FAZ:
 - Sol implementuje zaakceptowany zakres, reprodukuje wszystkie przekazane findings i może wykonywać dostępne kontrole celowane.
@@ -59,25 +61,45 @@ const ANALYSIS_WRITER_PHASE_OWNERSHIP_CONTRACT_EN = `PHASE OWNERSHIP CONTRACT �
 - A real ambiguity of a requirement, or a security, business or legal decision may still require NEEDS_HUMAN. Do not classify other errors as environmental based on a loose textual similarity.`;
 
 // The locale, taskMode and codexModel (the implementer's model) must already
-// be resolved by the core.
-export function buildCodexPrompt({ locale, ...options }) {
-  return promptBuilder(locale, buildCodexPromptEn, buildCodexPromptPl)(options);
+// be resolved by the core. guidance: the implementer's guidance of the
+// profile's prompts, validated by the core and passed only in the
+// implementation mode (see projectGuidanceSection). Without it the prompt is
+// exactly the fixed one.
+export function buildCodexPrompt({ locale, guidance, ...options }) {
+  return promptBuilder(
+    locale,
+    buildCodexPromptEn,
+    buildCodexPromptPl,
+  )({
+    ...options,
+    projectGuidance: projectGuidanceSection(locale, guidance, options.taskMode),
+  });
 }
 
-// The locale and taskMode must already be resolved by the core. lane: a
-// review lane ({ id, focus }) validated by the core; its focus is appended to
-// the fixed prompt and changes none of its rules. Without a lane the prompt
-// is exactly the fixed one. lanePackage: the context package of a lane with
-// paths, built by the core ({ paths, files, laneFiles, diffPath, diffHash }:
-// the snapshot file with the lane's part of the diff and its SHA-256, never
-// the diff itself); it follows the lane's addendum. Without it the lane's
-// prompt is unchanged.
-export function buildClaudePrompt({ locale, lane, lanePackage, ...options }) {
+// The locale and taskMode must already be resolved by the core. guidance:
+// the reviewer's guidance of the profile's prompts, as for buildCodexPrompt.
+// lane: a review lane ({ id, focus }) validated by the core; its focus is
+// appended to the fixed prompt and changes none of its rules. Without a lane
+// the prompt is exactly the fixed one. lanePackage: the context package of a
+// lane with paths, built by the core ({ paths, files, laneFiles, diffPath,
+// diffHash }: the snapshot file with the lane's part of the diff and its
+// SHA-256, never the diff itself); it follows the lane's addendum. Without it
+// the lane's prompt is unchanged.
+export function buildClaudePrompt({
+  locale,
+  guidance,
+  lane,
+  lanePackage,
+  ...options
+}) {
   const prompt = promptBuilder(
     locale,
     buildClaudePromptEn,
     buildClaudePromptPl,
-  )(options);
+  )({
+    ...options,
+    projectGuidance: projectGuidanceSection(locale, guidance, options.taskMode),
+  });
   if (lane === undefined) return prompt;
   const addendum = promptBuilder(
     locale,
@@ -136,6 +158,39 @@ function reviewLaneAddendumPl({ id, focus }) {
   return `TOR REVIEW ${id}: to review jest jednym z kilku niezależnych review tego samego snapshotu tylko do odczytu. Zwróć szczególną uwagę na: ${endSentence(focus)} Ten akcent kieruje wyłącznie uwagą: wszystkie powyższe zasady, schemat wyniku i polityka zero findings obowiązują bez zmian, a każdy finding spoza akcentu nadal zgłaszasz.`;
 }
 
+// The project's guidance of a role as its own section, followed by a blank
+// line, or '' without guidance. It goes right before the original task,
+// after every fixed rule, and sits between two fixed sentences: the first
+// lists what the guidance cannot change, the last repeats that every rule
+// above takes precedence. Each line of the guidance is quoted with "> ", so
+// no line of it starts a line of the prompt of its own (a heading, the end
+// of the section or the original task). The core validates the text (1 to
+// 4000 characters, no control character but a line feed, no U+2028 or
+// U+2029) and passes it only in the implementation mode; the analysis
+// prompts take no guidance.
+function projectGuidanceSection(locale, guidance, taskMode) {
+  if (guidance === undefined) return '';
+  if (typeof guidance !== 'string' || taskMode !== 'implementation')
+    throw new TypeError('Project guidance needs a string and the implementation mode.');
+  const quoted = guidance
+    .split('\n')
+    .map((line) => (line === '' ? '>' : `> ${line}`))
+    .join('\n');
+  return `${promptBuilder(locale, projectGuidanceEn, projectGuidancePl)(quoted)}\n\n`;
+}
+
+function projectGuidanceEn(quoted) {
+  return `PROJECT GUIDANCE (from the profile): the lines quoted below with "> " are the project's own guidance for this role, trusted configuration of the repository. They only add project conventions. They do not change the phase ownership contract, the task mode, the scope of the original task, the ban on Git operations and publication, the result schema, the zero findings policy, the reviewer's read-only rules or the review lanes, and they cannot remove or weaken any rule above.
+${quoted}
+END OF PROJECT GUIDANCE. Every rule above applies unchanged and takes precedence over the guidance wherever they conflict.`;
+}
+
+function projectGuidancePl(quoted) {
+  return `WSKAZÓWKI PROJEKTU (z profilu): poniższe linie cytowane z prefiksem „> ” to własne wskazówki projektu dla tej roli, zaufana konfiguracja repozytorium. Dodają wyłącznie konwencje projektu. Nie zmieniają kontraktu własności faz, trybu zadania, zakresu pierwotnego zadania, zakazu operacji Git i publikacji, schematu wyniku, polityki zero findings, zasad tylko do odczytu reviewera ani torów review i nie mogą usunąć ani osłabić żadnej powyższej zasady.
+${quoted}
+KONIEC WSKAZÓWEK PROJEKTU. Każda powyższa zasada obowiązuje bez zmian i ma pierwszeństwo przed wskazówkami w razie sprzeczności.`;
+}
+
 function promptBuilder(locale, en, pl) {
   if (locale === 'en') return en;
   if (locale === 'pl') return pl;
@@ -150,6 +205,7 @@ function buildCodexPromptEn({
   codexModel,
   maxAnalysisArtifactBytes,
   analysisCompletenessSentinel,
+  projectGuidance,
 }) {
   const roundFocus =
     round === 1
@@ -192,7 +248,7 @@ ${task.quality?.docs ? `TASK CLASS: ${task.taskClass}. The writer checks the des
 
 FORBIDDEN during the round: installing, updating, adding or removing dependencies; pnpm install/add/remove/update and their aliases; changing the lockfile, packageManager or a workspace configuration that requires a reinstall; using npm, npx, yarn, yarnpkg, bun or bunx, also to run scripts; bypassing any wrapper through Corepack or a direct or absolute path to package manager binaries. If the accepted task requires a change to dependency inputs, ${taskMode === 'analysis' ? 'write nothing and return BLOCKED' : 'keep the needed changes in the working tree, install nothing and return BLOCKED'} stating that a human must make the decision and do the installation.
 
-ORIGINAL TASK (${task.path}):
+${projectGuidance}ORIGINAL TASK (${task.path}):
 ---
 ${task.markdown}
 ---
@@ -213,6 +269,7 @@ function buildClaudePromptEn({
   integrityPath,
   expectedConfirmation,
   analysisFindingFile,
+  projectGuidance,
 }) {
   const correctionContext = correctionContextPath
     ? `This is a follow-up review. The previous findings with verified findingId values, stable technical fields and the writer's formal responses are in ${correctionContextPath}. Reuse an earlier findingId only when the file, anchor and category fields match. Leave a new problem without findingId; the runner assigns it from those fields.`
@@ -264,7 +321,7 @@ ${task.quality?.docs ? `Class ${task.taskClass}: assess the documentation contra
 
 Return only a result that conforms to the schema. For each finding give severity, the normalized repository path file, a stable symbol or semantic anchor, a precise technical category, the diagnostic place location, the impact and the recommendation. Do not use a line number as the anchor. The same file, anchor and category mean the same problem despite a change of severity, text or line; two different problems must differ in category. The verdict is the assessment of the reviewer; the runner computes the result independently under the zero findings policy. Use APPROVE only with an empty findings list at all levels BLOCKER/HIGH/MEDIUM/LOW. Use REQUEST_CHANGES for any finding regardless of severity. In checks give the reads and checks you performed, without presenting the writer's claims as runner results. confirmedNoChanges=true only if you changed nothing.
 
-ORIGINAL TASK:
+${projectGuidance}ORIGINAL TASK:
 ---
 ${task.markdown}
 ---`;
@@ -279,6 +336,7 @@ function buildCodexPromptPl({
   codexModel,
   maxAnalysisArtifactBytes,
   analysisCompletenessSentinel,
+  projectGuidance,
 }) {
   const roundFocus =
     round === 1
@@ -323,7 +381,7 @@ ${task.quality?.docs ? `KLASA ZADANIA: ${task.taskClass}. Executor sprawdza opis
 
 ZABRONIONE podczas rundy: instalowanie, aktualizowanie, dodawanie albo usuwanie zależności; pnpm install/add/remove/update i ich aliasy; zmiana lockfile, packageManager lub konfiguracji workspace wymagającej ponownej instalacji; używanie npm, npx, yarn, yarnpkg, bun lub bunx, w tym do uruchamiania skryptów; obchodzenie któregokolwiek wrappera przez Corepack albo bezpośrednią/absolutną ścieżkę do binariów package managerów. Jeżeli zaakceptowane zadanie wymaga zmiany wejść zależności, ${taskMode === 'analysis' ? 'nie zapisuj niczego i zwróć BLOCKED' : 'zachowaj potrzebne zmiany w working tree, nie instaluj niczego i zwróć BLOCKED'} z informacją, że decyzję oraz instalację musi wykonać człowiek.
 
-ORYGINALNE ZADANIE (${task.path}):
+${projectGuidance}ORYGINALNE ZADANIE (${task.path}):
 ---
 ${task.markdown}
 ---
@@ -344,6 +402,7 @@ function buildClaudePromptPl({
   integrityPath,
   expectedConfirmation,
   analysisFindingFile,
+  projectGuidance,
 }) {
   const correctionContext = correctionContextPath
     ? `To jest kolejne review. Poprzednie findings ze zweryfikowanymi findingId, stabilnymi polami technicznymi oraz formalne odpowiedzi wykonawcy znajdują się w ${correctionContextPath}. Użyj wcześniejszego findingId tylko przy zgodnych polach file, anchor i category. Nowy problem pozostaw bez findingId; runner nada go z tych pól.`
@@ -395,7 +454,7 @@ ${task.quality?.docs ? `Klasa ${task.taskClass}: oceń kontrakt dokumentacji ze 
 
 Zwróć wyłącznie wynik zgodny ze schematem. Dla każdego findingu podaj severity, znormalizowaną ścieżkę repo file, stabilny symbol lub semantyczny anchor, precyzyjną techniczną category, miejsce diagnostyczne location, skutek i rekomendację. Nie używaj numeru linii jako anchoru. Te same file, anchor i category oznaczają ten sam problem mimo zmiany severity, tekstu lub linii; dwa różne problemy muszą różnić się category. Verdict jest oceną reviewera; runner niezależnie obliczy wynik według polityki zero findings. APPROVE stosuj wyłącznie przy pustej liście findings wszystkich poziomów BLOCKER/HIGH/MEDIUM/LOW. REQUEST_CHANGES stosuj przy każdym findingu niezależnie od severity. W checks podaj wykonane odczyty/kontrole, bez przedstawiania deklaracji wykonawcy jako wyniku runnera. confirmedNoChanges=true tylko jeśli niczego nie zmieniłeś.
 
-ORYGINALNE ZADANIE:
+${projectGuidance}ORYGINALNE ZADANIE:
 ---
 ${task.markdown}
 ---`;

@@ -963,6 +963,32 @@ function isReviewLaneFocus(value) {
   );
 }
 
+// Project guidance (prompts): optional text of the profile per role,
+// prompts.implementer.guidance and prompts.reviewer.guidance. Any other key,
+// of prompts or of a role, is reserved for later options. The text is a
+// string of the profile only, never a path, a variable or anything of the
+// working tree: 1 to 4000 characters (JavaScript length), well-formed
+// Unicode, not only white space, and no control character (C0, DEL or C1,
+// U+0085 among them) but a line feed, no U+2028 or U+2029. The prompt gets it
+// in a section of its own (agent-review-prompts.mjs); the report and the
+// ledger only its SHA-256 (promptGuidance). Trusted configuration, not a
+// barrier against prompt injection.
+const PROMPTS_KEYS = new Set(['implementer', 'reviewer']);
+const PROMPT_ROLE_KEYS = new Set(['guidance']);
+const MAX_PROMPT_GUIDANCE_LENGTH = 4_000;
+// \p{Zl} is U+2028 and \p{Zp} U+2029.
+const PROMPT_GUIDANCE_REFUSED = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}]/u;
+
+function isPromptGuidance(value) {
+  return (
+    typeof value === 'string' &&
+    value.length <= MAX_PROMPT_GUIDANCE_LENGTH &&
+    value.trim().length > 0 &&
+    value.isWellFormed() &&
+    !PROMPT_GUIDANCE_REFUSED.test(value)
+  );
+}
+
 // The paths of a review lane (its context package): 1 to 32 relative POSIX
 // paths, each a directory prefix (ending with /) or an exact file path,
 // compared by normalized segments and case-sensitively. There is no glob
@@ -5501,6 +5527,9 @@ function codexPrompt({
   findings,
   taskMode = DEFAULT_TASK_MODE,
   codexModel = CODEX_MODEL,
+  // The implementer's project guidance (isPromptGuidance), implementation
+  // mode only; without it the prompt is exactly the fixed one.
+  guidance,
 }) {
   // Order of validation as before the move: model first, then task mode.
   const selectedCodexModel = resolveCodexModel(codexModel);
@@ -5508,6 +5537,7 @@ function codexPrompt({
   // Prompts follow the locale of the run, like its messages.
   return buildCodexPrompt({
     locale: currentLocale(),
+    ...promptGuidanceOption(guidance, selectedTaskMode, 'implementer'),
     task,
     round,
     findings,
@@ -5532,13 +5562,17 @@ function claudePrompt({
   expectedConfirmation,
   lane,
   lanePackage,
+  // The reviewer's project guidance, as for codexPrompt.
+  guidance,
 }) {
+  const selectedTaskMode = resolveTaskMode(taskMode);
   return buildClaudePrompt({
     locale: currentLocale(),
+    ...promptGuidanceOption(guidance, selectedTaskMode, 'reviewer'),
     ...(lane === undefined ? {} : { lane: { id: lane.id, focus: lane.focus } }),
     ...(lane === undefined || lanePackage === undefined ? {} : { lanePackage }),
     task,
-    taskMode: resolveTaskMode(taskMode),
+    taskMode: selectedTaskMode,
     instructionsPath,
     diffPath,
     gatesPath,
@@ -5552,10 +5586,31 @@ function claudePrompt({
   });
 }
 
+// The project guidance of a role as an option of the prompt builders: none
+// without guidance; checked again here because it goes into the prompt, and
+// refused outside the implementation mode (INVALID_CONFIGURATION).
+function promptGuidanceOption(guidance, taskMode, stage) {
+  if (guidance === undefined) return {};
+  if (!isPromptGuidance(guidance) || taskMode !== 'implementation') {
+    throw new AgentWorkflowError(msg('profile.invalid'), {
+      code: 'INVALID_CONFIGURATION',
+      stage,
+    });
+  }
+  return { guidance };
+}
+
+// The SHA-256 of a role's project guidance in the report and the ledger, or
+// null without guidance.
+function promptGuidanceHash(guidance) {
+  return guidance === undefined ? null : sha256Hex(guidance);
+}
+
 // The reviewer's prompt on a snapshot: the input of runClaudeReview, and the
 // prompt whose size the review lane stage reports.
-function reviewerPrompt({ task, taskMode, snapshot, lane, lanePackage }) {
+function reviewerPrompt({ task, taskMode, snapshot, lane, lanePackage, guidance }) {
   return claudePrompt({
+    guidance,
     task,
     taskMode,
     instructionsPath: snapshot.instructionsPath,
@@ -5701,6 +5756,7 @@ const RUNNER_PROFILE_KEYS = new Set([
   ...Object.keys(DEFAULT_RUNNER_PROFILE),
   'ci',
   'createPresenters',
+  'prompts',
   'providerModules',
   'reviewLanes',
   'routing',
@@ -6201,6 +6257,22 @@ function resolveRunnerProfileFields(profile = DEFAULT_RUNNER_PROFILE) {
         });
       }),
     );
+  }
+
+  // Prompts: optional, absent from the default profile; at least one role,
+  // each with exactly its guidance (isPromptGuidance). The roles are kept in
+  // the order implementer, reviewer.
+  if (Object.hasOwn(fields, 'prompts')) {
+    const prompts = record(resolved.prompts, PROMPTS_KEYS);
+    if (Object.keys(prompts).length === 0) invalid();
+    const roles = {};
+    for (const role of PROMPTS_KEYS) {
+      if (!Object.hasOwn(prompts, role)) continue;
+      const entry = record(prompts[role], PROMPT_ROLE_KEYS);
+      if (!isPromptGuidance(entry.guidance)) invalid();
+      roles[role] = Object.freeze({ guidance: entry.guidance });
+    }
+    resolved.prompts = Object.freeze(roles);
   }
 
   // Routing: optional, absent from the default profile; routing.rules is
@@ -8832,7 +8904,13 @@ async function runCodexRound({
   onActivity = () => {},
 }) {
   const selectedTaskMode = resolveTaskMode(taskMode);
-  const { implementer, checkSets } = resolveRunnerProfile(profile);
+  const { implementer, checkSets, prompts } = resolveRunnerProfile(profile);
+  // The implementer's project guidance of the profile, in the
+  // implementation mode only (the analysis prompts take none).
+  const guidance =
+    selectedTaskMode === 'implementation'
+      ? prompts?.implementer?.guidance
+      : undefined;
   const adapter = roleProvider(implementer, 'implementer');
   const selectedCodexModel = resolveCodexModel(
     codexModel === undefined ? implementer.model : codexModel,
@@ -8942,6 +9020,7 @@ async function runCodexRound({
           findings,
           taskMode: selectedTaskMode,
           codexModel: selectedCodexModel,
+          guidance,
         }),
         timeoutMs,
         stage: 'implementer',
@@ -9041,6 +9120,10 @@ async function runClaudeReview({
   lane,
   // The context package of a lane with paths (implementation mode only).
   lanePackage,
+  // The reviewer's project guidance of the profile's prompts
+  // (implementation mode only); checked again because it goes into the
+  // prompt.
+  guidance,
   timeoutMs,
   verbose = false,
   // ringi ci review: the reviewer's credentials (validReviewerCredentials),
@@ -9059,7 +9142,9 @@ async function runClaudeReview({
     (lanePackage !== undefined &&
       (lane === undefined ||
         selectedTaskMode !== 'implementation' ||
-        !isReviewLanePackage(lanePackage, lane.id)))
+        !isReviewLanePackage(lanePackage, lane.id))) ||
+    (guidance !== undefined &&
+      (!isPromptGuidance(guidance) || selectedTaskMode !== 'implementation'))
   ) {
     throw new AgentWorkflowError(msg('profile.invalid'), {
       code: 'INVALID_CONFIGURATION',
@@ -9121,6 +9206,7 @@ async function runClaudeReview({
         snapshot,
         lane,
         lanePackage,
+        guidance,
       }),
       timeoutMs,
       stage: 'reviewer',
@@ -10836,6 +10922,22 @@ async function runWorkflow(options) {
   let projectProfileReport;
   const projectProfileFields = () =>
     projectProfileReport ? { projectProfile: projectProfileReport } : {};
+  // Project guidance (a profile with prompts): set in the preflight once the
+  // task's class is known. The guidance each role's prompts get in this run
+  // (none in the analysis mode, for the implementer with review only, for
+  // the reviewer of a class without review); report field promptGuidance
+  // and the ledger's fingerprints event carry only its SHA-256.
+  let promptGuidance;
+  const promptGuidanceReport = () => ({
+    implementer: promptGuidanceHash(promptGuidance.implementer),
+    reviewer: promptGuidanceHash(promptGuidance.reviewer),
+  });
+  const promptGuidanceFields = () =>
+    promptGuidance ? { promptGuidance: promptGuidanceReport() } : {};
+  const reviewerGuidanceOptions = () =>
+    promptGuidance?.reviewer === undefined
+      ? {}
+      : { guidance: promptGuidance.reviewer };
   // The runner's own files, checked at the same points as the profile once
   // the first check passed (report field runner); their change is the
   // primary stop code, before a change of the profile.
@@ -11150,6 +11252,19 @@ async function runWorkflow(options) {
           stage: 'preflight',
         });
       }
+    }
+    if (selectedProfile.prompts) {
+      const guided = selectedTaskMode === 'implementation';
+      promptGuidance = {
+        implementer:
+          guided && !reviewOnly
+            ? selectedProfile.prompts.implementer?.guidance
+            : undefined,
+        reviewer:
+          guided && quality.independentReviewRequired
+            ? selectedProfile.prompts.reviewer?.guidance
+            : undefined,
+      };
     }
     if (quality.docs)
       await assertDocsCandidate({
@@ -11656,6 +11771,7 @@ async function runWorkflow(options) {
         maxRounds: roundLimit,
         mutations: msg('plan.noMutations'),
         ...routingFields(),
+        ...promptGuidanceFields(),
         ...projectProfileFields(),
         ...runnerFields(),
       };
@@ -11699,6 +11815,7 @@ async function runWorkflow(options) {
       {
         runner: runnerFingerprint.sha256,
         projectProfile: projectProfileReport?.sha256 ?? null,
+        ...promptGuidanceFields(),
       },
       'preflight',
     );
@@ -11960,6 +12077,7 @@ async function runWorkflow(options) {
                   snapshot,
                   lane: { id: lane.id, focus: lane.focus },
                   lanePackage,
+                  ...reviewerGuidanceOptions(),
                 }),
               ),
               diffFiles: lanePackage
@@ -12007,6 +12125,7 @@ async function runWorkflow(options) {
               reviewer,
               reviewAttempt: claudeReview,
               ...reviewerCredentialOptions,
+              ...reviewerGuidanceOptions(),
               lane: { id: lane.id, focus: lane.focus },
               ...(lanePackage === undefined ? {} : { lanePackage }),
               beforeAttempt: serialStateCheck,
@@ -12770,6 +12889,7 @@ async function runWorkflow(options) {
             msg('report.docsApproval'),
           nextStep: quality.remainingAssurance,
           ...routingFields(),
+          ...promptGuidanceFields(),
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
@@ -12865,6 +12985,7 @@ async function runWorkflow(options) {
             reviewer,
             reviewAttempt: claudeReview,
             ...reviewerCredentialOptions,
+            ...reviewerGuidanceOptions(),
             beforeAttempt: () =>
               assertReviewStateUnchanged({
                 runner,
@@ -13163,6 +13284,7 @@ async function runWorkflow(options) {
           nextStep:
             msg('report.nextStep'),
           ...routingFields(),
+          ...promptGuidanceFields(),
           ...projectProfileFields(),
           ...runnerFields(),
           ...checkpointFields(),
@@ -13256,6 +13378,7 @@ async function runWorkflow(options) {
         ? { analysisArtifacts: publicAnalysisArtifacts() }
         : {}),
       ...routingFields(),
+      ...promptGuidanceFields(),
       ...projectProfileFields(),
       ...runnerFields(),
     };
@@ -13459,6 +13582,7 @@ async function runWorkflow(options) {
               ? { analysisArtifacts: publicAnalysisArtifacts() }
               : {}),
             ...routingFields(),
+            ...promptGuidanceFields(),
             ...projectProfileFields(),
             ...runnerFields(),
             ...ledgerFields(),

@@ -419,6 +419,12 @@ before any process starts. In short:
 - **`locale`** (optional): `'en'` (default) or `'pl'`, the language of the
   runner's messages, of the implementer and reviewer prompts and of the
   default task schema.
+- **`prompts`** (optional): the project's own guidance for the implementer
+  and the reviewer (`{ implementer: { guidance }, reviewer: { guidance } }`,
+  a string of up to 4000 characters each). It goes into a quoted section
+  of its own before the task and cannot replace or remove a fixed rule; the
+  report and the ledger carry only its SHA-256. Trusted configuration, not
+  a security boundary; see [docs/profile.md](docs/profile.md#prompts).
 - **`ci`** (optional): the paths of plain documentation and the checks of
   the `docs` and `full` lanes for `ringi ci`, which chooses the lane of a
   pull request in GitHub Actions from its real diff (fail-closed: anything

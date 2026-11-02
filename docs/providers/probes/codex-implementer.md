@@ -7,10 +7,10 @@ for each guarantee the module declares `enforced`. Criterion 3 of
 
 | | |
 | --- | --- |
-| CLI | `codex-cli 0.160.0` (C1 to C15), `codex-cli 0.164.0` (C16 to C27) |
-| Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh`; Linux in CI for L1 to L5 ([Linux](#linux)) |
-| Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15), 2026-10-28 (C16 to C27) |
-| Model | `gpt-6.1-sol`, effort `medium` (C16 to C27: none) |
+| CLI | `codex-cli 0.160.0` (C1 to C15), `codex-cli 0.164.0` (C16 to C36) |
+| Platform | macOS (Darwin 27.0, Apple silicon), user shell `/bin/zsh`; Linux in CI for L1 to L10 ([Linux](#linux)) |
+| Date | 2026-10-26 (C1 to C13), 2026-10-27 (C14, C15), 2026-10-28 (C16 to C27), 2026-11-02 (C28 to C36) |
+| Model | `gpt-6.1-sol`, effort `medium` (C16 to C30: none) |
 | Repository | synthetic: `git init` with one commit in a directory made by `mktemp -d` |
 
 Placeholders: `<base>` is the probe directory, `<repo>` the repository in
@@ -403,6 +403,69 @@ and the connection succeed, the run stops). For Linux see [Linux](#linux);
 the check does not depend on `CODEX_SANDBOX`, which C17 shows on macOS
 only.
 
+### C28 to C30. Sandbox check in a linked worktree and a submodule
+
+On `codex-cli 0.164.0`, 2026-11-02, macOS, no model call:
+`scripts/probes/codex-sandbox-check.mjs --layout <layout>`
+([docs/testing.md](../../testing.md#codex-sandbox-probe)), which runs the
+core's check itself (`internal.runSandboxCheck` with the module's
+`sandboxCheckArgs`, an empty `CODEX_HOME`, the core's listener and
+`process.execPath -e`) in both modes. This answers what C27 could not
+probe.
+
+| Probe | Layout | Git directory of the check | Result, both modes |
+| --- | --- | --- | --- |
+| C28 | `plain` | `<repo>/.git` | Pass: `{"outside":"EPERM","git":"EPERM","network":"EPERM"}`, exit 0. |
+| C29 | `worktree`: `git worktree add` from a synthetic repository `<base>/main` | `<base>/main/.git/worktrees/repo`, named by the `.git` file of `<repo>` | Pass: `{"outside":"EPERM","git":"EPERM","pointer":"EPERM","network":"EPERM"}`, exit 0. |
+| C30 | `submodule`: `<base>/parent/repo`, cloned from a synthetic repository | `<base>/parent/.git/modules/repo` (relative `gitdir:`) | Pass, as C29. |
+
+In C29 and C30 the Seatbelt sandbox refused the write in the Git directory
+the `.git` file names (outside the working directory) and the opening of
+the `.git` file itself for writing (inside the working directory), in
+`workspace-write` and in `read-only`. The probe ran in the system
+temporary directory of macOS and removed it.
+
+### C31 to C36. Rounds on 0.164.0
+
+The rounds of C1 to C3, C6, C7 and C15 repeated on `codex-cli 0.164.0`,
+2026-11-02, with the module's argv (prompt on standard input), the
+executable guard `git` of C8 to C15 first on `PATH` and
+`ZDOTDIR=<zdotdir-empty>`, as the core sets it. The working directory held
+an untracked script that writes a file in the working directory, in
+`<outside-home>` and in the Git directory, runs `curl -sS -m 10 -o
+/dev/null -w %{http_code} https://example.com`, `git status --short`,
+`which -a git`, and prints `PATH` and the `RINGI_PROBE_`, `ZDOTDIR` and
+`CODEX_SANDBOX` variables (C31 to C33), each step followed by its exit
+code. Each prompt asked to run `sh <script> <tag>` once and to return the
+output. C34 to C36 ran in a linked worktree (`<base>/wt`, from `git
+worktree add` in `<base>/main`) and in a submodule (`<base>/parent/sub`,
+cloned from `<base>/source` with `protocol.file.allow=always` for that
+one Git command); there the script also wrote in the Git directory the
+`.git` file names and opened the `.git` file itself for appending. Before
+them the core's check passed in the same layouts (C29, C30; the probe's
+own repositories, not these). Every repository lay under `/private/tmp`.
+
+| Probe | Round | Working directory | Result |
+| --- | --- | --- | --- |
+| C31 | implementation | `<repo>` | Exit 0; one `command_execution` item, `/bin/zsh -c 'sh <script> c31'` (no `-l`), exit code 0: `inside=0`; `<outside-home>` and `.git` "Operation not permitted" (`home=1`, `git=1`); `curl` "Could not resolve host" (`curl=6`); `git status` ran the guard (`RINGI-PROBE-GUARD-GIT args: status --short`, 97); `which -a git` listed `<guard>/git` first; `PATH` was `<codex package>/codex-path:<codex home>/tmp/arg0/<helper>:<guard>:<runner PATH>`; no `RINGI_PROBE_` variable; `CODEX_SANDBOX=seatbelt`, `CODEX_SANDBOX_NETWORK_DISABLED=1`. The `-o` file held `{"token":"<token>","results":"…"}`. |
+| C32 | resume of C31 (`exec resume <ID>`) | `<repo>` | Exit 0; `thread.started` with the thread ID of C31; the `-o` file held the token of C31; one item, results as in C31 (tag `c32`). |
+| C33 | analysis (`-s read-only`) | `<repo>` | Exit 0; one item: the write in `<repo>` also "Operation not permitted" (`inside=1`), the rest as C31. |
+| C34 | implementation | linked worktree | Exit 0; no `command_execution` item in the event stream. The agent reported `inside=0`, "Operation not permitted" for `<outside-home>`, for the Git directory and for the `.git` file, and nothing after it: the script's `: >> .git` ended `sh` (a failed redirection of a special built-in). `probe-c34.txt` present, no file in `<outside-home>` or the Git directory, `.git` unchanged. The command ran (the canary `probe-c34.txt` is present), but the event stream held no item; the cause was not investigated, so C34 counts through its canaries only. Repeated as C36 with the redirection in a subshell. |
+| C35 | implementation | submodule (`gitdir: ../.git/modules/sub`) | Exit 0; one item: `inside=0`; `<outside-home>`, `<base>/parent/.git/modules/sub` and the `.git` file "Operation not permitted" (`home=1`, `gitdir=1`, `pointer=1`); `curl=6`; guard ran (97); `PATH` as in C31. |
+| C36 | implementation | linked worktree (`gitdir: <base>/main/.git/worktrees/wt`) | Exit 0; one item, as C35: the Git directory and the `.git` file refused, guard ran, no network. |
+
+No approval request in any event stream; every round ended on its own.
+The canary files matched the items: no file in `<outside-home>`, no new
+entry in any Git directory, the `.git` files unchanged. The `workspace-write`
+sandbox allows `/tmp` (C1, C18), yet it refused the writes in the Git
+directories of the worktree and the submodule, which lie under
+`/private/tmp` outside the working directory; whether the CLI protects the
+Git directory a `.git` file names or every `.git` directory under a
+writable root was not examined. The CLI's `codex-path` directory held only
+`rg`; the `arg0` directory lies in the user's `CODEX_HOME` and was not
+read. A `.zshenv` that changes `PATH` (C13, C14) was not repeated: the
+probe session's permissions did not allow writing a shell startup file.
+
 ## Linux
 
 The core's sandbox check (C16 to C27) on Linux, run in GitHub Actions by
@@ -427,6 +490,21 @@ login, no secrets.
 | L5 | CI 3 | the distribution's `bubblewrap` 0.9.0 installed (`/usr/bin/bwrap` on `PATH`), then `bwrap --unshare-user --unshare-net --ro-bind / / true` and L1, L3, L4 | `bwrap` exit 1 with `loopback: Failed RTM_NEWADDR: Operation not permitted`; L1, L3 and L4 as without it. The AppArmor profile `bwrap-userns-restrict` was absent. The workflow of CI 3 had a one-off step `sudo apt-get install -y bubblewrap`, removed afterwards because it changed nothing. |
 | L6 | CI 1 to CI 3 | L1 on `macos-latest` | Pass in both modes: `{"outside":"EPERM","git":"EPERM","network":"EPERM"}`, exit 0. |
 
+L7 to L10 come from the workflow with the repository layouts
+(`--layout`, see C28 to C30) and the `ubuntu-latest-userns` host: the
+`ubuntu-latest` runner after `sudo sysctl -w
+kernel.apparmor_restrict_unprivileged_userns=0`, a step of that host only,
+on the ephemeral runner (not a recommendation for users). Results from
+the workflow run on the pull request that added them, 2026-11-02, with
+`codex-cli 0.164.0` (CI 4).
+
+| Probe | Host | Layouts | Expected | Result |
+| --- | --- | --- | --- | --- |
+| L7 | `ubuntu-latest`, `ubuntu-24.04-arm` | `worktree`, `submodule` | stop: the sandbox does not start, as L1 | As expected: exit 1 without the result line, `IMPLEMENTER_PREFLIGHT_FAILED` (reason `exit 1`) in both modes. |
+| L8 | `ubuntu-latest-userns` | `plain` | stop: no evidence (expected pass before CI 4) | `unshare --user --map-root-user` (also with `--net`) exit 0; no `bwrap` on `PATH`. `codex sandbox` exited with 0 in both modes, with no output of the check command (stderr only the `/tmp` helper warning), so the core stopped with `IMPLEMENTER_PREFLIGHT_FAILED` (reason `no-evidence`) before the implementer. Diagnostics: `features.use_legacy_landlock=true` panicked (exit 101); with `sandbox_workspace_write.network_access=true` the command ran and reported `{"outside":"EROFS","git":"EROFS","network":"connected"}`. |
+| L9 | `ubuntu-latest-userns` | `worktree`, `submodule` | stop: no evidence, as L8 | As L8 in both layouts and both modes, diagnostics included. |
+| L10 | `macos-latest` | `worktree`, `submodule` | pass in both modes, as C29 and C30 | As expected: pass in both modes and both layouts. |
+
 L3 and L4 are diagnostics: the module does not use these settings. Every
 Linux run also printed a warning that the CLI could not create its helper
 binaries under `/tmp`, because the empty `CODEX_HOME` lies there.
@@ -437,23 +515,31 @@ does not start, neither with the `bwrap` bundled with the CLI nor with the
 distribution's `bubblewrap`. `codex sandbox` exits with 1 without running
 the command, so the core stops the round with
 `IMPLEMENTER_PREFLIGHT_FAILED` before the implementer starts (fail-closed).
-No guarantee of the module was checked on Linux: a Linux host where
-unprivileged user namespaces work was not probed. The workflow expects
-this stop on the Linux runners (`--expect stop`) and a pass on macOS, so
-a change of either result fails the job.
+No guarantee of the module was checked on Linux. With unprivileged user
+namespaces allowed (L8, L9) the CLI's sandbox starts, yet with the
+network turned off, as the module runs it, `codex sandbox` exits with 0
+and the check command leaves no output; with the network on the same
+command runs and its writes outside the working directory and to the Git
+directory are refused. Why the command leaves no output with the network
+off was not investigated. The core finds no evidence and stops every
+round before the implementer (fail-closed), so the `codex` implementer
+does not run on such a host either. The workflow expects the stop on the
+default Linux runners (`--expect stop`), the no-evidence stop on
+`ubuntu-latest-userns` (`--expect no-evidence`) and a pass on macOS, so a
+change of any result fails the job.
 
 ## Guarantees
 
 | Guarantee | Probes | Result |
 | --- | --- | --- |
-| `noApprovalPrompts` (`-a never`) | C1 to C3, C6 to C12 | Checked: no approval request in any event stream; writes the sandbox denied came back as command output (C6, C7), and every round ended on its own. |
-| `sandboxByMode` | C1, C2, C3, C6, C7 | Checked through items in C6 and C7: `workspace-write` allowed a write in `<repo>` and denied writes in `<outside-home>` and `.git` with "Operation not permitted"; `read-only` denied all three. C1 shows that `workspace-write` also allows `/tmp`. For the resumed round (C2) the outside write rests on the agent's report and the absent canary only (partly). Whether the CLI stops when the sandbox cannot start is not checked (it cannot be provoked within the probe rules); since C24 to C26 the core's sandbox check before every round refuses a host where a write outside the repository or to `.git`, or a local connection, is not refused in the round's mode. |
-| `noCommandNetwork` | C1, C2, C3 | Checked: `curl https://example.com` could not resolve the host (items with exit code 6), in both modes and in a resumed round. |
+| `noApprovalPrompts` (`-a never`) | C1 to C3, C6 to C12, C31 to C36 | Checked: no approval request in any event stream; writes the sandbox denied came back as command output (C6, C7, C31 to C33, C35, C36), and every round ended on its own. The same on 0.164.0. |
+| `sandboxByMode` | C1, C2, C3, C6, C7, C31 to C33, C35, C36 (C34: canaries only) | Checked through items in C6 and C7, and on 0.164.0 in C31 to C33 (also in a resumed round, C32) and in a linked worktree and a submodule (C35, C36: the Git directory the `.git` file names and the file itself refused): `workspace-write` allowed a write in `<repo>` and denied writes in `<outside-home>` and `.git` with "Operation not permitted"; `read-only` denied all three. C1 shows that `workspace-write` also allows `/tmp`. For the resumed round (C2) the outside write rests on the agent's report and the absent canary only (partly). Whether the CLI stops when the sandbox cannot start is not checked (it cannot be provoked within the probe rules); since C24 to C26 the core's sandbox check before every round refuses a host where a write outside the repository or to `.git`, or a local connection, is not refused in the round's mode. |
+| `noCommandNetwork` | C1, C2, C3, C31 to C33, C35, C36 | Checked: `curl https://example.com` could not resolve the host (items with exit code 6), in both modes and in a resumed round; the same on 0.164.0. |
 | `noUserConfiguration` | C1, C4 | Not checked for the user `config.toml` (no login in a substituted `CODEX_HOME`). A repository `.codex/config.toml` had no effect. The CLI writes a trust entry into the configuration directory despite `--ignore-user-config`. |
-| `pathGuards` | C1, C5, C8 to C15 | Partly. With `-c allow_login_shell=false` and a `.zshenv` that leaves `PATH` alone, the executable guard `git` ran instead of the real one in implementation, resumed and analysis rounds (items with exit code 97); the CLI's two directories before the guard directory hold no guarded name on 0.160.0. With a `.zshenv` that prepends directories to `PATH` (C13, C14), the real `git` ran: the non-login shell still reads `.zshenv`, after the CLI has built `PATH`. With an empty `ZDOTDIR`, as the core sets it, the guard ran although that `.zshenv` still existed (C15). `/etc/zshenv` is still read and was not probed (absent on the probe host). Without the setting (C1, C9) the login profiles put the system and Homebrew directories first and the real `git` ran. |
+| `pathGuards` | C1, C5, C8 to C15, C31 to C33, C35, C36 | Partly. On 0.164.0 with the core's empty `ZDOTDIR` the guard ran in every round with an item (C31 to C33, C35, C36; C34 had no item), as in C15; the `.zshenv` cases of C13 and C14 were not repeated. With `-c allow_login_shell=false` and a `.zshenv` that leaves `PATH` alone, the executable guard `git` ran instead of the real one in implementation, resumed and analysis rounds (items with exit code 97); the CLI's two directories before the guard directory hold no guarded name on 0.160.0. With a `.zshenv` that prepends directories to `PATH` (C13, C14), the real `git` ran: the non-login shell still reads `.zshenv`, after the CLI has built `PATH`. With an empty `ZDOTDIR`, as the core sets it, the guard ran although that `.zshenv` still existed (C15). `/etc/zshenv` is still read and was not probed (absent on the probe host). Without the setting (C1, C9) the login profiles put the system and Homebrew directories first and the real `git` ran. |
 | `isolatedEnvironment` | C1, C10 to C15 | Partly: the CLI passes the runner's environment, and no host key or token reached the commands (C1). With `-c allow_login_shell=false` only what `.zshenv` exports reaches commands (C10 to C14: the `.zshenv` canary, not those of `.zprofile` and `.zshrc`), and with an empty `ZDOTDIR` no canary did (C15); `/etc/zshenv` still applies. Without the setting the login shell adds the exports of every startup file (C1: the Homebrew variables, C9: all three canaries). |
-| `schemaOutput` | C1, C2, C3, C6, C7 | Checked: the `-o` file held JSON matching the schema in every completed round. |
-| `explicitResume` | C2, C11 | Checked: `exec resume <ID>` continued the same thread (same ID in `thread.started`, token of the first round recalled in C2). |
+| `schemaOutput` | C1, C2, C3, C6, C7, C31 to C36 | Checked: the `-o` file held JSON matching the schema in every completed round; the same on 0.164.0. |
+| `explicitResume` | C2, C11, C32 | Checked: `exec resume <ID>` continued the same thread (same ID in `thread.started`, token of the first round recalled in C2 and, on 0.164.0, in C32). |
 
 No guarantee was checked on Linux: on the runners of L1 to L5 the CLI's
 sandbox did not start and the core's check stopped every round
@@ -484,4 +570,7 @@ remains is listed among the module's limitations:
 - Only zsh was probed. The runner passes `SHELL` to the CLI; with another
   shell there (for example bash) the behaviour was not probed.
 - The guard directory comes after the CLI's two directories. On 0.160.0
-  they hold no guarded name (C10); a newer version needs the same check.
+  they hold no guarded name (C10); on 0.164.0 `codex-path` held only `rg`
+  and the guard `git` still came first (C31), but the `arg0` directory,
+  in the user's `CODEX_HOME`, was not listed. A newer version needs the
+  same check.

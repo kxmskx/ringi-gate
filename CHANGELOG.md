@@ -7,6 +7,29 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+### Added
+
+- Sandbox check probe: `--layout plain|worktree|submodule` runs the core's
+  check in a linked worktree or a submodule (`.git` a `gitdir:` file) as
+  well; `.github/workflows/codex-sandbox.yml` runs every host with the
+  three layouts, plus `ubuntu-latest-userns`, the `ubuntu-latest` runner
+  with the AppArmor restriction of unprivileged user namespaces lifted on
+  the ephemeral runner (not a recommendation for users). There the
+  sandbox starts, but with the network off `codex sandbox` exits with 0
+  and the check command leaves no output, so the core stops the round
+  (no evidence); the probe's `--expect no-evidence` expects that.
+- Probes of `codex-cli 0.164.0` and Claude Code 2.1.311 as implementers
+  on macOS, also in a linked worktree and a submodule
+  ([docs/providers/probes/](docs/providers/probes/)), and a list of what
+  the `codex` implementer lacks for `stable`
+  ([docs/providers.md](docs/providers.md#what-the-codex-implementer-lacks)).
+
+### Changed
+
+- `probedVersions`: `codex` implementer `0.160.0`, `0.164.0`; `claude`
+  implementer `2.1.285`, `2.1.311`. These versions no longer get
+  `UNPROBED_VERSION`. Preflight and `stability` unchanged.
+
 ## 1.1.1 — 2026-11-01
 
 Fixes found by a live check of `ringi ci` on GitHub Actions, and two

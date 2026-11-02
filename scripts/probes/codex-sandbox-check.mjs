@@ -12,6 +12,15 @@
 // --expect stop: exit code 0 only when both modes stop because the sandbox
 // did not start (see expectedStop); any pass, or a stop for another reason,
 // gives 1, so that a host whose sandbox starts shows up as a failure.
+// --expect no-evidence: exit code 0 only when both modes stop because
+// codex sandbox exited with 0 without the check's result line (see
+// noEvidenceStop); a pass or any other stop gives 1.
+//
+// --layout sets the repository the check runs in: plain (the default; .git
+// is a directory), worktree (a linked worktree of a synthetic repository,
+// .git is a gitdir: file) or submodule (a submodule of a synthetic parent
+// repository, cloned from a second synthetic repository; .git is a gitdir:
+// file). All of them lie in the probe's temporary directory.
 //
 // With --diagnose or RINGI_PROBE_DIAGNOSE=1 the probe then runs codex
 // sandbox directly in a few diagnostic variants (see DIAGNOSTIC_VARIANTS).
@@ -23,7 +32,7 @@ import { constants as fsConstants, lstatSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { createProcessRunner, internal } from '../agent-review-loop-lib.mjs';
 import { msg } from '../messages/index.mjs';
@@ -31,7 +40,8 @@ import codex from '../providers/codex.mjs';
 
 const execFileAsync = promisify(execFile);
 const MODES = ['implementation', 'analysis'];
-const EXPECTATIONS = ['pass', 'stop'];
+const EXPECTATIONS = ['pass', 'stop', 'no-evidence'];
+const LAYOUTS = ['plain', 'worktree', 'submodule'];
 // Linux settings that decide whether an unprivileged process may create user
 // namespaces (used by sandboxes such as bubblewrap).
 const LINUX_SETTINGS = [
@@ -115,6 +125,75 @@ async function onPath(name, path) {
   return 'not found';
 }
 
+// Git for the synthetic repositories: no system or user configuration, a
+// fixed identity, no prompt. Throws with Git's message on failure.
+async function git(base, args) {
+  try {
+    const { stdout } = await execFileAsync('git', args, {
+      env: {
+        PATH: process.env.PATH,
+        HOME: base,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_AUTHOR_NAME: 'ringi probe',
+        GIT_AUTHOR_EMAIL: 'probe@example.invalid',
+        GIT_COMMITTER_NAME: 'ringi probe',
+        GIT_COMMITTER_EMAIL: 'probe@example.invalid',
+      },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    return stdout.trim();
+  } catch (error) {
+    const detail = String(error.stderr ?? '').trim() || error.code || error.message;
+    throw new Error(`git ${args.join(' ')}: ${detail}`);
+  }
+}
+
+// A synthetic repository with one empty commit.
+async function committedRepository(base, path) {
+  await git(base, ['init', '--quiet', path]);
+  await git(base, ['-C', path, 'commit', '--quiet', '--allow-empty', '-m', 'probe']);
+  return path;
+}
+
+// The repository of the layout in base, and its Git directory as Git
+// resolves it. plain: git init only, as before the option existed.
+async function createLayout(base, layout) {
+  let repositoryRoot;
+  if (layout === 'plain') {
+    repositoryRoot = join(base, 'repo');
+    await mkdir(repositoryRoot);
+    await git(base, ['init', '--quiet', repositoryRoot]);
+  } else if (layout === 'worktree') {
+    const main = await committedRepository(base, join(base, 'main'));
+    repositoryRoot = join(base, 'repo');
+    await git(base, ['-C', main, 'worktree', 'add', '--quiet', '-b', 'probe', repositoryRoot]);
+  } else {
+    const source = await committedRepository(base, join(base, 'source'));
+    const parent = await committedRepository(base, join(base, 'parent'));
+    // Local clone of the submodule; allowed for this command only.
+    await git(base, [
+      '-c',
+      'protocol.file.allow=always',
+      '-C',
+      parent,
+      'submodule',
+      'add',
+      '--quiet',
+      source,
+      'repo',
+    ]);
+    repositoryRoot = join(parent, 'repo');
+  }
+  const dotGit = lstatSync(join(repositoryRoot, '.git'));
+  const wanted = layout === 'plain' ? dotGit.isDirectory() : dotGit.isFile();
+  if (!wanted) throw new Error(`layout ${layout}: unexpected .git in ${repositoryRoot}`);
+  const gitDirectory = await git(base, ['-C', repositoryRoot, 'rev-parse', '--absolute-git-dir']);
+  return { repositoryRoot, gitDirectory, dotGit: dotGit.isFile() ? 'file' : 'directory' };
+}
+
 // The argv without the text of the check script, which is the core's own.
 function printableArgs(args) {
   return args.map((value, index) => (args[index - 1] === '-e' ? '<check script>' : value));
@@ -133,6 +212,24 @@ function expectedStop(error, calls) {
   return (
     !runError &&
     result?.code === 1 &&
+    !result.signal &&
+    !result.timedOut &&
+    !String(result.stdout ?? '')
+      .split(/\r?\n/)
+      .some((line) => line.startsWith('RINGI-SANDBOX-CHECK '))
+  );
+}
+
+// The stop of a host where codex sandbox starts but the check command leaves
+// no result: exit code 0, no result line, so the core finds no evidence.
+function noEvidenceStop(error, calls) {
+  if (error?.code !== 'IMPLEMENTER_PREFLIGHT_FAILED' || error.stage !== 'preflight') return false;
+  const reason = msg('preflight.sandboxUnconfirmed', { id: codex.id, round: 1, reason: 'no-evidence' });
+  if (error.message !== reason || calls.length !== 1) return false;
+  const [{ error: runError, result }] = calls;
+  return (
+    !runError &&
+    result?.code === 0 &&
     !result.signal &&
     !result.timedOut &&
     !String(result.stdout ?? '')
@@ -196,7 +293,8 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
   }
   if (calls.length === 0) console.log('codex sandbox: not started');
   if (passed) return 'pass';
-  return expectedStop(stopError, calls) ? 'stop: sandbox did not start' : 'stop: other';
+  if (expectedStop(stopError, calls)) return 'stop: sandbox did not start';
+  return noEvidenceStop(stopError, calls) ? 'stop: no evidence' : 'stop: other';
 }
 
 function present(path) {
@@ -210,13 +308,13 @@ function present(path) {
 // One diagnostic variant in one mode: codex sandbox run directly, with the
 // same environment and an empty CODEX_HOME, then the exit code, the raw
 // output and whether each attempt was refused.
-async function runDiagnosticVariant({ variant, taskMode, repositoryRoot, tempRoot, env }) {
+async function runDiagnosticVariant({ variant, taskMode, repositoryRoot, gitDirectory, tempRoot, env }) {
   console.log(`\n-- diagnose: ${variant.name} (${taskMode})`);
   const nonce = randomBytes(8).toString('hex');
   const directory = join(tempRoot, `diagnose-${nonce}`);
   const codexHome = join(directory, 'home');
   const outside = join(directory, 'outside', 'canary');
-  const git = join(repositoryRoot, '.git', `ringi-diagnose-${nonce}`);
+  const git = join(gitDirectory, `ringi-diagnose-${nonce}`);
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
   await mkdir(join(directory, 'outside'), { mode: 0o700 });
   let connections = 0;
@@ -287,22 +385,12 @@ async function diagnose(context) {
   }
 }
 
-async function main({ diagnostics, expect }) {
+async function main({ diagnostics, expect, layout }) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ringi-sandbox-probe-')));
   try {
-    const repositoryRoot = join(base, 'repo');
     const tempRoot = join(base, 'temp');
-    await mkdir(repositoryRoot);
     await mkdir(tempRoot, { mode: 0o700 });
-    const git = await output('git', ['init', '--quiet', repositoryRoot], {
-      env: {
-        PATH: process.env.PATH,
-        HOME: base,
-        GIT_CONFIG_NOSYSTEM: '1',
-        GIT_CONFIG_GLOBAL: '/dev/null',
-      },
-    });
-    if (git.startsWith('unavailable')) throw new Error(`git init: ${git}`);
+    const { repositoryRoot, gitDirectory, dotGit } = await createLayout(base, layout);
     // The round's isolated environment; runSandboxCheck replaces CODEX_HOME
     // with an empty directory of its own. The guard directory is left out:
     // the check command is the absolute path of node.
@@ -318,6 +406,10 @@ async function main({ diagnostics, expect }) {
     console.log(`codex path: ${await onPath('codex', env.PATH)}`);
     console.log(`uname -a: ${await output('uname', ['-a'])}`);
     console.log(`node: ${process.version} (${process.platform} ${process.arch})`);
+    console.log(`layout=${layout}`);
+    console.log(
+      `repository: <base>/${relative(base, repositoryRoot)} (.git: ${dotGit}; Git directory: <base>/${relative(base, gitDirectory)})`,
+    );
     if (process.platform === 'linux') {
       for (const path of LINUX_SETTINGS) {
         const value = await readFile(path, 'utf8').then(
@@ -332,33 +424,38 @@ async function main({ diagnostics, expect }) {
     const results = {};
     for (const taskMode of MODES)
       results[taskMode] = await runMode({ taskMode, repositoryRoot, tempRoot, env });
-    const wanted = expect === 'pass' ? 'pass' : 'stop: sandbox did not start';
+    const wanted = { pass: 'pass', stop: 'stop: sandbox did not start', 'no-evidence': 'stop: no evidence' }[expect];
     const met = MODES.every((taskMode) => results[taskMode] === wanted);
     console.log('\n== summary');
+    console.log(`layout=${layout}`);
     for (const taskMode of MODES) console.log(`${taskMode}: ${results[taskMode]}`);
     console.log(`expected: ${wanted} (${met ? 'met' : 'not met'})`);
-    if (diagnostics) await diagnose({ repositoryRoot, tempRoot, env });
+    if (diagnostics) await diagnose({ repositoryRoot, gitDirectory, tempRoot, env });
     return met;
   } finally {
     await rm(base, { recursive: true, force: true });
   }
 }
 
-const USAGE = 'usage: codex-sandbox-check.mjs [--diagnose] [--expect <pass|stop>]';
+const USAGE =
+  'usage: codex-sandbox-check.mjs [--diagnose] [--expect <pass|stop|no-evidence>] [--layout <plain|worktree|submodule>]';
 const options = process.argv.slice(2);
 let diagnostics = process.env.RINGI_PROBE_DIAGNOSE === '1';
 let expect;
+let layout;
 for (let index = 0; index < options.length; index += 1) {
   if (options[index] === '--diagnose') diagnostics = true;
   else if (options[index] === '--expect' && expect === undefined && EXPECTATIONS.includes(options[index + 1]))
     expect = options[(index += 1)];
+  else if (options[index] === '--layout' && layout === undefined && LAYOUTS.includes(options[index + 1]))
+    layout = options[(index += 1)];
   else {
     console.error(USAGE);
     process.exit(2);
   }
 }
 
-main({ diagnostics, expect: expect ?? 'pass' }).then(
+main({ diagnostics, expect: expect ?? 'pass', layout: layout ?? 'plain' }).then(
   (met) => {
     process.exitCode = met ? 0 : 1;
   },

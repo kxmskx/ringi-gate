@@ -590,7 +590,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
     await t.test('unprobed CLI versions: implementer-cli and reviewer-cli warn, status ok, exit 0', async () => {
       const project = await createProject({ files: healthyFiles() });
       const unprobedBin = await createStubBin({
-        codex: 'codex-cli 0.164.0',
+        codex: 'codex-cli 0.165.0',
         claude: '2.1.290 (Claude Code)',
       });
       try {
@@ -601,7 +601,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         assert.deepEqual(result.summary, { ok: ids.length - 2, warn: 2, fail: 0 });
         assert.equal(
           check('implementer-cli').detail,
-          'codex: codex-cli 0.164.0 (UNPROBED_VERSION: the implementer was probed on 0.160.0)',
+          'codex: codex-cli 0.165.0 (UNPROBED_VERSION: the implementer was probed on 0.160.0, 0.164.0)',
         );
         assert.equal(
           check('reviewer-cli').detail,
@@ -614,7 +614,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
         }
         const table = ringi(project, ['doctor'], env(extra));
         assert.equal(table.status, 0, table.stderr);
-        assert.match(table.stdout, /^warn +implementer-cli +codex: codex-cli 0\.164\.0 \(UNPROBED_VERSION: /m);
+        assert.match(table.stdout, /^warn +implementer-cli +codex: codex-cli 0\.165\.0 \(UNPROBED_VERSION: /m);
         assert.match(table.stdout, /ringi doctor: 13 ok, 2 warn, 0 fail\n$/);
       } finally {
         await cleanup(project, unprobedBin);
@@ -878,11 +878,12 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
           // Not probed, or unreadable (pre-release, no version): warn.
           assert.deepEqual(statuses(result), ['warn', 'warn'], version);
         }
-        // Probed versions: 2.1.285 in both roles, 2.1.311 for the reviewer only.
+        // Probed versions: 2.1.285 and 2.1.311 in both roles.
         for (const [version, expected] of [
           ['2.1.285 (Claude Code)', ['ok', 'ok']],
           ['2.1.285', ['ok', 'ok']],
-          ['2.1.311 (Claude Code)', ['warn', 'ok']],
+          ['2.1.311 (Claude Code)', ['ok', 'ok']],
+          ['2.1.312 (Claude Code)', ['warn', 'warn']],
         ]) {
           const result = await doctorRun(version, 'darwin');
           assert.equal(result.status, 'ok', version);

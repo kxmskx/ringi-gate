@@ -2,7 +2,8 @@ name: codex-sandbox
 
 # The core's sandbox check with the real Codex CLI, without a model and
 # without a login: scripts/probes/codex-sandbox-check.mjs runs codex sandbox
-# in both task modes in a synthetic repository. The job gets no credentials.
+# in both task modes in a synthetic repository (plain, a linked worktree or
+# a submodule). The job gets no credentials.
 on:
   workflow_dispatch:
     inputs:
@@ -24,28 +25,42 @@ permissions:
 
 jobs:
   sandbox-check:
-    name: codex sandbox check (${{ matrix.os }})
+    name: codex sandbox check (${{ matrix.host }}, ${{ matrix.layout }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      # The expected result of the probe on each runner. On the Ubuntu 24.04
-      # runners, with the default AppArmor restriction of unprivileged user
-      # namespaces, the Codex CLI sandbox does not start and the core stops
-      # the round (docs/providers/probes/codex-implementer.md, Linux); the
-      # job fails when that changes in either direction.
+      # Every host with every repository layout. The expected result of the
+      # probe on each host: on the Ubuntu 24.04 runners, with the default
+      # AppArmor restriction of unprivileged user namespaces, the Codex CLI
+      # sandbox does not start and the core stops the round
+      # (docs/providers/probes/codex-implementer.md, Linux); the job fails
+      # when that changes in either direction. ubuntu-latest-userns is the
+      # same runner with that restriction lifted (see the step below): there
+      # codex sandbox starts and exits with 0, but with the network turned
+      # off the check command leaves no result, so the core finds no
+      # evidence and stops the round (no-evidence).
       matrix:
+        host: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, ubuntu-latest-userns]
+        layout: [plain, worktree, submodule]
         include:
-          - os: ubuntu-latest
+          - host: ubuntu-latest
+            os: ubuntu-latest
             expect: stop
-          - os: ubuntu-24.04-arm
+          - host: ubuntu-24.04-arm
+            os: ubuntu-24.04-arm
             expect: stop
-          - os: macos-latest
+          - host: macos-latest
+            os: macos-latest
             expect: pass
+          - host: ubuntu-latest-userns
+            os: ubuntu-latest
+            expect: no-evidence
     env:
       # Read by the steps from the environment, never placed in a command.
       CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}
       PROBE_EXPECT: ${{ matrix.expect }}
+      PROBE_LAYOUT: ${{ matrix.layout }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,6 +84,16 @@ jobs:
         run: npm install -g "@openai/codex@$CODEX_VERSION"
 
       - run: codex --version
+
+      # Only in the ubuntu-latest-userns rows, on the ephemeral runner, which
+      # is discarded after the job: lifts the AppArmor restriction of
+      # unprivileged user namespaces, so that the probe shows the core's
+      # check on a Linux host where the Codex CLI sandbox can start. This is
+      # not a recommendation for users: the restriction is a hardening of
+      # Ubuntu, and ringi never changes kernel settings.
+      - name: Lift the user namespace restriction (this runner only)
+        if: matrix.host == 'ubuntu-latest-userns'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # Linux only, read only: the user namespace settings of the runner.
       # Also turns on the probe's diagnostics (RINGI_PROBE_DIAGNOSE=1) for
@@ -95,4 +120,4 @@ jobs:
           echo "RINGI_PROBE_DIAGNOSE=1" >> "$GITHUB_ENV"
 
       - name: Sandbox check
-        run: node scripts/probes/codex-sandbox-check.mjs --expect "$PROBE_EXPECT"
+        run: node scripts/probes/codex-sandbox-check.mjs --expect "$PROBE_EXPECT" --layout "$PROBE_LAYOUT"

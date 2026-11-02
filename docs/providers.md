@@ -435,8 +435,10 @@ not change until a decision is made.
 - **Criterion 3, Linux: none checked.** On the GitHub-hosted Ubuntu 24.04
   runners the CLI's sandbox does not start under the default AppArmor
   restriction of unprivileged user namespaces (L1 to L5), so no round
-  runs there. L8 and L9 run the core's sandbox check on such a runner with
-  the restriction lifted, without a model; probes of a round on Linux need
+  runs there. With the restriction lifted (L8, L9) the sandbox starts, but
+  with the network off `codex sandbox` exits with 0 and the check command
+  leaves no output, so the core stops every round there too (no
+  evidence); probes of a round on Linux need
   a login of the CLI on the runner or in a container (a secret, or a
   login of a person), which the probe rules do not allow.
 - **Criterion 4: no setting makes the CLI fail when its sandbox cannot

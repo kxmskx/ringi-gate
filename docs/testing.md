@@ -163,7 +163,7 @@ so installing the tarball fetches nothing.
   variable; its version check, run against sample inputs, accepts only
   `major.minor.patch` and runs before the installation; its matrix runs
   every host with the three repository layouts and expects `stop` on both
-  Ubuntu runners, `pass` on macOS and `pass` on `ubuntu-latest-userns`,
+  Ubuntu runners, `pass` on macOS and `no-evidence` on `ubuntu-latest-userns`,
   without `continue-on-error`; `sudo` and `sysctl` appear only in the one
   step that lifts the AppArmor restriction of unprivileged user namespaces
   in the `ubuntu-latest-userns` rows, before the probe, and the file has no
@@ -173,7 +173,8 @@ so installing the tarball fetches nothing.
   `submodule` build their repository (`.git` a directory, or a `gitdir:`
   file), the core's check runs in it with the `.git` file as its pointer
   argument, and the probe removes its temporary directory; `--expect stop`
-  with a stand-in whose sandbox cannot start; unknown or repeated options
+  with a stand-in whose sandbox cannot start, `--expect no-evidence` with
+  one that exits with 0 and prints nothing; unknown or repeated options
   exit with 2.
 
 The workflows themselves are not run by the tests.
@@ -192,7 +193,7 @@ stderr of the `codex sandbox` call. On Linux it also prints the kernel settings 
 unprivileged user namespaces and whether `bwrap` is on `PATH`. It removes
 its temporary directory.
 
-`--expect pass` (the default) and `--expect stop` set the expected result.
+`--expect pass` (the default), `--expect stop` and `--expect no-evidence` (`codex sandbox` exits with 0 without the check's result line) set the expected result.
 With `pass` the probe exits with 0 only when both modes pass. With `stop`
 it exits with 0 only when both modes stop because the sandbox did not
 start: the core's single `codex sandbox` call exited with 1 (no signal, no
@@ -259,8 +260,9 @@ jobs pass while that stop is the result, and fail when the sandbox starts
 or the core stops for another reason. A fourth host,
 `ubuntu-latest-userns`, is the `ubuntu-latest` runner with one step before
 the probe, `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`,
-and expects `pass`: it shows the check on a Linux host where the sandbox
-can start. The setting changes only that ephemeral runner, and it is not a
+and expects `no-evidence`: there the sandbox starts, but with the
+network off the check command leaves no output, and the core stops
+([Linux probes](providers/probes/codex-implementer.md#linux), L8 and L9). The setting changes only that ephemeral runner, and it is not a
 recommendation for users. Apart from that step nothing in the workflow runs
 with `sudo`, installs system packages or changes kernel or AppArmor
 settings. On Linux a read-only step first prints `uname -a`, the user namespace

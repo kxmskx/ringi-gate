@@ -14,7 +14,10 @@ is published by hand, without provenance; later versions are published by
   well; `.github/workflows/codex-sandbox.yml` runs every host with the
   three layouts, plus `ubuntu-latest-userns`, the `ubuntu-latest` runner
   with the AppArmor restriction of unprivileged user namespaces lifted on
-  the ephemeral runner (expected `pass`; not a recommendation for users).
+  the ephemeral runner (not a recommendation for users). There the
+  sandbox starts, but with the network off `codex sandbox` exits with 0
+  and the check command leaves no output, so the core stops the round
+  (no evidence); the probe's `--expect no-evidence` expects that.
 - Probes of `codex-cli 0.164.0` and Claude Code 2.1.311 as implementers
   on macOS, also in a linked worktree and a submodule
   ([docs/providers/probes/](docs/providers/probes/)), and a list of what

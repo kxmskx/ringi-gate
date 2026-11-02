@@ -457,7 +457,7 @@ test('workflows: the codex sandbox check runs without secrets, with the pinned a
         '            expect: pass',
         '          - host: ubuntu-latest-userns',
         '            os: ubuntu-latest',
-        '            expect: pass',
+        '            expect: no-evidence',
         '    env:',
       ].join('\n'),
     ),
@@ -566,6 +566,7 @@ async function createFakeCodex(directory, sandbox) {
       "if (args[0] === '--version') { console.log('codex-cli 0.0.0'); process.exit(0); }",
       "if (args[0] !== 'sandbox') process.exit(64);",
       `if (${JSON.stringify(sandbox)} === 'missing') process.exit(1);`,
+      `if (${JSON.stringify(sandbox)} === 'silent') process.exit(0);`,
       "const command = args.slice(args.indexOf('--') + 1);",
       'const [, , , nonce, outside, git, port, pointer] = command;',
       "const dotGit = fs.lstatSync('.git').isFile() ? 'file' : 'directory';",
@@ -591,6 +592,7 @@ test('codex sandbox probe: --layout builds a plain repository, a linked worktree
     const probe = join(runnerRoot, 'scripts', 'probes', 'codex-sandbox-check.mjs');
     const holds = await createFakeCodex(join(workspace, 'holds'), 'holds');
     const missing = await createFakeCodex(join(workspace, 'missing'), 'missing');
+    const silent = await createFakeCodex(join(workspace, 'silent'), 'silent');
     const temp = join(workspace, 'tmp');
     await mkdir(temp);
     const run = (bin, args) =>
@@ -627,6 +629,12 @@ test('codex sandbox probe: --layout builds a plain repository, a linked worktree
     assert.match(stopped.stdout, /^expected: stop: sandbox did not start \(met\)$/m);
     assert.equal(run(missing, ['--layout', 'worktree']).status, 1);
     assert.equal(run(holds, ['--expect', 'stop', '--layout', 'worktree']).status, 1);
+    const quiet = run(silent, ['--expect', 'no-evidence', '--layout', 'worktree']);
+    assert.equal(quiet.status, 0, quiet.stdout);
+    assert.match(quiet.stdout, /^implementation: stop: no evidence\nanalysis: stop: no evidence\nexpected: stop: no evidence \(met\)$/m);
+    assert.equal(run(silent, ['--expect', 'stop']).status, 1);
+    assert.equal(run(missing, ['--expect', 'no-evidence']).status, 1);
+    assert.equal(run(holds, ['--expect', 'no-evidence']).status, 1);
     for (const args of [
       ['--layout'],
       ['--layout', 'bare'],

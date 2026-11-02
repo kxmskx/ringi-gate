@@ -494,15 +494,16 @@ L7 to L10 come from the workflow with the repository layouts
 (`--layout`, see C28 to C30) and the `ubuntu-latest-userns` host: the
 `ubuntu-latest` runner after `sudo sysctl -w
 kernel.apparmor_restrict_unprivileged_userns=0`, a step of that host only,
-on the ephemeral runner (not a recommendation for users). Their results
-come from the CI run of the pull request that added them.
+on the ephemeral runner (not a recommendation for users). Results from
+the workflow run on the pull request that added them, 2026-11-02, with
+`codex-cli 0.164.0` (CI 4).
 
 | Probe | Host | Layouts | Expected | Result |
 | --- | --- | --- | --- | --- |
-| L7 | `ubuntu-latest`, `ubuntu-24.04-arm` | `worktree`, `submodule` | stop: the sandbox does not start, as L1 | to be filled in from CI |
-| L8 | `ubuntu-latest-userns` | `plain` | pass in both modes | to be filled in from CI |
-| L9 | `ubuntu-latest-userns` | `worktree`, `submodule` | pass in both modes | to be filled in from CI |
-| L10 | `macos-latest` | `worktree`, `submodule` | pass in both modes, as C29 and C30 | to be filled in from CI |
+| L7 | `ubuntu-latest`, `ubuntu-24.04-arm` | `worktree`, `submodule` | stop: the sandbox does not start, as L1 | As expected: exit 1 without the result line, `IMPLEMENTER_PREFLIGHT_FAILED` (reason `exit 1`) in both modes. |
+| L8 | `ubuntu-latest-userns` | `plain` | stop: no evidence (expected pass before CI 4) | `unshare --user --map-root-user` (also with `--net`) exit 0; no `bwrap` on `PATH`. `codex sandbox` exited with 0 in both modes, with no output of the check command (stderr only the `/tmp` helper warning), so the core stopped with `IMPLEMENTER_PREFLIGHT_FAILED` (reason `no-evidence`) before the implementer. Diagnostics: `features.use_legacy_landlock=true` panicked (exit 101); with `sandbox_workspace_write.network_access=true` the command ran and reported `{"outside":"EROFS","git":"EROFS","network":"connected"}`. |
+| L9 | `ubuntu-latest-userns` | `worktree`, `submodule` | stop: no evidence, as L8 | As L8 in both layouts and both modes, diagnostics included. |
+| L10 | `macos-latest` | `worktree`, `submodule` | pass in both modes, as C29 and C30 | As expected: pass in both modes and both layouts. |
 
 L3 and L4 are diagnostics: the module does not use these settings. Every
 Linux run also printed a warning that the CLI could not create its helper
@@ -514,13 +515,18 @@ does not start, neither with the `bwrap` bundled with the CLI nor with the
 distribution's `bubblewrap`. `codex sandbox` exits with 1 without running
 the command, so the core stops the round with
 `IMPLEMENTER_PREFLIGHT_FAILED` before the implementer starts (fail-closed).
-No guarantee of the module was checked on Linux. L8 and L9 probe the
-core's sandbox check, without a model, on a Linux host where unprivileged
-user namespaces are not restricted; a pass there would show the check on
-Linux, not the guarantees of a round (those need a model call, and so a
-login of the CLI on the runner). The workflow expects the stop on the
-default Linux runners (`--expect stop`) and a pass on macOS and on
-`ubuntu-latest-userns`, so a change of any result fails the job.
+No guarantee of the module was checked on Linux. With unprivileged user
+namespaces allowed (L8, L9) the CLI's sandbox starts, yet with the
+network turned off, as the module runs it, `codex sandbox` exits with 0
+and the check command leaves no output; with the network on the same
+command runs and its writes outside the working directory and to the Git
+directory are refused. Why the command leaves no output with the network
+off was not investigated. The core finds no evidence and stops every
+round before the implementer (fail-closed), so the `codex` implementer
+does not run on such a host either. The workflow expects the stop on the
+default Linux runners (`--expect stop`), the no-evidence stop on
+`ubuntu-latest-userns` (`--expect no-evidence`) and a pass on macOS, so a
+change of any result fails the job.
 
 ## Guarantees
 

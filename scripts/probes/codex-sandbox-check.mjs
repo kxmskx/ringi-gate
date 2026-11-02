@@ -12,6 +12,9 @@
 // --expect stop: exit code 0 only when both modes stop because the sandbox
 // did not start (see expectedStop); any pass, or a stop for another reason,
 // gives 1, so that a host whose sandbox starts shows up as a failure.
+// --expect no-evidence: exit code 0 only when both modes stop because
+// codex sandbox exited with 0 without the check's result line (see
+// noEvidenceStop); a pass or any other stop gives 1.
 //
 // --layout sets the repository the check runs in: plain (the default; .git
 // is a directory), worktree (a linked worktree of a synthetic repository,
@@ -37,7 +40,7 @@ import codex from '../providers/codex.mjs';
 
 const execFileAsync = promisify(execFile);
 const MODES = ['implementation', 'analysis'];
-const EXPECTATIONS = ['pass', 'stop'];
+const EXPECTATIONS = ['pass', 'stop', 'no-evidence'];
 const LAYOUTS = ['plain', 'worktree', 'submodule'];
 // Linux settings that decide whether an unprivileged process may create user
 // namespaces (used by sandboxes such as bubblewrap).
@@ -217,6 +220,24 @@ function expectedStop(error, calls) {
   );
 }
 
+// The stop of a host where codex sandbox starts but the check command leaves
+// no result: exit code 0, no result line, so the core finds no evidence.
+function noEvidenceStop(error, calls) {
+  if (error?.code !== 'IMPLEMENTER_PREFLIGHT_FAILED' || error.stage !== 'preflight') return false;
+  const reason = msg('preflight.sandboxUnconfirmed', { id: codex.id, round: 1, reason: 'no-evidence' });
+  if (error.message !== reason || calls.length !== 1) return false;
+  const [{ error: runError, result }] = calls;
+  return (
+    !runError &&
+    result?.code === 0 &&
+    !result.signal &&
+    !result.timedOut &&
+    !String(result.stdout ?? '')
+      .split(/\r?\n/)
+      .some((line) => line.startsWith('RINGI-SANDBOX-CHECK '))
+  );
+}
+
 function printBlock(label, text) {
   console.log(`${label}:`);
   console.log(text === '' ? '  (empty)' : text.replace(/\n$/, '').replace(/^/gm, '  '));
@@ -272,7 +293,8 @@ async function runMode({ taskMode, repositoryRoot, tempRoot, env }) {
   }
   if (calls.length === 0) console.log('codex sandbox: not started');
   if (passed) return 'pass';
-  return expectedStop(stopError, calls) ? 'stop: sandbox did not start' : 'stop: other';
+  if (expectedStop(stopError, calls)) return 'stop: sandbox did not start';
+  return noEvidenceStop(stopError, calls) ? 'stop: no evidence' : 'stop: other';
 }
 
 function present(path) {
@@ -402,7 +424,7 @@ async function main({ diagnostics, expect, layout }) {
     const results = {};
     for (const taskMode of MODES)
       results[taskMode] = await runMode({ taskMode, repositoryRoot, tempRoot, env });
-    const wanted = expect === 'pass' ? 'pass' : 'stop: sandbox did not start';
+    const wanted = { pass: 'pass', stop: 'stop: sandbox did not start', 'no-evidence': 'stop: no evidence' }[expect];
     const met = MODES.every((taskMode) => results[taskMode] === wanted);
     console.log('\n== summary');
     console.log(`layout=${layout}`);
@@ -416,7 +438,7 @@ async function main({ diagnostics, expect, layout }) {
 }
 
 const USAGE =
-  'usage: codex-sandbox-check.mjs [--diagnose] [--expect <pass|stop>] [--layout <plain|worktree|submodule>]';
+  'usage: codex-sandbox-check.mjs [--diagnose] [--expect <pass|stop|no-evidence>] [--layout <plain|worktree|submodule>]';
 const options = process.argv.slice(2);
 let diagnostics = process.env.RINGI_PROBE_DIAGNOSE === '1';
 let expect;

@@ -36,8 +36,10 @@ jobs:
       # sandbox does not start and the core stops the round
       # (docs/providers/probes/codex-implementer.md, Linux); the job fails
       # when that changes in either direction. ubuntu-latest-userns is the
-      # same runner with that restriction lifted (see the step below), where
-      # the sandbox is expected to start.
+      # same runner with that restriction lifted (see the step below): there
+      # codex sandbox starts and exits with 0, but with the network turned
+      # off the check command leaves no result, so the core finds no
+      # evidence and stops the round (no-evidence).
       matrix:
         host: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, ubuntu-latest-userns]
         layout: [plain, worktree, submodule]
@@ -53,7 +55,7 @@ jobs:
             expect: pass
           - host: ubuntu-latest-userns
             os: ubuntu-latest
-            expect: pass
+            expect: no-evidence
     env:
       # Read by the steps from the environment, never placed in a command.
       CODEX_VERSION: ${{ inputs.codex-version || '0.164.0' }}

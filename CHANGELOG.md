@@ -9,6 +9,17 @@ is published by hand, without provenance; later versions are published by
 
 ### Added
 
+- Project guidance in prompts (opt-in): the profile key `prompts`,
+  `{ implementer: { guidance }, reviewer: { guidance } }`, adds the
+  project's own text (up to 4000 characters, a string of the profile only)
+  to the writer's and the reviewer's prompts in the `implementation` mode,
+  in a section of its own after the fixed rules and before the original
+  task, each line quoted with `> `; the fixed rules stay and take
+  precedence. Other keys are reserved (`INVALID_CONFIGURATION`). The report
+  and the dry-run plan get `promptGuidance` (SHA-256 per role or `null`,
+  never the text), the ledger's `fingerprints` event the same field, and
+  `ringi verify` compares them. Without `prompts` every prompt, report and
+  ledger is unchanged. See [docs/profile.md](docs/profile.md#prompts).
 - Sandbox check probe: `--layout plain|worktree|submodule` runs the core's
   check in a linked worktree or a submodule (`.git` a `gitdir:` file) as
   well; `.github/workflows/codex-sandbox.yml` runs every host with the

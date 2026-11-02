@@ -215,6 +215,7 @@ export const PROFILE = {
   locale: 'en',                     // language of messages, prompts and the default task schema
   // reviewLanes: optional list of parallel review lanes
   // routing: optional { rules }: per task class and for escalation (effort, review profile, lanes, added checks)
+  // prompts: optional { implementer: { guidance }, reviewer: { guidance } }: project guidance in the prompts
   // providerModules: optional list of provider module objects
   // ci: optional { docsPaths, lanes } for ringi ci (the lanes of CI)
   // createPresenters: optional function returning presentation hooks
@@ -246,7 +247,8 @@ The locale also selects:
   ("wykonawca", "reviewer") instead of a provider. Both carry the same
   contract rules, the same JSON field names and the same constants passed by
   the core (analysis sentinel, size limit). Profiles still cannot change
-  prompt texts. A run's prompts follow the locale of its messages, which is
+  prompt texts; [`prompts`](#prompts) only adds the project's guidance in a
+  section of its own. A run's prompts follow the locale of its messages, which is
   the profile's locale when the profile is passed to the run. Neutrality
   covers the prompt text only: values the core inserts (the analysis
   sentinel, which keeps a historical name, and the model identifier chosen
@@ -384,7 +386,8 @@ in schema order, then the optional sections present in the task. In a task,
 a section written under an alias may appear only once in total: a second
 heading for the same section, canonical or alias, stops the run with
 `INVALID_TASK`. Headings that are neither names nor aliases are ignored, as
-before. Profiles cannot change prompts; the prompt texts are fixed in
+before. Profiles cannot change prompts (only add guidance, see
+[`prompts`](#prompts)); the prompt texts are fixed in
 `scripts/agent-review-prompts.mjs` and quote the canonical names of the
 default schema of the locale.
 
@@ -881,6 +884,72 @@ many reviews as there are lanes. The report shows the size of each lane's
 prompt (`contextBytes`) and the number of changed files in the diff it
 starts from (`diffFiles`).
 
+### `prompts`
+
+Optional. The project's own guidance for the writer and the reviewer
+(code conventions, the targeted test commands, what to avoid), without a
+fork of Ringi Gate. Without `prompts` every prompt is exactly the fixed one.
+A record with at least one of the keys `implementer` and `reviewer`, each a
+record with exactly the key `guidance`:
+
+```js
+prompts: {
+  implementer: {
+    guidance: 'Run pnpm test:unit for the targeted tests.\nKeep the public API of packages/core unchanged.',
+  },
+  reviewer: {
+    guidance: 'Every new module needs a unit test next to it.',
+  },
+},
+```
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `guidance` | string | 1 to 4000 characters (JavaScript `length`, so a character outside the Basic Multilingual Plane counts as two), well-formed Unicode, not only white space. Line feeds (`\n`) are allowed; any other control character (C0, DEL or C1, `\r`, tab and U+0085 among them), U+2028 and U+2029 is refused. |
+
+Any other key of `prompts` (an `analysis` key among them) or of a role, an
+empty `prompts`, a value that is not a string and a getter are
+`INVALID_CONFIGURATION`; those keys are reserved for later versions. The
+text is a string in the profile itself: Ringi Gate never reads guidance
+from a file or a path, from an environment variable or from the working
+tree, and `ringi ci review` uses the profile of the trusted base checkout,
+never the one of the pull request (see [ci.md](ci.md#ringi-ci-review)).
+
+**Where it goes.** The guidance applies to the `implementation` mode, also
+with `--review-only` and in `ringi ci review`. The writer's prompt gets
+`implementer.guidance` in every round; every reviewer, every review lane
+included, gets `reviewer.guidance`. The section comes after every fixed
+rule and right before the original task, so the order is: the fixed prompt
+up to its last rule, the guidance section, the original task, then for a
+review lane its focus line and its context package. The section has a
+fixed first sentence (`PROJECT GUIDANCE (from the profile): …`, in `pl`
+`WSKAZÓWKI PROJEKTU (z profilu): …`) that says the guidance is trusted
+configuration that only adds project conventions and does not change the
+phase ownership contract, the task mode, the scope of the original task,
+the ban on Git operations and publication, the result schema, the zero
+findings policy, the reviewer's read-only rules or the review lanes, and
+cannot remove or weaken any rule above it. Then every line of the guidance
+follows quoted with `> ` (an empty line as `>`), so no line of it starts a
+line of the prompt of its own and it cannot pose as a heading, the end of
+the section or the original task. A fixed last sentence (`END OF PROJECT
+GUIDANCE. …`) repeats that every rule above applies unchanged and takes
+precedence wherever they conflict. The prompt's first line stays the fixed
+one (the `pl` writer prompt must start with `/caveman ultra`), which is why
+the section is not placed before the rules. The `analysis` mode takes no
+guidance: its prompts stay fixed (the writer only reads and the reviewer
+follows an exact read order).
+
+**Evidence.** The report and the ledger carry only the SHA-256 of each
+role's guidance (`promptGuidance`, see [Report fields](#report-fields)),
+never its text. A change of the guidance is a change of
+`ringi.config.mjs`, so it changes `projectProfile` and a checkpoint
+refuses to resume with it.
+
+The guidance is trusted configuration, like every part of the profile; it
+is not a security boundary. The core's guarantees (the read-only snapshot,
+the gates, the Git guard, the zero findings policy) are enforced by the
+runner whatever any prompt says.
+
 ### `routing`
 
 Optional. Deterministic rules that pick, per task class, settings the
@@ -1230,6 +1299,11 @@ reviewLanes: [{ id: 'tests', focus: 'tests', profile: 'missing' }]           // 
 reviewLanes: [{ id: 'api', focus: 'API', paths: ['apps/api/*.js'] }]          // a glob in paths
 reviewLanes: [{ id: 'api', focus: 'API', paths: ['../apps/api/'] }]           // a '..' segment in paths
 reviewLanes: [{ id: 'api', focus: 'API', paths: ['src/', './src/'] }]         // the same path twice after normalization
+prompts: {}                                                                  // no role
+prompts: { analysis: { guidance: 'Read the contracts first.' } }             // reserved key
+prompts: { reviewer: { guidance: 'Check tests.', file: 'docs/review.md' } }  // reserved key of a role
+prompts: { reviewer: { guidance: '   ' } }                                   // only white space
+prompts: { reviewer: { guidance: 'Check tests.\r\nNo mocks.' } }             // a control character other than \n
 // below, provider is a valid provider module such as the example provider
 providerModules: ['./providers/example-provider.mjs']                        // a path instead of a module
 providerModules: [{ ...provider, id: 'codex' }]                              // id of a built-in provider
@@ -1333,6 +1407,19 @@ Every run with a run directory adds `ledger` to the report (`APPROVE` and
 to the repository), `events` (the number of its events) and `headHash` (the
 SHA-256 of its last line); see [ledger.md](ledger.md). The field is
 additive and no other field changes, so `schemaVersion` stays 1.
+
+A run with [`prompts`](#prompts) adds `promptGuidance` to the report
+(`APPROVE`, `STOPPED` once the preflight read the task's class, and the
+dry-run plan): `{ implementer, reviewer }`, each the SHA-256 (lower-case
+hex) of the UTF-8 text of the guidance that role's prompts get, or would get, in this run,
+or `null` when they get none: the profile has no guidance for the role, the
+task mode is `analysis`, the implementer with `--review-only`, the reviewer
+of a class without review. The text of the guidance is never in the report,
+the dry-run plan or the ledger. The ledger's `fingerprints` event carries
+the same `promptGuidance`, and [`ringi verify`](cli.md#ringi-verify)
+fails when the report and the ledger differ in it (one has it and the other
+does not, or a hash differs). A run without `prompts` has no such field in
+the report or the ledger and is unchanged, so `schemaVersion` stays 1.
 
 A run with [`reviewLanes`](#reviewlanes) adds, once a review stage ran:
 `reviewer.lanes` (one entry per lane and review round: `round`, `id`,

@@ -398,6 +398,14 @@ export async function verifyRunLedgerFiles({
       fields,
     );
   }
+  if (!samePromptGuidance(fingerprints.data, report)) {
+    return failed(
+      fingerprints.seq,
+      'fingerprints',
+      'The project guidance hashes in the ledger do not match the report (promptGuidance).',
+      fields,
+    );
+  }
   if (last.type !== 'result' || last.data.status !== report.status) {
     return failed(
       last.seq,
@@ -444,6 +452,30 @@ export async function verifyRunLedgerFiles({
     }
   }
   return outcome(fields);
+}
+
+// promptGuidance (a profile with prompts) of the fingerprints event and of
+// the report: absent from both (a run without prompts, or a ledger and report
+// written before the field), or in both with the same SHA-256 (or null) for
+// implementer and reviewer and no other key.
+function samePromptGuidance(data, report) {
+  const ledgerHas = Object.hasOwn(data, 'promptGuidance');
+  if (ledgerHas !== Object.hasOwn(report, 'promptGuidance')) return false;
+  if (!ledgerHas) return true;
+  const valid = (value) =>
+    isPlainObject(value) &&
+    Object.keys(value).sort().join() === 'implementer,reviewer' &&
+    [value.implementer, value.reviewer].every(
+      (hash) => hash === null || (typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)),
+    );
+  const { promptGuidance: recorded } = data;
+  const { promptGuidance: reported } = report;
+  return (
+    valid(recorded) &&
+    valid(reported) &&
+    recorded.implementer === reported.implementer &&
+    recorded.reviewer === reported.reviewer
+  );
 }
 
 // The ledger of a resumed run's predecessor: its own chain and macs, and its

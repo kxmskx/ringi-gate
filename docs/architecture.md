@@ -9,14 +9,15 @@ and what may change is in [contract.md](contract.md).
 
 | File | Role |
 | --- | --- |
-| `scripts/agent-review-loop.mjs` | CLI entry point. Parses arguments, imports the project profile, runs the loop, renders the terminal dashboard, sets the exit code. |
+| `scripts/agent-review-loop.mjs` | CLI entry point. Parses arguments, imports the project profile, hands the run to `runWithPresentation` (below), sets the exit code. |
 | `scripts/agent-review-loop-lib.mjs` | Runner core: task parsing, profile validation, process runner, guards, gates, snapshots, agent invocation, report. |
 | `scripts/agent-review-prompts.mjs` | Prompt texts for the writer and the reviewer, in English (`locale: 'en'`, neutral about providers and projects) and Polish (`'pl'`). No imports; the core passes it the locale and validated values. Profiles cannot override prompts; they only choose the locale. |
 | `scripts/agent-review-providers.mjs` | The default `implementer` and `reviewer` values and `PROVIDERS`, the built-in providers in the adapter shape of earlier versions (kept for compatibility). Imports only the modules below. |
 | `scripts/providers/contract.mjs` | Provider contract (core): module shape, security declaration, role rules, forbidden arguments. See [providers.md](providers.md). |
 | `scripts/providers/codex.mjs`, `scripts/providers/claude.mjs` | Built-in provider modules. Import only the contract; the core passes them validated values. |
 | `scripts/providers/conformance.mjs` | Conformance suite for provider modules, run in tests without a CLI or model. |
-| `scripts/agent-review-dashboard.mjs` | Argument parser and terminal presentation. Presentation never changes the report or the exit code. |
+| `scripts/agent-review-dashboard.mjs` | Argument parser and the terminal dashboard (state, render, the `interactive`, `append` and `json` modes). Presentation never changes the report or the exit code. |
+| `scripts/ringi-presentation.mjs` | The presentation boundary: `runWithPresentation`, the flow both entry points share (loop, JSON report, stop diagnostics, signals, exit code), and the one place that calls presenters. See [Presentation boundary](#presentation-boundary). |
 | `scripts/agent-review-profile.mjs` | The project profile (binding point). See [profile.md](profile.md). |
 | `bin/ringi.mjs`, `scripts/ringi-cli.mjs` | The `ringi` command: `init`, `doctor` and `run`. `run` is the flow of `agent-review-loop.mjs` with the profile from `ringi.config.mjs` (`loadProjectProfile` in the core). See [cli.md](cli.md). |
 | `scripts/ringi-init.mjs`, `scripts/ringi-doctor.mjs` | `ringi init` (profile and task templates, never overwrites) and `ringi doctor` (read-only checks with the core's preflight functions). |
@@ -29,6 +30,54 @@ module. The `ringi` command instead works on the Git repository of the
 current directory, with that repository's `ringi.config.mjs` (see
 [cli.md](cli.md)). From version 0.1.0 the command is installed from the npm
 package `ringi-gate`; it also runs from a checkout.
+
+## Presentation boundary
+
+`ringi run` and `scripts/agent-review-loop.mjs` parse their arguments and
+then call the same function, `runWithPresentation` in
+`scripts/ringi-presentation.mjs`. On one side of it is the core: the loop,
+the report, the ledger, the JSON report on stdout (`--json`), the stop
+diagnostics on stderr and the exit code. On the other side are the
+presenters, which only observe the run. The entry points differ only in
+what they pass and how they end: `ringi run` passes the record of its
+`ringi.config.mjs` (`projectProfile`) and returns the code, the earlier
+entry point sets `process.exitCode` as soon as a run stops (1 or 2), before
+the hooks' `flush` and `dispose`, and leaves it unset for a completed run;
+each prints its own usage for an argument error.
+
+There is one built-in presenter, `terminal`: the terminal dashboard of
+`scripts/agent-review-dashboard.mjs`, with its `interactive`, `append` and
+`json` modes and their selection (`--no-animation`, `--json`, `--verbose`,
+TTY, `NO_COLOR`, `TERM=dumb`, `CI`). The hooks the profile's
+[`createPresenters`](profile.md#title-tempprefix-createpresenters) returns
+observe the run next to it. The boundary is the one place that calls them,
+in a fixed order: the dashboard first, then the hooks; `beforeFinish` before
+the dashboard's final summary and `afterFinish` after it; `flush` and
+`dispose` last, awaited.
+
+The rules of the boundary:
+
+- A presenter never changes the report, the ledger or the exit code. Every
+  call is guarded: an exception or a rejected promise of a presenter is
+  swallowed.
+- The hooks receive copies (each event, the report, the dashboard's state),
+  never the objects of the core or of the dashboard; a hook may change its
+  copy, and the change reaches nothing else.
+- The built-in presenter `terminal` receives the original events and the
+  original report, read-only: it must never change them (its tests freeze
+  them, so a change would break the terminal snapshot).
+- No presenter receives the process runner; only the interrupt path cancels
+  a round: the first `SIGINT` or `SIGTERM` closes the dashboard and cancels
+  the round, the second calls the hooks' `interrupt`, then sends the signal
+  again to the process.
+- The dashboard redacts what it writes (`redactSensitive` and `stripAnsi` in
+  the feed, the summary and the `--verbose` diagnostics). The hooks are code
+  of the profile, trusted like it.
+- The presenter interface (`start`, `event`, `diagnostic`, `finish`,
+  `interrupt`, `dispose`, `view`) is internal and outside the
+  [contract](contract.md). Presenters come only from this module and from the
+  profile's `createPresenters`, never from a file, a path, a package, an
+  environment variable or the reviewed tree.
 
 ## Roles
 

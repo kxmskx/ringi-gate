@@ -1213,6 +1213,31 @@ workflow (see [ci.md](ci.md#ringi-ci-aggregate)).
   provider modules. The CLI calls it to obtain optional presentation hooks;
   errors in it never change the report or the exit code.
 
+  `ringi run` and `scripts/agent-review-loop.mjs` call it once, after the
+  terminal dashboard is created and before the run, with a new object: the
+  parsed options and `repositoryRoot`. It returns an object with any of
+  these methods (others are ignored); the dashboard is the built-in
+  presenter, and the hooks observe the run next to it
+  ([architecture.md](architecture.md#presentation-boundary)):
+
+  | Method | Called | Arguments |
+  | --- | --- | --- |
+  | `event` | after the dashboard has shown each event of the loop (not with `--dry-run`) | the event, the dashboard's state |
+  | `beforeFinish` | before the dashboard's final summary; with `--dry-run` only when the run stops | the report |
+  | `afterFinish` | after the final summary (not with `--dry-run`) | the dashboard's state |
+  | `interrupt` | at the second `SIGINT` or `SIGTERM`, before the signal is sent again to the process; awaited | the dashboard's state |
+  | `flush`, then `dispose` | at the end of every run, each awaited | none |
+
+  The arguments are copies: a hook may change them without an error, and
+  what it changes reaches neither the report, the ledger, the `--json`
+  output, the exit code nor the dashboard. Each call gets its own copy
+  (the state as it is at that call). Hooks never receive the process
+  runner. An exception, a rejected promise or a failing property of the
+  returned object is swallowed. Only the key `createPresenters` is part of
+  the [contract](contract.md#profile); the methods, their order and
+  arguments and the events are presentation and outside it. The table
+  describes the current version.
+
 ## Validation details
 
 - Every level must be a plain object or array. Only data properties are read,

@@ -117,6 +117,7 @@ const REQUIRED_FILES = [
   'scripts/agent-review-loop.mjs',
   'scripts/agent-review-loop-lib.mjs',
   'scripts/agent-review-dashboard.mjs',
+  'scripts/ringi-presentation.mjs',
   'scripts/agent-review-prompts.mjs',
   'scripts/agent-review-providers.mjs',
   'scripts/agent-review-ledger.mjs',

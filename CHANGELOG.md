@@ -7,6 +7,25 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+### Changed
+
+- Presentation boundary: `ringi run` and `scripts/agent-review-loop.mjs`
+  hand the run to one function, `runWithPresentation` in the new module
+  `scripts/ringi-presentation.mjs`, the one place that calls presenters.
+  The terminal dashboard is its built-in presenter `terminal`; the hooks of
+  the profile's `createPresenters` observe the run next to it with the same
+  methods and in the same order as before. The terminal output, `--json`,
+  the diagnostics, `--dry-run`, interrupts, the report, the ledger and the
+  exit codes are unchanged; no profile key and no CLI option was added. The
+  runner fingerprint (`report.runner`) now also lists the new module.
+  See [docs/architecture.md](docs/architecture.md#presentation-boundary).
+- The `createPresenters` hooks receive copies of the events, the report
+  and the dashboard's state instead of the objects themselves: a hook that
+  changed the report in `beforeFinish` could change the final summary and
+  the `--json` report before; now it changes only its copy, without an
+  error. Calls to the dashboard are guarded like the hooks' (an exception
+  is swallowed). See [docs/profile.md](docs/profile.md#title-tempprefix-createpresenters).
+
 ## 1.2.0 — 2026-11-03
 
 Project guidance in prompts as profile configuration, and probes of the

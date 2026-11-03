@@ -1410,6 +1410,7 @@ test('ringi run --dry-run: profile from ringi.config.mjs, same plan as scripts/a
       'agent-review-loop.mjs',
       'agent-review-loop-lib.mjs',
       'agent-review-dashboard.mjs',
+      'ringi-presentation.mjs',
       'agent-review-prompts.mjs',
       'agent-review-providers.mjs',
       'agent-review-ledger.mjs',

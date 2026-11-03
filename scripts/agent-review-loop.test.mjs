@@ -40,6 +40,7 @@ import enMessages from './messages/en.mjs';
 import plMessages from './messages/pl.mjs';
 import * as loopExports from './agent-review-loop-lib.mjs';
 import * as dashboardExports from './agent-review-dashboard.mjs';
+import * as presentationExports from './ringi-presentation.mjs';
 import * as ledgerExports from './agent-review-ledger.mjs';
 import * as promptExports from './agent-review-prompts.mjs';
 import * as providerExports from './agent-review-providers.mjs';
@@ -1675,6 +1676,8 @@ async function commandStopCodes() {
     'ringi-ci-lanes.mjs',
     'ringi-ci-review.mjs',
     'agent-review-loop.mjs',
+    // The flow both entry points share (runWithPresentation).
+    'ringi-presentation.mjs',
   ]) {
     const source = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
     for (const [, code] of source.matchAll(/\bcode: '([A-Z][A-Z_]+)'/g)) codes.add(code);
@@ -2163,6 +2166,8 @@ async function createCliPreflightRepository({
       'agent-review-loop.mjs',
       'agent-review-loop-lib.mjs',
       'agent-review-dashboard.mjs',
+      // Presentation boundary imported by the entry point.
+      'ringi-presentation.mjs',
       'agent-review-profile.mjs',
       // Prompt module imported by lib.
       'agent-review-prompts.mjs',
@@ -3164,6 +3169,8 @@ test('schemaVersion: CLI fallback preserves JSON and exit codes', async () => {
     for (const name of [
       'agent-review-dashboard.mjs',
       'agent-review-profile.mjs',
+      // The shared flow: it gets the replaced loop from the entry point.
+      'ringi-presentation.mjs',
     ]) {
       cliSource = cliSource.replace(
         `'./${name}'`,
@@ -3195,6 +3202,147 @@ test('schemaVersion: CLI fallback preserves JSON and exit codes', async () => {
     });
     assert.equal(child.stdout.trim().split('\n').length, 1);
     assert.equal(child.stderr, 'UNEXPECTED_ERROR: workflow\n');
+  }
+});
+
+// The earlier entry point sets process.exitCode as soon as a run stops,
+// before the hooks' flush and dispose (as in version 1.2.0); a completed run
+// leaves it unset. The real entry point with a replaced loop and a profile
+// whose hooks print process.exitCode.
+// The real scripts/agent-review-loop.mjs in a child process with its loop
+// and profile replaced (module sources; the loop module re-exports nothing
+// else, the entry point imports only runAgentReviewLoop from it). Returns
+// the arguments of node for the child.
+const scriptModuleUrl = (name) => new URL(`./${name}`, import.meta.url).href;
+const sourceDataModule = (text) => `data:text/javascript,${encodeURIComponent(text)}`;
+async function agentReviewLoopEntryArguments({ loop, profile, args }) {
+  const scriptUrl = new URL('./agent-review-loop.mjs', import.meta.url);
+  const entry = (await readFile(scriptUrl, 'utf8'))
+    .replace("'./agent-review-loop-lib.mjs'", JSON.stringify(sourceDataModule(loop)))
+    .replace("'./agent-review-profile.mjs'", JSON.stringify(sourceDataModule(profile)))
+    .replace("'./agent-review-dashboard.mjs'", JSON.stringify(scriptModuleUrl('agent-review-dashboard.mjs')))
+    .replace("'./ringi-presentation.mjs'", JSON.stringify(scriptModuleUrl('ringi-presentation.mjs')))
+    .replace('import.meta.url', JSON.stringify(scriptUrl.href));
+  return [
+    '--input-type=module',
+    '-e',
+    `
+    process.argv = [process.execPath, 'synthetic-cli', ...${JSON.stringify(args)}];
+    await import(${JSON.stringify(sourceDataModule(entry))});
+  `,
+  ];
+}
+
+test('agent-review-loop.mjs: the hooks flush and dispose see process.exitCode 1 or 2 of a stopped run, and none of a completed one', async () => {
+  const profile = `
+    import { PROFILE as BASE } from ${JSON.stringify(scriptModuleUrl('agent-review-profile.mjs'))};
+    const seen = (method) => () => {
+      process.stderr.write(method + ' exitCode=' + process.exitCode + '\\n');
+    };
+    export const PROFILE = {
+      ...BASE,
+      createPresenters: () => ({ flush: seen('flush'), dispose: seen('dispose') }),
+    };
+  `;
+  for (const [outcome, status, code] of [
+    ['complete', 0, 'undefined'],
+    ['workflow-error', 1, '1'],
+    ['error', 2, '2'],
+  ]) {
+    const loop = `
+      import { AgentWorkflowError } from ${JSON.stringify(scriptModuleUrl('agent-review-loop-lib.mjs'))};
+      export async function runAgentReviewLoop() {
+        if (${JSON.stringify(outcome)} === 'workflow-error')
+          throw new AgentWorkflowError('Synthetic stop.', { code: 'INVALID_TASK_PATH', stage: 'preflight' });
+        if (${JSON.stringify(outcome)} === 'error') throw new Error('Synthetic unexpected error.');
+        return { status: 'DRY_RUN_OK' };
+      }
+    `;
+    const child = spawnSync(
+      process.execPath,
+      await agentReviewLoopEntryArguments({
+        loop,
+        profile,
+        args: ['task.md', '--dry-run', '--json'],
+      }),
+      { encoding: 'utf8', shell: false, timeout: 10_000 },
+    );
+    assert.equal(child.status, status, child.stderr);
+    const seen = child.stderr.split('\n').filter((line) => / exitCode=/.test(line));
+    assert.deepEqual(seen, [`flush exitCode=${code}`, `dispose exitCode=${code}`], outcome);
+  }
+});
+
+// Interrupts of the real entry point in a child process, with the real
+// process runner and signal handlers of runWithPresentation: the replaced
+// loop starts a fake CLI that hangs. Markers on stderr, not times, say when
+// to send each signal. The loop itself is a stand-in: the core's mapping of
+// an interrupted process to INTERRUPTED has its own tests.
+test('agent-review-loop.mjs: the first SIGINT cancels a hanging CLI (exit code 1, INTERRUPTED); the second runs the interrupt hook and ends the process with SIGINT', async () => {
+  const profile = `
+    import { PROFILE as BASE } from ${JSON.stringify(scriptModuleUrl('agent-review-profile.mjs'))};
+    export const PROFILE = {
+      ...BASE,
+      createPresenters: () => ({ interrupt() { process.stderr.write('HOOK interrupt\\n'); } }),
+    };
+  `;
+  for (const count of [1, 2]) {
+    const loop = `
+      import { AgentWorkflowError } from ${JSON.stringify(scriptModuleUrl('agent-review-loop-lib.mjs'))};
+      export async function runAgentReviewLoop({ runner, repositoryRoot }) {
+        const running = runner.run(
+          process.execPath,
+          ['-e', 'setInterval(() => {}, 1000)'],
+          { cwd: repositoryRoot, stage: 'sol', timeoutMs: 30000 },
+        );
+        // run spawns before it returns its promise.
+        process.stderr.write('READY\\n');
+        await running.catch(() => undefined);
+        if (${count} === 2) {
+          process.stderr.write('CANCELLED\\n');
+          setInterval(() => {}, 1000);
+          await new Promise(() => {});
+        }
+        const report = { schemaVersion: 1, status: 'STOPPED', code: 'INTERRUPTED', stage: 'sol', error: 'Przerwano.' };
+        throw new AgentWorkflowError('Przerwano.', { code: 'INTERRUPTED', stage: 'sol', report });
+      }
+    `;
+    const child = spawn(
+      process.execPath,
+      await agentReviewLoopEntryArguments({ loop, profile, args: ['task.md', '--json'] }),
+      { stdio: ['ignore', 'pipe', 'pipe'], shell: false },
+    );
+    let stdout = '';
+    let stderr = '';
+    let sent = 0;
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+      const markers = (stderr.includes('READY\n') ? 1 : 0) + (stderr.includes('CANCELLED\n') ? 1 : 0);
+      while (sent < Math.min(markers, count)) {
+        sent += 1;
+        child.kill('SIGINT');
+      }
+    });
+    const safety = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const [code, signal] = await new Promise((resolvePromise) =>
+      child.once('close', (...values) => resolvePromise(values)),
+    );
+    clearTimeout(safety);
+    const label = `${count} SIGINT`;
+    assert.equal(sent, count, `${label}\n${stderr}`);
+    if (count === 1) {
+      assert.deepEqual([code, signal], [1, null], `${label}\n${stderr}`);
+      assert.equal(JSON.parse(stdout).code, 'INTERRUPTED');
+      assert.match(stderr, /^INTERRUPTED: sol$/m);
+      assert.doesNotMatch(stderr, /HOOK interrupt/);
+    } else {
+      assert.deepEqual([code, signal], [null, 'SIGINT'], `${label}\n${stderr}`);
+      assert.equal(stdout, '');
+      assert.ok(stderr.indexOf('CANCELLED') < stderr.indexOf('HOOK interrupt'), stderr);
+    }
   }
 });
 
@@ -24552,6 +24700,7 @@ test('message catalog: the same keys and parameters in en and pl, no unused or m
     'agent-review-dashboard.mjs',
     'agent-review-loop.mjs',
     'ringi-cli.mjs',
+    'ringi-presentation.mjs',
   ]) {
     const source = await readFile(join(agentReviewScriptDirectory, name), 'utf8');
     for (const [, key] of source.matchAll(/'([a-zA-Z]+\.[a-zA-Z]+)'/g)) {
@@ -30667,6 +30816,848 @@ test(GOLDEN_SNAPSHOTS['prompts-guidance'].test, async (t) => {
   for (const [name, built] of entries) await golden.record(name, built);
   await golden.finish(t, entries.length);
   assert.equal(entries.length, 6);
+});
+
+// Presentation boundary (scripts/ringi-presentation.mjs): both entry points
+// hand the run to runWithPresentation; the terminal dashboard is its
+// presenter and the profile's createPresenters hooks observe it.
+const { createPresentation, createTerminalPresenter, runWithPresentation } =
+  presentationExports;
+
+test('runner surface contract: presentation named exports, imports and the entry points', async () => {
+  assertSurfaceContract(
+    Object.keys(presentationExports).sort(),
+    [
+      'createPresentation',
+      'createTerminalPresenter',
+      'presentationSnapshot',
+      'runWithPresentation',
+    ],
+    'presentation named exports',
+  );
+  const source = await readFile(
+    new URL('./ringi-presentation.mjs', import.meta.url),
+    'utf8',
+  );
+  // No dynamic import and no variable of the environment: presenters are
+  // never loaded from a file, a path, a package or the environment.
+  assert.deepEqual(moduleImportSpecifiers(source, 'ringi-presentation.mjs'), [
+    './agent-review-dashboard.mjs',
+    './agent-review-loop-lib.mjs',
+  ]);
+  assert.doesNotMatch(source, /process\.env\.|process\.env\[/);
+  // The boundary is the one place that creates the dashboard, calls the
+  // profile's hooks and handles the signals.
+  for (const name of ['agent-review-loop.mjs', 'ringi-cli.mjs']) {
+    const entry = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
+    assert.equal(entry.match(/\brunWithPresentation\(\{/g)?.length, 1, name);
+    assert.doesNotMatch(
+      entry,
+      /createTerminalDashboard|createPresenters|process\.on\(|SIGINT/,
+      name,
+    );
+  }
+  // The differences of the entry points: ringi run passes its project
+  // profile's record and returns the code; the earlier entry point sets
+  // process.exitCode when a run stops (setExitCode, before the hooks' flush).
+  const cli = await readFile(new URL('./ringi-cli.mjs', import.meta.url), 'utf8');
+  assert.match(cli, /return runWithPresentation\(\{[^}]*loopOptions: \{ projectProfile \}/);
+  assert.doesNotMatch(cli, /setExitCode/);
+  const loop = await readFile(
+    new URL('./agent-review-loop.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(loop, /loopOptions|projectProfile/);
+  assert.match(loop, /setExitCode: \(code\) => \{\s*process\.exitCode = code;\s*\}/);
+});
+
+// The flow of both entry points in version 1.2.0, before the presentation
+// boundary, with the parameters of runWithPresentation: the reference of the
+// byte-for-byte comparisons below. setExitCode stands for the assignment to
+// process.exitCode of scripts/agent-review-loop.mjs in its catch.
+async function legacyRunWithPresentation({
+  profile,
+  repositoryRoot,
+  parsed,
+  runAgentReviewLoop: runLoop,
+  loopOptions = {},
+  setExitCode,
+  stdout,
+  stderr,
+  environment,
+  signals,
+  cwd,
+  createRunner,
+}) {
+  const dashboard = createTerminalDashboard({
+    ...FIXED_DASHBOARD_CLOCK,
+    profile,
+    output: stdout,
+    diagnosticOutput: stderr,
+    taskPath: parsed.taskPath,
+    taskMode: parsed.taskMode,
+    noAnimation: parsed.noAnimation,
+    json: parsed.json,
+    verbose: parsed.verbose,
+    environment,
+  });
+  let presenters;
+  try {
+    presenters = profile.createPresenters?.({ repositoryRoot, ...parsed });
+  } catch {
+    /* as before */
+  }
+  const present = async (method, ...args) => {
+    try {
+      await presenters?.[method]?.(...args);
+    } catch {
+      /* as before */
+    }
+  };
+  const presentEvent = (event) => {
+    dashboard.event(event);
+    void present('event', event, dashboard.state);
+  };
+  const runner = createRunner({
+    output: { write: (text) => dashboard.diagnostic(text) },
+  });
+  let interruptCount = 0;
+  const onInterrupt = (signal) => {
+    interruptCount += 1;
+    dashboard.dispose();
+    if (interruptCount === 1) {
+      runner.cancel();
+      return;
+    }
+    signals.off('SIGINT', onSigint);
+    signals.off('SIGTERM', onSigterm);
+    void present('interrupt', dashboard.state).finally(() => {
+      signals.kill(signals.pid, signal);
+    });
+  };
+  const onSigint = () => onInterrupt('SIGINT');
+  const onSigterm = () => onInterrupt('SIGTERM');
+  signals.on('SIGINT', onSigint);
+  signals.on('SIGTERM', onSigterm);
+  let exitCode = 0;
+  try {
+    if (!parsed.dryRun) dashboard.start();
+    const report = await runLoop({
+      profile,
+      ...loopOptions,
+      runner,
+      output: stdout,
+      repositoryRoot,
+      invocationCwd: cwd(),
+      taskPath: parsed.taskPath,
+      taskMode: parsed.taskMode,
+      implementerModel: parsed.implementerModel,
+      implementerEffort: parsed.implementerEffort,
+      reviewProfile: parsed.reviewProfile,
+      reviewOnly: parsed.reviewOnly,
+      checkpoint: parsed.checkpoint,
+      resume: parsed.resume,
+      dryRun: parsed.dryRun,
+      verbose: parsed.verbose,
+      onEvent: parsed.dryRun ? undefined : presentEvent,
+    });
+    if (!parsed.dryRun) {
+      void present('beforeFinish', report);
+      dashboard.finish(report, report.reportPath);
+      void present('afterFinish', dashboard.state);
+      if (parsed.json) stdout.write(`${JSON.stringify(report)}\n`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const report =
+      error instanceof AgentWorkflowError && error.report
+        ? error.report
+        : {
+            schemaVersion: 1,
+            status: 'STOPPED',
+            code: 'UNEXPECTED_ERROR',
+            error: redactSensitive(message),
+          };
+    void present('beforeFinish', report);
+    dashboard.finish(report, report.reportPath);
+    if (!parsed.dryRun) void present('afterFinish', dashboard.state);
+    if (parsed.json) {
+      stdout.write(`${JSON.stringify(report)}\n`);
+      stderr.write(`${report.code ?? 'STOPPED'}: ${report.stage ?? 'workflow'}\n`);
+    } else if (parsed.dryRun) {
+      stderr.write(
+        `${formatErrorDiagnostic(report, redactSensitive, dashboard.state.locale)}\n`,
+      );
+    }
+    exitCode = error instanceof AgentWorkflowError ? 1 : 2;
+    setExitCode?.(exitCode);
+  } finally {
+    dashboard.dispose();
+    await present('flush');
+    await present('dispose');
+    signals.off('SIGINT', onSigint);
+    signals.off('SIGTERM', onSigterm);
+  }
+  return exitCode;
+}
+
+// A fixed clock and no timer: the terminal output depends only on the events.
+const FIXED_DASHBOARD_CLOCK = Object.freeze({
+  monotonicNow: () => 0,
+  setIntervalImpl: () => undefined,
+  clearIntervalImpl: () => {},
+});
+const fixedTerminalPresenter = (options) =>
+  createTerminalPresenter({ ...FIXED_DASHBOARD_CLOCK, ...options });
+
+// Streams that append every write to a shared log, in order.
+function presentationOutput(log, name, { isTTY = false } = {}) {
+  return {
+    isTTY,
+    columns: 100,
+    rows: 40,
+    write(chunk) {
+      log.push([name, String(chunk)]);
+    },
+  };
+}
+
+function presentationSignals(log) {
+  const signals = new EventEmitter();
+  signals.pid = 4242;
+  signals.kill = (pid, signal) => log.push(['kill', pid, signal]);
+  return signals;
+}
+
+const PRESENTED_OUTCOMES = ['approve', 'workflow-error', 'error'];
+
+function presentedReport(outcome) {
+  return outcome === 'approve'
+    ? {
+        schemaVersion: 1,
+        status: 'APPROVE',
+        runId: 'run-presented',
+        reportPath: '.agent-review-loop/runs/run-presented/report.json',
+        durationMs: 1_500,
+        publicationApproved: false,
+        rounds: [],
+      }
+    : {
+        schemaVersion: 1,
+        status: 'STOPPED',
+        code: 'INVALID_TASK_PATH',
+        stage: 'preflight',
+        error: 'Syntetyczny błąd token=presented-secret',
+        resume: 'Usuń przyczynę i uruchom ponownie.',
+      };
+}
+
+const presentedEvents = () => [
+  { type: 'stage:start', id: 'preflight', badge: 'PREFLIGHT', label: 'Preflight' },
+  {
+    type: 'metadata',
+    runId: 'run-presented',
+    branch: 'feat/presented',
+    solModel: 'gpt-6.1-sol',
+    solEffort: 'high',
+    reviewProfile: 'critical',
+    reviewAttempts: [{ model: 'claude-fable-5', effort: 'high' }],
+    reviewFallbackAllowed: false,
+  },
+  {
+    type: 'stage:end',
+    id: 'preflight',
+    badge: 'PREFLIGHT',
+    label: 'Preflight',
+    status: 'PASS',
+    durationMs: 20,
+  },
+  { type: 'round:start', round: 1, gateCount: 1, maxRounds: 3 },
+];
+
+// A loop of the given outcome: events (not with --dry-run), a runner
+// diagnostic with a secret, then the report or the error.
+function presentedLoop(outcome, log) {
+  return async (options) => {
+    log.push(['loop', Object.keys(options)]);
+    options.runner.output.write('gate output token=presented-secret\n');
+    if (options.dryRun && outcome === 'approve') {
+      options.output.write(`${JSON.stringify({ status: 'DRY_RUN_OK' }, null, 2)}\n`);
+      return { status: 'DRY_RUN_OK' };
+    }
+    if (!options.dryRun) for (const event of presentedEvents()) options.onEvent(event);
+    if (outcome === 'workflow-error')
+      throw new AgentWorkflowError('Synthetic stop.', {
+        code: 'INVALID_TASK_PATH',
+        stage: 'preflight',
+        report: presentedReport(outcome),
+      });
+    if (outcome === 'error') throw new Error('Synthetic unexpected token=presented-secret');
+    return presentedReport(outcome);
+  };
+}
+
+// Hooks that record every call (this, a copy of the arguments), in the log
+// of the streams; flush settles a tick later.
+function recordingPresenterHooks(log) {
+  const hooks = {};
+  for (const method of ['event', 'interrupt', 'beforeFinish', 'afterFinish', 'flush', 'dispose'])
+    hooks[method] = function (...args) {
+      log.push([`hooks.${method}`, this === hooks, structuredClone(args)]);
+      if (method === 'flush')
+        return new Promise((resolve) =>
+          setImmediate(() => {
+            log.push(['hooks.flush settled']);
+            resolve();
+          }),
+        );
+      return undefined;
+    };
+  return hooks;
+}
+
+function recordingPresenterProfile(log, hooks = recordingPresenterHooks(log)) {
+  const profile = {
+    ...TEST_PROFILE,
+    createPresenters(options) {
+      log.push(['createPresenters', this === profile, structuredClone(options)]);
+      return hooks;
+    },
+  };
+  return profile;
+}
+
+// One run with the given flow (runWithPresentation or the reference) and
+// fake streams, signals, runner and loop; the log has everything in order.
+async function presentedRun(
+  flow,
+  { args, outcome, isTTY = false, profile, log = [], loop, signals, repositoryRoot = '/synthetic/repository' },
+) {
+  const parsed = parseAgentArguments(args, profile);
+  assert.equal(parsed.error, undefined);
+  const exitCode = await flow({
+    profile,
+    repositoryRoot,
+    parsed,
+    runAgentReviewLoop: loop ?? presentedLoop(outcome, log),
+    stdout: presentationOutput(log, 'stdout', { isTTY }),
+    stderr: presentationOutput(log, 'stderr'),
+    environment: {},
+    signals: signals ?? presentationSignals(log),
+    cwd: () => repositoryRoot,
+    createRunner: ({ output }) => ({
+      output,
+      cancel() {
+        log.push(['runner.cancel']);
+      },
+    }),
+    createPresenter: fixedTerminalPresenter,
+    setExitCode: (code) => log.push(['setExitCode', code]),
+  });
+  log.push(['exit', exitCode]);
+  return log;
+}
+
+const PRESENTED_ARGUMENTS = [
+  ['task.md'],
+  ['task.md', '--json'],
+  ['task.md', '--verbose'],
+  ['task.md', '--no-animation'],
+  ['task.md', '--dry-run'],
+  ['task.md', '--dry-run', '--json'],
+];
+
+function* presentedScenarios() {
+  for (const args of PRESENTED_ARGUMENTS)
+    for (const outcome of PRESENTED_OUTCOMES)
+      for (const isTTY of [false, true]) yield { args, outcome, isTTY };
+}
+
+test('presentation boundary: stdout, stderr, exit code, the hooks and their order are byte for byte those of the flow before the boundary', async () => {
+  let compared = 0;
+  for (const scenario of presentedScenarios()) {
+    const label = JSON.stringify(scenario);
+    const runs = [];
+    for (const flow of [legacyRunWithPresentation, runWithPresentation]) {
+      const log = [];
+      runs.push(await presentedRun(flow, { ...scenario, log, profile: recordingPresenterProfile(log) }));
+    }
+    assert.deepStrictEqual(runs[1], runs[0], label);
+    // Without hooks too.
+    const plain = [];
+    for (const flow of [legacyRunWithPresentation, runWithPresentation])
+      plain.push(await presentedRun(flow, { ...scenario, profile: TEST_PROFILE }));
+    assert.deepStrictEqual(plain[1], plain[0], label);
+    // The dashboard, its --verbose diagnostics and the stop diagnostic stay
+    // redacted (with --json the report itself is the core's, here a fake).
+    if (!scenario.args.includes('--json'))
+      for (const [name, text] of runs[1])
+        if (['stdout', 'stderr'].includes(name))
+          assert.equal(text.includes('presented-secret'), false, `${label} ${name}`);
+    compared += 1;
+  }
+  assert.equal(compared, PRESENTED_ARGUMENTS.length * PRESENTED_OUTCOMES.length * 2);
+});
+
+test('presentation boundary: createPresenters gets a copy of the arguments, the hooks writable copies, in the order of the flow', async () => {
+  const methods = (log) =>
+    log.filter(([name]) => !['stdout', 'stderr'].includes(name)).map(([name]) => name);
+  const run = async (args, outcome) => {
+    const log = [];
+    const hooks = recordingPresenterHooks(log);
+    const writable = [];
+    for (const method of Object.keys(hooks)) {
+      const record = hooks[method];
+      hooks[method] = function (...values) {
+        writable.push(values.every((value) => !Object.isFrozen(value)));
+        return Reflect.apply(record, this, values);
+      };
+    }
+    await presentedRun(runWithPresentation, {
+      args,
+      outcome,
+      profile: recordingPresenterProfile(log, hooks),
+      log,
+    });
+    assert.ok(writable.every(Boolean), 'no argument of a hook is frozen');
+    return log;
+  };
+  const events = presentedEvents().flatMap(() => ['hooks.event']);
+  const log = await run(['task.md'], 'approve');
+  assert.deepEqual(methods(log), [
+    'createPresenters',
+    'loop',
+    ...events,
+    'hooks.beforeFinish',
+    'hooks.afterFinish',
+    'hooks.flush',
+    'hooks.flush settled',
+    'hooks.dispose',
+    'exit',
+  ]);
+  const parsed = parseAgentArguments(['task.md'], TEST_PROFILE);
+  const [, createThis, createOptions] = log[0];
+  assert.equal(createThis, true);
+  assert.deepEqual(createOptions, { repositoryRoot: '/synthetic/repository', ...parsed });
+  const calls = log.filter(([name]) => name.startsWith('hooks.') && name !== 'hooks.flush settled');
+  assert.ok(calls.every(([, self]) => self === true), 'this is the hooks object');
+  const byName = (name) => calls.filter(([entry]) => entry === name).map(([, , args]) => args);
+  assert.deepEqual(byName('hooks.event').map(([event]) => event), presentedEvents());
+  // The dashboard's state after each event, with the run's metadata.
+  const [, lastState] = byName('hooks.event').at(-1);
+  assert.equal(lastState.branch, 'feat/presented');
+  assert.equal(lastState.round, 1);
+  assert.deepEqual(byName('hooks.beforeFinish'), [[presentedReport('approve')]]);
+  const [[finalState]] = byName('hooks.afterFinish');
+  assert.deepEqual(finalState.result, presentedReport('approve'));
+  assert.deepEqual(byName('hooks.flush'), [[]]);
+  assert.deepEqual(byName('hooks.dispose'), [[]]);
+
+  // A stop: beforeFinish and afterFinish, and the exit code is set before
+  // flush; a dry run: no event and no finish hook, and after a stopped dry
+  // run only beforeFinish.
+  assert.deepEqual(methods(await run(['task.md'], 'workflow-error')), [
+    'createPresenters',
+    'loop',
+    ...events,
+    'hooks.beforeFinish',
+    'hooks.afterFinish',
+    'setExitCode',
+    'hooks.flush',
+    'hooks.flush settled',
+    'hooks.dispose',
+    'exit',
+  ]);
+  assert.deepEqual(methods(await run(['task.md', '--dry-run'], 'approve')), [
+    'createPresenters',
+    'loop',
+    'hooks.flush',
+    'hooks.flush settled',
+    'hooks.dispose',
+    'exit',
+  ]);
+  assert.deepEqual(methods(await run(['task.md', '--dry-run'], 'error')), [
+    'createPresenters',
+    'loop',
+    'hooks.beforeFinish',
+    'setExitCode',
+    'hooks.flush',
+    'hooks.flush settled',
+    'hooks.dispose',
+    'exit',
+  ]);
+});
+
+// Hooks that change everything they receive (copies: every change
+// succeeds) and then return (mutate) or fail (throw, reject), or break on
+// every property read (proxy).
+function hostilePresenterHooks(kind, attempts) {
+  const tamper = (value, seen = new Set()) => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) tamper(value[key], seen);
+    const changes = [
+      () => {
+        value.tampered = true;
+      },
+      () => {
+        value.status = 'APPROVE';
+      },
+      ...(Array.isArray(value) ? [() => value.push('tampered')] : []),
+    ];
+    for (const change of changes) {
+      try {
+        change();
+        attempts.changed += 1;
+      } catch {
+        attempts.refused += 1;
+      }
+    }
+  };
+  if (kind === 'proxy')
+    return new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('Synthetic presenter failure.');
+        },
+      },
+    );
+  const hooks = {};
+  for (const method of ['event', 'interrupt', 'beforeFinish', 'afterFinish', 'flush', 'dispose'])
+    hooks[method] = (...args) => {
+      for (const value of args) tamper(value);
+      if (kind === 'mutate') return undefined;
+      if (kind === 'reject') return Promise.reject(new Error('Synthetic presenter failure.'));
+      throw new Error('Synthetic presenter failure.');
+    };
+  return hooks;
+}
+
+test('presentation boundary: hooks that change their arguments, throw or reject leave the output and the exit code unchanged', async () => {
+  for (const scenario of presentedScenarios()) {
+    const label = JSON.stringify(scenario);
+    const expected = await presentedRun(runWithPresentation, { ...scenario, profile: TEST_PROFILE });
+    for (const kind of ['mutate', 'throw', 'reject', 'proxy', 'factory']) {
+      const attempts = { changed: 0, refused: 0 };
+      const profile = {
+        ...TEST_PROFILE,
+        createPresenters: () => {
+          if (kind === 'factory') throw new Error('Synthetic presenter failure.');
+          return hostilePresenterHooks(kind, attempts);
+        },
+      };
+      const loopReports = [];
+      const loop = presentedLoop(scenario.outcome, []);
+      const observed = await presentedRun(runWithPresentation, {
+        ...scenario,
+        profile,
+        loop: async (options) => {
+          try {
+            const report = await loop(options);
+            loopReports.push(report);
+            return report;
+          } catch (error) {
+            loopReports.push(error.report);
+            throw error;
+          }
+        },
+      });
+      // The fake loop is the only difference: it logs its options in `expected`.
+      assert.deepStrictEqual(
+        observed,
+        expected.filter(([name]) => name !== 'loop'),
+        `${label} ${kind}`,
+      );
+      // Changing a copy never throws.
+      assert.equal(attempts.refused, 0, `${label} ${kind}`);
+      // A completed dry run calls only flush and dispose, without arguments.
+      const dryRunPlan = scenario.args.includes('--dry-run') && scenario.outcome === 'approve';
+      if (['mutate', 'throw', 'reject'].includes(kind) && !dryRunPlan)
+        assert.ok(attempts.changed > 0, `${label} ${kind}`);
+      // The report the core returned is unchanged.
+      const [report] = loopReports;
+      if (report && scenario.outcome !== 'error')
+        assert.deepStrictEqual(
+          report,
+          scenario.args.includes('--dry-run') && scenario.outcome === 'approve'
+            ? { status: 'DRY_RUN_OK' }
+            : presentedReport(scenario.outcome),
+          `${label} ${kind}`,
+        );
+    }
+  }
+});
+
+test('presentation boundary: a presenter that throws in every method changes neither the JSON report nor the exit code', async () => {
+  for (const outcome of PRESENTED_OUTCOMES) {
+    for (const withHooks of [false, true]) {
+      const log = [];
+      const calls = [];
+      const throwing = new Proxy(
+        {},
+        {
+          get: (target, method) => () => {
+            calls.push(method);
+            throw new Error('Synthetic presenter failure.');
+          },
+        },
+      );
+      const parsed = parseAgentArguments(['task.md', '--json'], TEST_PROFILE);
+      const exitCode = await runWithPresentation({
+        profile: withHooks ? recordingPresenterProfile(log) : TEST_PROFILE,
+        repositoryRoot: '/synthetic/repository',
+        parsed,
+        runAgentReviewLoop: presentedLoop(outcome, []),
+        stdout: presentationOutput(log, 'stdout'),
+        stderr: presentationOutput(log, 'stderr'),
+        environment: {},
+        signals: presentationSignals(log),
+        cwd: () => '/synthetic/repository',
+        createRunner: ({ output }) => ({ output, cancel() {} }),
+        createPresenter: () => throwing,
+      });
+      assert.equal(exitCode, { approve: 0, 'workflow-error': 1, error: 2 }[outcome]);
+      const written = log.filter(([name]) => ['stdout', 'stderr'].includes(name));
+      const report =
+        outcome === 'error'
+          ? {
+              schemaVersion: 1,
+              status: 'STOPPED',
+              code: 'UNEXPECTED_ERROR',
+              error: redactSensitive('Synthetic unexpected token=presented-secret'),
+            }
+          : presentedReport(outcome);
+      assert.deepEqual(written, [
+        ['stdout', `${JSON.stringify(report)}\n`],
+        ...(outcome === 'approve'
+          ? []
+          : [['stderr', `${report.code}: ${report.stage ?? 'workflow'}\n`]]),
+      ]);
+      assert.deepEqual(
+        [...new Set(calls)].sort(),
+        ['diagnostic', 'dispose', 'event', 'finish', 'start', ...(withHooks ? ['view'] : [])].sort(),
+      );
+    }
+  }
+});
+
+// An interrupt while the loop runs; the loop stops after `release`.
+async function presentedInterrupt(flow, signalsToSend) {
+  const log = [];
+  const signals = presentationSignals(log);
+  let release;
+  const loop = async (options) => {
+    log.push(['loop']);
+    options.onEvent(presentedEvents()[0]);
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+    const report = {
+      schemaVersion: 1,
+      status: 'STOPPED',
+      code: 'INTERRUPTED',
+      stage: 'preflight',
+      error: 'Przerwano.',
+    };
+    throw new AgentWorkflowError('Przerwano.', { code: 'INTERRUPTED', stage: 'preflight', report });
+  };
+  const hooks = recordingPresenterHooks(log);
+  const running = presentedRun(flow, {
+    args: ['task.md'],
+    isTTY: true,
+    profile: recordingPresenterProfile(log, hooks),
+    log,
+    loop,
+    signals,
+  });
+  await new Promise(setImmediate);
+  for (const signal of signalsToSend) signals.emit(signal);
+  log.push(['listeners', signals.listenerCount('SIGINT'), signals.listenerCount('SIGTERM')]);
+  await new Promise(setImmediate);
+  release();
+  await running;
+  log.push(['listeners', signals.listenerCount('SIGINT'), signals.listenerCount('SIGTERM')]);
+  return log;
+}
+
+test('presentation boundary: the first SIGINT cancels the round, the second runs the interrupt hook and then kills the process, as before', async () => {
+  for (const signalsToSend of [['SIGINT'], ['SIGTERM'], ['SIGINT', 'SIGINT'], ['SIGINT', 'SIGTERM']]) {
+    const label = signalsToSend.join(' ');
+    const legacy = await presentedInterrupt(legacyRunWithPresentation, signalsToSend);
+    const observed = await presentedInterrupt(runWithPresentation, signalsToSend);
+    assert.deepStrictEqual(observed, legacy, label);
+    const names = observed.map(([name]) => name);
+    assert.equal(names.filter((name) => name === 'runner.cancel').length, 1, label);
+    const exit = observed.find(([name]) => name === 'exit');
+    assert.deepEqual(exit, ['exit', 1], label);
+    if (signalsToSend.length === 1) {
+      assert.equal(names.includes('hooks.interrupt'), false, label);
+      assert.equal(names.includes('kill'), false, label);
+      assert.deepEqual(observed.find(([name]) => name === 'listeners'), ['listeners', 1, 1], label);
+    } else {
+      // The hook first, then the signal again, with the listeners removed.
+      assert.ok(names.indexOf('hooks.interrupt') < names.indexOf('kill'), label);
+      assert.deepEqual(observed.find(([name]) => name === 'kill'), ['kill', 4242, signalsToSend[1]], label);
+      assert.deepEqual(observed.find(([name]) => name === 'listeners'), ['listeners', 0, 0], label);
+    }
+    assert.deepEqual(observed.at(-1), ['listeners', 0, 0], label);
+  }
+});
+
+test('presentation boundary: an interrupt hook that throws still lets the second interrupt kill the process', async () => {
+  const log = [];
+  const signals = presentationSignals(log);
+  const presentation = createPresentation({
+    presenter: { interrupt: () => log.push(['terminal.interrupt']), view: () => ({}) },
+    hooks: {
+      interrupt() {
+        throw new Error('Synthetic presenter failure.');
+      },
+    },
+  });
+  presentation.interrupt();
+  await presentation.lastInterrupt().finally(() => signals.kill(signals.pid, 'SIGINT'));
+  assert.deepEqual(log, [['terminal.interrupt'], ['kill', 4242, 'SIGINT']]);
+});
+
+test('presentation boundary [golden]: the terminal output through the boundary, with hooks that change their copies, matches the locale pl snapshot', async (t) => {
+  // The dashboard of the snapshot behind createPresentation, with hooks that
+  // change what they receive. The terminal presenter gets the originals,
+  // frozen here: a change it made would throw, be swallowed by the boundary
+  // and change the output against the snapshot.
+  const throughBoundary = (options) => {
+    const attempts = { changed: 0, refused: 0 };
+    const presentation = createPresentation({
+      presenter: createTerminalPresenter(options),
+      hooks: hostilePresenterHooks('mutate', attempts),
+    });
+    return {
+      start: () => presentation.start(),
+      event: (event) => presentation.event(deepFreeze(event)),
+      finish: (report, reportPath) => {
+        presentation.finish(deepFreeze(report), reportPath);
+        assert.equal(attempts.refused, 0);
+        assert.ok(attempts.changed > 0);
+      },
+    };
+  };
+  const golden = await openGoldenSnapshot('runs-locale-pl');
+  let compared = 0;
+  for (const [label, profile, scenarios, runner] of goldenRunProfiles()) {
+    for (const scenario of scenarios) {
+      const entryName = `${label}: ${scenario.name}`;
+      await t.test(entryName, async () => {
+        const { built } = await goldenRunEntry(scenario, profile, {
+          runner: runner(),
+          dashboard: throughBoundary,
+        });
+        const difference = await golden.record(entryName, built);
+        assert.equal(difference, null, difference ?? '');
+        compared += 1;
+      });
+    }
+  }
+  assert.equal(compared, RUN_SCENARIOS.length + CLAUDE_IMPLEMENTER_SCENARIOS.length);
+});
+
+test('presentation boundary: hooks that change their arguments, throw or reject, and a presenter that throws, leave the report, the ledger and the exit code of a run unchanged', async () => {
+  const outcomes = [];
+  // presenter: a presenter that throws in every method, with hooks that
+  // change their arguments.
+  const throwingPresenter = () =>
+    new Proxy(
+      {},
+      {
+        get: () => () => {
+          throw new Error('Synthetic presenter failure.');
+        },
+      },
+    );
+  for (const kind of [undefined, 'mutate', 'throw', 'reject', 'proxy', 'presenter']) {
+    const directory = await createRepository({ gitEnvironment: GOLDEN_GIT_ENVIRONMENT });
+    try {
+      const attempts = { changed: 0, refused: 0 };
+      // The same profile keys in every run; without kind, no hooks.
+      const hooksKind = kind === 'presenter' ? 'mutate' : kind;
+      const profile = {
+        ...TEST_PROFILE,
+        createPresenters: () =>
+          hooksKind ? hostilePresenterHooks(hooksKind, attempts) : undefined,
+      };
+      const log = [];
+      const parsed = parseAgentArguments(['task.md', '--json'], profile);
+      const exitCode = await withGoldenGitEnvironment(() =>
+        runWithPresentation({
+          profile,
+          repositoryRoot: directory,
+          parsed,
+          runAgentReviewLoop: (options) =>
+            runAgentReviewLoop({
+              ...options,
+              now: () => new Date('2026-08-08T12:00:00.000Z'),
+              randomId: '1234abcd',
+              monotonicNow: () => 100,
+              prepareCheckEnvironment: fakePrepareCheckEnvironment,
+              createSnapshot: fakeSnapshot,
+              codexRound: async ({ round, findings }) => {
+                await writeFile(join(directory, 'implementation.txt'), `runda ${round}\n`);
+                return completedCodex(round, {}, findings);
+              },
+              claudeReview: async () => approveReview(),
+            }),
+          stdout: presentationOutput(log, 'stdout'),
+          stderr: presentationOutput(log, 'stderr'),
+          environment: {},
+          signals: presentationSignals(log),
+          cwd: () => directory,
+          createRunner: () => createMockRunner(),
+          createPresenter: kind === 'presenter' ? throwingPresenter : fixedTerminalPresenter,
+        }),
+      );
+      // The hooks changed their copies without an error.
+      assert.equal(attempts.refused, 0, kind);
+      if (['mutate', 'throw', 'reject', 'presenter'].includes(kind))
+        assert.ok(attempts.changed > 0, kind);
+      // The longer path first: the real path may contain the other.
+      const normalize = (text) =>
+        goldenTemporaryPaths(directory, '<repo>')
+          .sort(([left], [right]) => right.length - left.length)
+          .reduce(
+          (value, [path, marker]) => value.split(path).join(marker),
+          text,
+        );
+      const written = log.map(([name, text]) => [name, normalize(text)]);
+      const report = JSON.parse(log.at(-1)[1]);
+      const runDirectory = join(directory, '.agent-review-loop', 'runs', report.runId);
+      const verified = await loopExports.verifyRunLedger({
+        repositoryRoot: directory,
+        runId: report.runId,
+        stateDirectory: loopExports.resolveCheckpointStateDirectory(process.env),
+      });
+      // Durations of the real Git processes of the mock runner vary.
+      const stable = (text) => JSON.stringify(stripDurations(JSON.parse(text)));
+      outcomes.push({
+        exitCode,
+        status: report.status,
+        written: written.map(([name, text]) => [name, stable(text)]),
+        report: stable(normalize(await readFile(join(runDirectory, 'report.json'), 'utf8'))),
+        ledger: normalize(await readFile(join(runDirectory, 'ledger.jsonl'), 'utf8')),
+        verified: [verified.status, verified.mac],
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  assert.equal(outcomes[0].exitCode, 0);
+  assert.equal(outcomes[0].status, 'APPROVE');
+  // The chain verifies; the mac only when an earlier test of this file made
+  // the checkpoint key (the same for every run below).
+  assert.equal(outcomes[0].verified[0], 'ok');
+  assert.ok(['absent', 'verified'].includes(outcomes[0].verified[1]));
+  for (const outcome of outcomes.slice(1))
+    for (const key of Object.keys(outcome))
+      assert.deepStrictEqual(outcome[key], outcomes[0][key], key);
 });
 
 // Runs last: no test wrote in the user's state directory.

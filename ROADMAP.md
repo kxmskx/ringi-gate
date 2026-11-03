@@ -216,8 +216,13 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   reports them to the runner.
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).
-- Entry point, branding and a presentation boundary (the terminal dashboard
-  as one of several presenters).
+- Entry point and branding. The presentation boundary is done (unreleased):
+  one flow for both entry points, the terminal dashboard as the built-in
+  presenter `terminal`, the `createPresenters` hooks next to it (see
+  [docs/architecture.md](docs/architecture.md#presentation-boundary)).
+  Open: a second built-in presenter or a profile key to choose one, only
+  if a project needs what `--no-animation`, `--json` and `createPresenters`
+  do not give (for example a quiet CI mode with only the final summary).
 - Built-in roles that meet the stability criteria and can be declared
   `stable`; see [docs/providers.md](docs/providers.md#stability). Probes
   on macOS are described in

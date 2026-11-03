@@ -4,8 +4,9 @@
 // ringi.config.mjs at the root of the Git repository of the current
 // directory (loadProjectProfile, fingerprinted; it runs only when committed),
 // and that root is the repository the run works on. Options go to the same parser
-// (parseAgentArguments); the loop, the report, the events and the exit
-// codes are the same. scripts/agent-review-loop.mjs itself is unchanged.
+// (parseAgentArguments), and both hand the run to the same function
+// (runWithPresentation, scripts/ringi-presentation.mjs): the loop, the
+// report, the events, the presentation and the exit codes are the same.
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,12 +22,12 @@ import {
   verifyRunLedger,
 } from './agent-review-loop-lib.mjs';
 import {
-  createTerminalDashboard,
   formatErrorDiagnostic,
   parseAgentArguments,
   resolveAgentRoles,
   TASK_MODE_USAGE,
 } from './agent-review-dashboard.mjs';
+import { runWithPresentation } from './ringi-presentation.mjs';
 import {
   assertProfileCommitted,
   findRepositoryRoot,
@@ -363,114 +364,13 @@ async function runCommand(args) {
     console.error(`${parsed.error}\n${usage}`);
     return 2;
   }
-  const dashboard = createTerminalDashboard({
+  // The flow of scripts/agent-review-loop.mjs, with the project profile's
+  // record for the core.
+  return runWithPresentation({
     profile: PROFILE,
-    output: process.stdout,
-    diagnosticOutput: process.stderr,
-    taskPath: parsed.taskPath,
-    taskMode: parsed.taskMode,
-    noAnimation: parsed.noAnimation,
-    json: parsed.json,
-    verbose: parsed.verbose,
+    repositoryRoot,
+    parsed,
+    runAgentReviewLoop,
+    loopOptions: { projectProfile },
   });
-  let presenters;
-  try {
-    presenters = PROFILE.createPresenters?.({ repositoryRoot, ...parsed });
-  } catch {
-    /* Optional presentation never changes the report or exit code. */
-  }
-  const present = async (method, ...presentArgs) => {
-    try {
-      await presenters?.[method]?.(...presentArgs);
-    } catch {
-      /* Optional presentation never changes the report or exit code. */
-    }
-  };
-  const presentEvent = (event) => {
-    dashboard.event(event);
-    void present('event', event, dashboard.state);
-  };
-  const runner = createProcessRunner({
-    output: { write: (text) => dashboard.diagnostic(text) },
-  });
-  let interruptCount = 0;
-  const onInterrupt = (signal) => {
-    interruptCount += 1;
-    dashboard.dispose();
-    if (interruptCount === 1) {
-      runner.cancel();
-      return;
-    }
-    process.off('SIGINT', onSigint);
-    process.off('SIGTERM', onSigterm);
-    void present('interrupt', dashboard.state).finally(() => {
-      process.kill(process.pid, signal);
-    });
-  };
-  const onSigint = () => onInterrupt('SIGINT');
-  const onSigterm = () => onInterrupt('SIGTERM');
-  process.on('SIGINT', onSigint);
-  process.on('SIGTERM', onSigterm);
-
-  let exitCode = 0;
-  try {
-    if (!parsed.dryRun) dashboard.start();
-    const report = await runAgentReviewLoop({
-      profile: PROFILE,
-      projectProfile,
-      runner,
-      output: process.stdout,
-      repositoryRoot,
-      invocationCwd: process.cwd(),
-      taskPath: parsed.taskPath,
-      taskMode: parsed.taskMode,
-      implementerModel: parsed.implementerModel,
-      implementerEffort: parsed.implementerEffort,
-      reviewProfile: parsed.reviewProfile,
-      reviewOnly: parsed.reviewOnly,
-      checkpoint: parsed.checkpoint,
-      resume: parsed.resume,
-      dryRun: parsed.dryRun,
-      verbose: parsed.verbose,
-      onEvent: parsed.dryRun ? undefined : presentEvent,
-    });
-    if (!parsed.dryRun) {
-      void present('beforeFinish', report);
-      dashboard.finish(report, report.reportPath);
-      void present('afterFinish', dashboard.state);
-      if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const report =
-      error instanceof AgentWorkflowError && error.report
-        ? error.report
-        : {
-            schemaVersion: 1,
-            status: 'STOPPED',
-            code: 'UNEXPECTED_ERROR',
-            error: redactSensitive(message),
-          };
-    void present('beforeFinish', report);
-    dashboard.finish(report, report.reportPath);
-    if (!parsed.dryRun) void present('afterFinish', dashboard.state);
-    if (parsed.json) {
-      process.stdout.write(`${JSON.stringify(report)}\n`);
-      process.stderr.write(
-        `${report.code ?? 'STOPPED'}: ${report.stage ?? 'workflow'}\n`,
-      );
-    } else if (parsed.dryRun) {
-      process.stderr.write(
-        `${formatErrorDiagnostic(report, redactSensitive, dashboard.state.locale)}\n`,
-      );
-    }
-    exitCode = error instanceof AgentWorkflowError ? 1 : 2;
-  } finally {
-    dashboard.dispose();
-    await present('flush');
-    await present('dispose');
-    process.off('SIGINT', onSigint);
-    process.off('SIGTERM', onSigterm);
-  }
-  return exitCode;
 }

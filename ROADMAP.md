@@ -197,7 +197,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   the aggregator requires the review and can compare the lane jobs' checks;
   the example workflow uploads the evidence as an artifact with a pinned
   `actions/upload-artifact`.
-- Prompts as configuration, part 1 (unreleased): `prompts` in the profile
+- Prompts as configuration, part 1 (1.2.0): `prompts` in the profile
   (opt-in) adds the project's guidance for the writer and the reviewer in a
   quoted section of its own before the original task, after every fixed
   rule, which it cannot change; the report, the dry-run plan and the ledger
@@ -236,8 +236,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   reaches the reviewer's environment, and evidence of the available tools
   beyond the model's report.
 - Prompts as configuration, part 2: guidance for the `analysis` mode,
-  if a project needs it (the key stays reserved). Part 1 is under
-  Unreleased in the changelog.
+  if a project needs it (the key stays reserved). Part 1 is in 1.2.0.
 - Tests split into a generic part and synthetic example repositories
   (Node.js/pnpm first).
 - After the first publication: npm trusted publishing configured for the

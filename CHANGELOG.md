@@ -7,6 +7,12 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+## 1.2.0 — 2026-11-03
+
+Project guidance in prompts as profile configuration, and probes of the
+current CLI versions. Every change is additive to the 1.0 contract; a
+profile without `prompts` behaves as in 1.1.1.
+
 ### Added
 
 - Project guidance in prompts (opt-in): the profile key `prompts`,

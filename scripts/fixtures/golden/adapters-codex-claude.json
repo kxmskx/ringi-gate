@@ -21,21 +21,17 @@
     "moduł dostawców": {
       "header": {
         "exports": [
-          "CLAUDE_EFFORTS",
-          "CODEX_MODEL",
           "DEFAULT_IMPLEMENTER",
           "DEFAULT_REVIEWER",
           "DEFAULT_REVIEW_PROFILE",
-          "DEFAULT_SOL_EFFORT",
           "PROVIDERS",
           "REVIEW_PROFILES",
-          "SOL_EFFORTS",
           "isValidModelId"
         ]
       },
       "subtrees": {
         "constants": {
-          "sha256": "cec38c1e0b0f640cf0f81fe66d7e3cf829cf81b93a6846292ce2acdf19b2758a"
+          "sha256": "09e8c46c6a99f3dc2e54648ad71dc7d569599e87ef3fa6b000c492afb5ff4422"
         },
         "shape": {
           "sha256": "ee30680325560932b27c97532c9fc8dfea361ae5ea4a44b07f9ba2ae84082546"

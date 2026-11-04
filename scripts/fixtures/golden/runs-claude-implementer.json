@@ -27,19 +27,18 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "cb0947e71649cfa9520245352290f9aaea6d6dfcc3c1373c6e413fa9a766f76f",
-          "orderedSha256": "b6785059eb4a3b6a09123361a2901aacd5b6f00db0446ad3a7aea9fc48c9e3b3"
+          "sha256": "49b41344905d47722188fdf860ce994b0f76e7b65f381d5065cfb44aa0c50645",
+          "orderedSha256": "233c9b8cf00415bffce4d873869fd7502c22689b49ff3e20e0329a1097345a90"
         },
         "events": {
-          "sha256": "085dff4d1e371994e207c1a2b6ce48a59dfdc9088fbe96c45c357848547890c9",
-          "orderedSha256": "e011c0424338c375c330678c279633ceb61419d157364dd7a7ca11200c645d9b"
+          "sha256": "c19fac967086d1fd30c0889501cca4ad30da2e32a37dd0a8ede6387f7b68b741",
+          "orderedSha256": "8bb7826a8c25907ddfa17acd5fa1a3b38f62bd94f8483a61cf542dfdcdd47204"
         }
       }
     },
@@ -51,19 +50,18 @@
         "taskMode": "analysis",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "1b297b54d6cd2cb38aca60ae7de8a590414fda1a2812930aac966555b24f772a",
-          "orderedSha256": "0507b36ea994922bcaa08babe7acf8fda25f683dadfd129c7c3ff699c3664476"
+          "sha256": "8f75ee25ca340012d39be7bb3e63a9dad4012e100cc5550959273fe297e7d449",
+          "orderedSha256": "9f5cc2318a220f2dba598835744a6af64a1d1859a87ef0d68f648bf9010523aa"
         },
         "events": {
-          "sha256": "b0cdee0211bdea07dc6aaa270546f4292a716840948aefd78ba8d4827a2d1890",
-          "orderedSha256": "bedc128251fea200fa47fe1ea06f4426fb8b5f58375f9edac2477bda24dcce67"
+          "sha256": "f71098d522c5fc493ba7dda2236fe5b99cb7be0f45bec753c1c9a23875e03d60",
+          "orderedSha256": "f310f89cfb8628aab676483115a7926dcfe9cc3348f8013d6131b462bae79834"
         }
       }
     },
@@ -75,19 +73,18 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6-sol/max",
         "implementer": "codex/gpt-6-sol/max",
-        "review": "critical-opus 0/1",
+        "reviewerAttempts": "critical-opus 0/1",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "cf5e911a88da8d537db92adf9de02c0a6068a7812a4b30061ac74aea8b86f5c0",
-          "orderedSha256": "635f4c23ca4a24ccd8e304ad91c8963af7630a8245d07164c0485a2222eb3d31"
+          "sha256": "72fa6b56aceb2b24e271d1b1fe91d8a6994a6b76629437ec72dcaf3c7d74f063",
+          "orderedSha256": "5f9132ab897eb92b820c88e48cab54a89dbf8ee16225db6f4cc805722d9ae6ef"
         },
         "events": {
-          "sha256": "c856778f3fa4e62537e3ae02a977a84fe05d49abd08609709cf8979280e72085",
-          "orderedSha256": "5f179dca88ad9e53c4b746adcee0957995e5c973787b1a5687193e002b00eefc"
+          "sha256": "efcada2cb8d80f0c060d72b93b400d7ac844aa8db67ac082739afb696a5feabd",
+          "orderedSha256": "fdcf6e624ff0bd0ffc50e1788ab76345784b862d842f685c1d2c702ad989b698"
         }
       }
     },
@@ -99,19 +96,18 @@
         "taskMode": "implementation",
         "rounds": 2,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 3/2",
+        "reviewerAttempts": "critical 3/2",
         "events": 38
       },
       "subtrees": {
         "report": {
-          "sha256": "3b3d77563fe1862f301b17a51a5b5741144d38da3afc3fdb31c5f7d64c239e55",
-          "orderedSha256": "f8b366ae4c2f658f6fafe9f99cb3c7b67e14f7b49295e64daf780d6bdeb3a7f4"
+          "sha256": "48011a3cae88e3f4aca7fd5c9922b3b7a1a937b7e741835e0dbadc76e1ee07f2",
+          "orderedSha256": "7efa2b472d4c094616df9f765e78b72511c44d2d14eb5afcb9da4ca1e22d0436"
         },
         "events": {
-          "sha256": "e741a0f4b93a805600c35649f0a96f81291e633c490ff8fdbba5cc5b9e168f90",
-          "orderedSha256": "fe744012b5d93bfbd416dc06af9aa310fe22b965f43625a26d4e6fdd8352f4da"
+          "sha256": "840e2b2ba05475d0f28073a278459f6651d660fb82cd944fdc3d61fdb3f90c0e",
+          "orderedSha256": "1488f0a3e6621bd2470c470567eec7b49b34b5a9abd9e37ac3c71dd39e0908a6"
         }
       }
     },
@@ -123,19 +119,18 @@
         "taskMode": "implementation",
         "rounds": 2,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 2/2",
+        "reviewerAttempts": "critical 2/2",
         "events": 36
       },
       "subtrees": {
         "report": {
-          "sha256": "cf0df7cf113557b7839bfbf4c83406e8bc3ae513ea25feb53c2162d75bcf3137",
-          "orderedSha256": "dfc1530c3e944491c598647c3c83573b9cdb83914d7157b3338069ec08663f31"
+          "sha256": "f95d87307342120af6b0297d03915a59a8afcc28f1369811bebb7cb565274246",
+          "orderedSha256": "9004b7f25e64c79ab55eb72b2f8d91bf0839cf318c1779d22cf7d6a489174de6"
         },
         "events": {
-          "sha256": "f515ebffee906a080d1b084306b9120cd43aab8a5ea75e3b11227671dd33d3b8",
-          "orderedSha256": "9e0d4883dbdc96e5c59e54dbcf7bceb782dc8462de2a996aeebb9e04b37a558a"
+          "sha256": "a867352a4d7869178aa5a730964998db36ae36c353c9251e0cc3f402042bfaf8",
+          "orderedSha256": "225d71c90a6de514746d3510d30e4334f1f11676c37e52cf80f31c8df3e84123"
         }
       }
     },
@@ -147,19 +142,18 @@
         "taskMode": "implementation",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "undefined 0/undefined",
+        "reviewerAttempts": "null 0/undefined",
         "events": 14
       },
       "subtrees": {
         "report": {
-          "sha256": "8dffc77b3428a70372f1b451b9c69a267b66e29bb2dc389e3779f8f9a38a5aca",
-          "orderedSha256": "3fb7af906ec981d378a7a315747513310ea0be95ef2659a33c3c0c4774775d5f"
+          "sha256": "0fc249ca84b37b97d732d75c5dfa76089d0ad38ade031ae20fb5327a2a13e334",
+          "orderedSha256": "71cea506cd6d1954d3dbc07abd85c051b718d8a69ee60df695b66ee7d5c45657"
         },
         "events": {
-          "sha256": "1b011bea8a43ce56b525a858b32df8b4b7f20ad5c1210f0af8bb6a97a9004e78",
-          "orderedSha256": "9f84f0f150eddfa70920167acef191918853dcfbc8e35b29a0c6602a6094b1bc"
+          "sha256": "9a7b3f817a1bd50b5fffc3c15f4e1f8a5d7560aef9cf96319b680b1835acd40e",
+          "orderedSha256": "4d3f5b8cc0036657865898b1520f32e1487dbe6f8565b1756d0b12dae241a958"
         }
       }
     },
@@ -171,19 +165,18 @@
         "taskMode": "analysis",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 1/2",
+        "reviewerAttempts": "critical 1/2",
         "events": 16
       },
       "subtrees": {
         "report": {
-          "sha256": "1351695bc2217fec8f6dfd6023a0e1ce5d8aa1b583d9e7a85272dfd928c89e5e",
-          "orderedSha256": "68744566af9ae5e463953eecd39aa52fa75f345c131ce8460da54bc00cc5d913"
+          "sha256": "d7e76f163b11c1fa6f0b8c1e7bb5f32316098682d24029a88e2251d13216f3d7",
+          "orderedSha256": "67be3edf3e37ec8a006643a4b6acc267265db0561ce1853d7bb73837babee570"
         },
         "events": {
-          "sha256": "709daf483c29a4709a5d3e91e307ec723b4a96599ad5c6ab7301bad17e202e76",
-          "orderedSha256": "c16664a857e5d7383bc96f98879f88f29b904e95dca9566656270cc4cb113dac"
+          "sha256": "6aca50757a9030f5aba76667e629b03d85ed01b7b7e25c724ac4775be45ddc8f",
+          "orderedSha256": "45984fe47edd25df9ff6fb5d8ca0b9c17d0dbf092beddbf0f5bfe7dd9f26cb07"
         }
       }
     },
@@ -195,19 +188,18 @@
         "taskMode": "implementation",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "critical 1/2",
+        "reviewerAttempts": "critical 1/2",
         "events": 20
       },
       "subtrees": {
         "report": {
-          "sha256": "c6347cee36da1ba2bc16043807e113fc036daa4c70b9d1c0909b1ec571d626a8",
-          "orderedSha256": "1151203bc632d7eb0bdb987b7130bcb9d5efdea87cc3d1c32ec0f5efe3ba529f"
+          "sha256": "bbcb4c5e9a8cdce098e8d9f9ea727a5944b4ef5593e6ea3d74aa227b22ba7e65",
+          "orderedSha256": "803e22d56bb4c5f337ec5e3f36fbc047303f1aa1ae43249000184ae41636ce0b"
         },
         "events": {
-          "sha256": "023fb19c6b6a5b958fced506fe03d2246a400dca20888a411250bb7e91cd1030",
-          "orderedSha256": "c4cf3849d6fde7ed218809e1d438b40570e096b537188d8032313386b4c92423"
+          "sha256": "cd0a9e047093b23bed027210698387bfcef5bf5972c12463236598b00463986d",
+          "orderedSha256": "7dcd2667bbfc5963c2a671032783fa645a22efb7fd1707bf079ac3e07e8219e3"
         }
       }
     },
@@ -219,43 +211,41 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": null,
-        "sol": "gpt-6.1-sol/high",
         "implementer": "codex/gpt-6.1-sol/high",
-        "review": "invalid 0/0",
+        "reviewerAttempts": "invalid 0/0",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "704ff20fdac8202bb57fd4f7fe1e59bb9ce202a68dfa52d131d5da35c17842e5",
-          "orderedSha256": "ab4cc1ac5d8d6466e9eb000e6ae954070953eeff2fa5194915963bd30bdb3111"
+          "sha256": "281921ca595793fc190da4b4e28d7d4ffdd071a58bb594e0abed81524a2370a9",
+          "orderedSha256": "5dde093ebef32b22f055ce3e9015239a6afe38905d6fd98f351f8fa08afaf6b9"
         },
         "events": {
-          "sha256": "05bca02ff1aabe628e15ac4fb18bd67d93fbfd1b34b5484eb8712b0fa275add4",
-          "orderedSha256": "d4269c2d7c247a7eb81e94da533b4cb53d4ad38060e3cb16ea550efe4cf48057"
+          "sha256": "ea1735c2cdf5d609b7427c3fe7f486446a26929967efc4065863966040cb79ab",
+          "orderedSha256": "e4c9c8402e7ea6379ed6a260c97c23888f64eb36e26bc595b3b0bc0aaca6fff9"
         }
       }
     },
-    "domyślny: STOPPED INVALID_SOL_EFFORT": {
+    "domyślny: STOPPED INVALID_IMPLEMENTER_EFFORT": {
       "header": {
         "status": "STOPPED",
         "stage": "preflight",
-        "code": "INVALID_SOL_EFFORT",
+        "code": "INVALID_IMPLEMENTER_EFFORT",
         "taskMode": "implementation",
         "rounds": 0,
         "head": null,
-        "sol": "gpt-6.1-sol/null",
         "implementer": "codex/gpt-6.1-sol",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "114a6dd5363dc60b10e23ca1faede06c92faf7e52e31793b9679739098934db0",
-          "orderedSha256": "836ea960e2d929a671ef2579eef8f6d59d53d640234ec6906d196425f3c3b34d"
+          "sha256": "67df545392e3fa993eaf4420b014721acbcec39c272ee43e173a10d697831b8e",
+          "orderedSha256": "a79be8b9f612ae2889805796e14da488dcdb35c0b74060caae892a780695ed8f"
         },
         "events": {
-          "sha256": "d51644b9edd2e402feef8873e3c947a079360813887989adb4d41d1c74f21698",
-          "orderedSha256": "c8143d619b5895a9bb00d5331da64c66327f0c00ee0b9ca95243d3c74450b148"
+          "sha256": "e6b0a4ab226d05207fa6c14eda99849b52113ea08254205cdbc9b0326a971618",
+          "orderedSha256": "2195568ad749780d408069350a46cc6e1ed0852a97412960f75abc642fe74681"
         }
       }
     },
@@ -267,19 +257,18 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "b8a0d6943c888512e7cd37118b7255e919c680a6fea4bb1aff6315494772efe7",
-          "orderedSha256": "92e6d2238493ad03433e22dc0314760ef53af55e5e24f9c08babbe9c6f066080"
+          "sha256": "01d0bdd05b0e04db11c82c8cc4b9ce7b7e13c4b5b77eebfdfee6af8d42409871",
+          "orderedSha256": "7c04644ffbcbba46c8ca49c0ea081fead23760704121408aac0237b4b5b8c9d2"
         },
         "events": {
-          "sha256": "6dd6f9243efb589151f7e4542e669952e6d2af83ce132c40d977906a192cd7e4",
-          "orderedSha256": "14b069c9080dc9b8ada8b989df059f37eca6527ac963b354f80e4f81d8c00964"
+          "sha256": "42e7b85bbbd0c636404eff563f7630caf6aa66e760f4c76eac7dd8016620a178",
+          "orderedSha256": "4ba1a2017e0d724f412c251b58accd1d51a09a8bb8499de6ab8097a3aa143c05"
         }
       }
     },
@@ -291,19 +280,18 @@
         "taskMode": "analysis",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "2be8d2667b916eaa190b962fb0bb9575355da8060f31cd33cb91fe0542469e52",
-          "orderedSha256": "eaa144ce1b2300da2ece2c293fdd4f964bf1e79ac94dffa0a7c8e84b238845a2"
+          "sha256": "5b671e2415de3bee1d1add4921819252d479f6ac50359ff0bacd7d216e8181f0",
+          "orderedSha256": "d37a80a582c9f2bfa87921659c6cc10566929e3ccc246cb29a21c98d904efc52"
         },
         "events": {
-          "sha256": "c6ff2ff22a110e2b11cbe0b597e346912bf6e98bccbf9f3a2a763aac9a279a7e",
-          "orderedSha256": "db20e5ccca3b9484cac037e990be924442da490bea8592710844752c7aa83cc0"
+          "sha256": "1a3f4c1722734e0ff39471d119196de0576644a82c79959b98c2abaac5ff4420",
+          "orderedSha256": "2d617a8db6e9f72ce9192bb63e4b795b596c5cfb708f82d9bba90ebaf096572d"
         }
       }
     },
@@ -315,19 +303,18 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-fable-5/xhigh",
         "implementer": "claude/claude-fable-5/xhigh",
-        "review": "critical-opus 0/1",
+        "reviewerAttempts": "critical-opus 0/1",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "f16db90e979c46d4f438ee8a01b46f5bcc39722a6333df7d43e5c5bd5895f576",
-          "orderedSha256": "898d26ce9a3fc693dcec695a41c3a6b90564e3436a6958166c15c35ef6f2b481"
+          "sha256": "852157abedf9559b5673c089037ed630c48305d5c12629a8a7ccc285ed5a5d95",
+          "orderedSha256": "048af2b50ae41e80f0d5978e113950218ef6a891276e51fe5674210ca016bb43"
         },
         "events": {
-          "sha256": "38df27216da1e6518f41dff3a76ebf082f4c2595e0f28c36b75d00162a4b653f",
-          "orderedSha256": "e616cf0fdd523ef6624199fbe1990193ee4e66d0f5a021cdde5446c4b7313266"
+          "sha256": "a9bcc2ab59bcba74099b83af081101036669f4a919c2389a40fb5dd1eff85f04",
+          "orderedSha256": "d6f7b9a268e68e7bf3b21cabb1e715fb12d9e372a4f13ef70e06742b05108d1e"
         }
       }
     },
@@ -339,19 +326,18 @@
         "taskMode": "implementation",
         "rounds": 2,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 3/2",
+        "reviewerAttempts": "critical 3/2",
         "events": 38
       },
       "subtrees": {
         "report": {
-          "sha256": "cd3229096d041d739a5a51379630daa67d40b47b0b97239b26da64084441aa3d",
-          "orderedSha256": "7438d9d7b5a02acfd8e1e8faba02977b7ee419476c05bb5eb83d12b1463b2ade"
+          "sha256": "958c67b9531df6c88691dc217f467d98f15fb93914bc623d2bb530b69037b494",
+          "orderedSha256": "b997a05a7264e879fc123d25b9027d8be57950f9669c5f1ea853802beb054aa1"
         },
         "events": {
-          "sha256": "b15261b9e8942a9039793141937c43581b41bad0f8916c167ac7bc692ad6ade8",
-          "orderedSha256": "6026d2cb886ced93ed2e611741c49e5c64a7433e0b4adb41b251aaa740c6b096"
+          "sha256": "51fd6b60f82dc05be42f33466302b4b24cd090ac8c5f0f9869a419cc831fe3c8",
+          "orderedSha256": "c90008c3ee7b71486fd350c4b530f8be9e5364f04456c1620efc166c83b44548"
         }
       }
     },
@@ -363,19 +349,18 @@
         "taskMode": "implementation",
         "rounds": 2,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 2/2",
+        "reviewerAttempts": "critical 2/2",
         "events": 36
       },
       "subtrees": {
         "report": {
-          "sha256": "aad9bb52c38395efe590c30765424382bcf89da9e9d6c4029e38f5365e2d1f15",
-          "orderedSha256": "3ab2485049ff980c5a5a8555d1808c1510af2c36a499aa462e96d5c42e0d564d"
+          "sha256": "00a999a6c69c4667b6c6516f93a654daf227338ffd10e33001ea6f7509cd8d3f",
+          "orderedSha256": "75496685a18863bb71acd0becb8078c3de753277600edffa0f37ac1698f02ae5"
         },
         "events": {
-          "sha256": "33725dd8eb2b3dd23871ffe7a5a0c14a82451dd7e6a5f1f23081c0eb7634c5b6",
-          "orderedSha256": "2350ee4879a815eb67d03ab0d5adf0e25c0de328824f0a80fe855aa9e3f48298"
+          "sha256": "fae22faf437ef6ee2fe2d05268cc7cf5ded2a5dbe9cf79f80ad4348c6bf4a920",
+          "orderedSha256": "37e1f81e89dd22ced39ba03ba991fed8465fe74b2c216f7eaca0f95a1c063d53"
         }
       }
     },
@@ -387,19 +372,18 @@
         "taskMode": "implementation",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "undefined 0/undefined",
+        "reviewerAttempts": "null 0/undefined",
         "events": 14
       },
       "subtrees": {
         "report": {
-          "sha256": "9d7aa2af140e812d54aedb5c901527647cd83991da8737a3d9a08a30867a9d1f",
-          "orderedSha256": "d0f5378ef4d881ae9568a96e4f756e28033686203f709aac460a8f0911bed6cd"
+          "sha256": "586e71130cc2133ad961cfff88429d960d46d6a91c8374654f75a710bb260f25",
+          "orderedSha256": "260d80bdeb60bb6fa08c873216b6fe7f43c87f9f41c8ccf163598e62565b02c3"
         },
         "events": {
-          "sha256": "23f0deebeeecb1c181cd865c5201e0fbc04b7cd0a9e4ef91329c5debdfd17732",
-          "orderedSha256": "a93456a15407d2c353293e5f006352792603053cdb7f73bfa56eab885127abc4"
+          "sha256": "fbe130c262e9c5870b2888572e2666c6b78531cb1605655d6401f6cdc6a1a2e9",
+          "orderedSha256": "940f6be686ee135cfb690d3413b29c20cb350b6b2d08d68ab9c0574648f16ce4"
         }
       }
     },
@@ -411,19 +395,18 @@
         "taskMode": "analysis",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 1/2",
+        "reviewerAttempts": "critical 1/2",
         "events": 16
       },
       "subtrees": {
         "report": {
-          "sha256": "3e691f93d23316058c38305cd8113fc023ea7bab7d6f1271bf89d4b5f4d75110",
-          "orderedSha256": "4f5e78c9cfd9527238662fcd19257b00b89f44e17200f574efa34968b0326026"
+          "sha256": "63dd27de726112cefdccf58b9c75d1fdd74624277a4c10fa3017b1482bf29199",
+          "orderedSha256": "138d3a42ecd74b783948c5d67e448669bdea61c97f5ec69eda09723d31f75031"
         },
         "events": {
-          "sha256": "1d7c378c01b7d2d653f2b7772ce32a855ff15bfdd36a9cd012ac54b3eea92107",
-          "orderedSha256": "646d4ea0f1f36fdd22e87c0e2957db6d716457fbd1186c4aa25ae7ccf800c737"
+          "sha256": "05c3a1845b7093f67f0d4ef85ff7f33972e731f5ec1625c273d808520b286ef7",
+          "orderedSha256": "c19a3091745ec3219d4a8b78adf0e26ed0e4b32d9970326cc3fde397a87106b7"
         }
       }
     },
@@ -435,19 +418,18 @@
         "taskMode": "implementation",
         "rounds": 1,
         "head": "4b8b32cfe779d9e9e0e101b9093d7b56a8f42858",
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "critical 1/2",
+        "reviewerAttempts": "critical 1/2",
         "events": 20
       },
       "subtrees": {
         "report": {
-          "sha256": "11188f22edff866146197918c1f6da7284429d8c3994205f83eaa1f8789954cc",
-          "orderedSha256": "4c1c17a3c8aa53cc3563ded9fa783f7de05413bfabfee6032dc66833a1f5740f"
+          "sha256": "159240d167eaac3f0fa82a9a59edcb081307465e47ad8ab108f8f3c0b1518df2",
+          "orderedSha256": "3f3a0e7f7f9cc94f2455841dfc9f5788aedb22687a5d11661d74548bbc57c348"
         },
         "events": {
-          "sha256": "8875911995dd0c1c1ce304c910fa977bcc83249efe55c460a0f0b8f1f7176d77",
-          "orderedSha256": "34af622db3feed2e9839cb12de0db2b1ec9e940ac0206710fc17de470c3bbe1a"
+          "sha256": "23eea7bc4067144bca9dcccd12c2b5a5aa0b57b2dece44e97acc2e4c139915c7",
+          "orderedSha256": "ed3d1ee9ecb634bb06568edf4f488040eccecfcd0a79e0903d5627357e425512"
         }
       }
     },
@@ -459,43 +441,41 @@
         "taskMode": "implementation",
         "rounds": 0,
         "head": null,
-        "sol": "claude-opus-5/high",
         "implementer": "claude/claude-opus-5/high",
-        "review": "invalid 0/0",
+        "reviewerAttempts": "invalid 0/0",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "b3a6b8b6c88edccc770241b2a43293e7bc5e4492721b55a014e9d3ee6fc0b610",
-          "orderedSha256": "2b8a4b603a71126c6be527a876e54b666bbcc50fc7bdebaaaddee774c5c152f6"
+          "sha256": "56a72dd51201d6941db9a870c172fdf9518ecaa7ab5dffeaad1bebe7cb2ef926",
+          "orderedSha256": "faaf6e71bde71cf3f7fea9be623a56125863d9ea909abc07d9c3dff5e6ab05c0"
         },
         "events": {
-          "sha256": "ba4010b1ca7490639604f6f536eafe6988a41a8c1bc839940cacf28c29b6fa3e",
-          "orderedSha256": "d41c5bdb28af269602b0cfb9e6642c0f5287ce682d1c403fa599e2603d94606a"
+          "sha256": "21ed91dca1448265c8978e3da0d54579dd37020ed3566e8620ff33ce464822fa",
+          "orderedSha256": "62da561522428958a4fe64794e810a0d5eeb4302059b54ebcf715658b94a08df"
         }
       }
     },
-    "claude-implementer: STOPPED INVALID_SOL_EFFORT": {
+    "claude-implementer: STOPPED INVALID_IMPLEMENTER_EFFORT": {
       "header": {
         "status": "STOPPED",
         "stage": "preflight",
-        "code": "INVALID_SOL_EFFORT",
+        "code": "INVALID_IMPLEMENTER_EFFORT",
         "taskMode": "implementation",
         "rounds": 0,
         "head": null,
-        "sol": "claude-opus-5/null",
         "implementer": "claude/claude-opus-5",
-        "review": "critical 0/2",
+        "reviewerAttempts": "critical 0/2",
         "events": 2
       },
       "subtrees": {
         "report": {
-          "sha256": "9ed54530c395477c83507f1a6778ac29e8b969c481bc69cc6b54a18555b398da",
-          "orderedSha256": "668c5e4c58b5a800a9c16c4f26c4e06f231c13f9582b77f9c566536ef293436d"
+          "sha256": "ca4e5aad9fa0ae59278413ad8ed96fd06923644d706fc54bbc868fcacc88b399",
+          "orderedSha256": "c5c914a0bfde539e2d4a772ca8d588a6ac36776de8cbfb26797280d4c6a17389"
         },
         "events": {
-          "sha256": "d92ce5d0b4d5aa132454ba6ccb435f1dbf2310f82af09175c58c0714644df0c3",
-          "orderedSha256": "16a930c453b06dd92efb2520702b4aa5ec0790d8ba89221ed9a2c07d641ddf53"
+          "sha256": "55b43f1069a08d9085e5ee8d3afbea053d87fb55263ebe61b3218fd732a78ac0",
+          "orderedSha256": "2e21f4e2d97358e7a027ff270155aadc6d10cbbf6e45f732ac5daa3de3cfac6e"
         }
       }
     }

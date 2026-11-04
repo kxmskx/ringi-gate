@@ -664,15 +664,13 @@ implementer: {
 `--implementer-model` overrides `model` with any identifier that follows
 the model rule; `--implementer-effort` overrides `effort` with a value from
 `allowedEfforts`. Both apply to the implementer of any provider.
-`--codex-model` and `--sol-effort` are deprecated aliases with the same
-validation; giving an alias together with its new option is an argument
-error, as for a repeated option. The CLI rejects any other value as an
-argument error: it prints the error and the usage message and exits with
-code 2, before a run starts. The library options `implementerModel` and
-`implementerEffort` of `runAgentReviewLoop` follow the same rules (the
-deprecated `codexModel` and `solEffort` are still read when the new options
-are absent); there an invalid value stops the run with
-`INVALID_CODEX_MODEL` or `INVALID_SOL_EFFORT` (stage `preflight`).
+The CLI rejects any other value as an argument error: it prints the error
+and the usage message and exits with code 2, before a run starts. The
+library options `implementerModel` and `implementerEffort` of
+`runAgentReviewLoop` follow the same rules; there an invalid value stops the
+run with `INVALID_IMPLEMENTER_MODEL` or `INVALID_IMPLEMENTER_EFFORT` (stage
+`preflight`). The options removed in 2.0 are listed in
+[migration-2.0.md](migration-2.0.md).
 
 Before the first round the runner reads the version of each role's CLI and
 calls its module's preflight. With `provider: 'codex'` any Codex CLI
@@ -728,7 +726,7 @@ review, runs its own Git commands with a private index built from `HEAD`
 `.claude/.cc-writes` directory the CLI creates (one that existed before the
 round is kept; `IMPLEMENTER_SCRATCH_NOT_EMPTY` when it is not empty), and
 stores the
-tool calls the CLI denied in `rounds[].solExecution.permissionDenials`; see
+tool calls the CLI denied in `rounds[].implementer.execution.permissionDenials`; see
 [architecture.md](architecture.md#claude-code-as-implementer). Known
 limits: a background process started by Claude Code's Bash that left the
 CLI's process tree between two readings of the process watch is not
@@ -793,9 +791,9 @@ review profile names it `invalid`, so a profile with this name is
 `INVALID_CONFIGURATION`. Only the profile named in `fallbackProfile` allows a
 fallback; with `fallbackProfile: null` no profile does.
 
-The library still exports `CODEX_MODEL`, `SOL_EFFORTS`, `DEFAULT_SOL_EFFORT`,
-`REVIEW_PROFILES` and `DEFAULT_REVIEW_PROFILE`, which keep the built-in
-default values; they come from `scripts/agent-review-providers.mjs`.
+The library exports `REVIEW_PROFILES` and `DEFAULT_REVIEW_PROFILE`, and
+`scripts/agent-review-providers.mjs` `DEFAULT_IMPLEMENTER` and
+`DEFAULT_REVIEWER`, which keep the built-in default values.
 
 ### `reviewLanes`
 
@@ -1356,62 +1354,52 @@ modules and their Git status at the start of the run, see
 effective gates (`effectiveGates`) and the resolved class: `taskClass`,
 `docs` (`docsOnly` in implementation mode),
 `independentReviewRequired`, `reason`, `policy` (the class's `policy` or
-`null`) and `remainingAssurance`. When the review is skipped, `review`
+`null`) and `remainingAssurance`. When the review is skipped, `reviewer`
 repeats `reason`, `policy` and `remainingAssurance` with `status:
 'NOT_REQUIRED'` and zero attempts.
 
-The roles appear under neutral names next to the earlier provider-specific
-names, which stay as aliases with equal values (see
-[architecture.md](architecture.md#report)). `agents` is a field of the
-dry-run plan; a run report has none:
+The roles appear under neutral names (see
+[architecture.md](architecture.md#report)); `schemaVersion` is `2`. The
+provider-specific names of 1.x are removed; the mapping is in
+[migration-2.0.md](migration-2.0.md). `agents` is a field of the dry-run
+plan; a run report has none:
 
-| Neutral field | Alias |
+| Field | Content |
 | --- | --- |
-| `implementer` (`status: 'NOT_RUN'` and the other fields `null` with `--review-only`; otherwise `provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`; `warnings: ['UNPROBED_VERSION']` only when the implementer CLI's version is outside the module's `probedVersions` or cannot be read) | `sol` (`plannedModel`, `plannedEffort`, `effectiveModel`, `effectiveEffort`, `runs`) |
-| `reviewer` (`provider`, `profile`, `model` and `effort` of the first planned attempt, `effectiveModel`, `effectiveEffort`, `attemptCount`; `warnings` only when not empty: `SAME_PROVIDER_REVIEW` when both roles use the same provider and a review is required, then `UNPROBED_VERSION` as for `implementer`) | summary of `review` |
-| `agents.implementer` (`provider`, `version`, `model`, `effort`; `warnings` as in `implementer`, version warning only) | `agents.codex`, `agents.codexModel`, `agents.codexReasoning` |
-| `agents.reviewer` (`provider`, `version`, `profile`, `plannedAttemptCount`, `fallbackAllowed`, `plannedAttempts`; `warnings: ['UNPROBED_VERSION']` as for `implementer`) | `agents.claude`, `agents.claudeReviewProfile`, `agents.claudeAttemptCount`, `agents.claudeFallbackAllowed`, `agents.claudeAttempts` |
-| `rounds[].implementer` (`provider`, `outputField: 'codex'` or `null` with `--review-only`, `executionField: 'solExecution'`), `rounds[].reviewer` (`provider`, `outputField: 'claude'` or `null` when no review ran, `executionField: 'reviewExecution'`) | names of the keys `rounds[].codex`, `rounds[].solExecution`, `rounds[].claude`, `rounds[].reviewExecution` |
-| `findings.rejectedByImplementer` | `findings.rejectedByCodex` |
-| `metadata` event: `implementer` (`provider`, `model`, `effort`), `reviewer` (`provider`, `profile`, `attempts`, `fallbackAllowed`) | `solModel`, `solEffort`, `reviewProfile`, `reviewAttempts`, `reviewFallbackAllowed` |
-| `actor` (`implementer` or `reviewer`) and `provider` in writer and reviewer `stage:*` and `activity` events | `badge` `SOL`/`CLAUDE`, `role` `ASTRA`/`CLAUDE` |
+| `implementer` | `status: 'NOT_RUN'` and the other fields `null` with `--review-only`; otherwise `provider`, `model`, `effort`, `effectiveModel`, `effectiveEffort`, `attemptCount`, `runs`; `warnings: ['UNPROBED_VERSION']` only when the implementer CLI's version is outside the module's `probedVersions` or cannot be read |
+| `reviewer` | `provider`, `profile`, `model` and `effort` of the first planned attempt, `effectiveModel`, `effectiveEffort`, `attemptCount`, `plannedAttempts`, `plannedAttemptCount`, `fallbackAllowed`, `fallbackUsed`, `fallbackReasons`, `runs` (for a skipped review `status`, `reason`, `policy`, `remainingAssurance`); `warnings` only when not empty: `SAME_PROVIDER_REVIEW` when both roles use the same provider and a review is required, then `UNPROBED_VERSION` as for `implementer` |
+| `agents.implementer` | `provider`, `version`, `model`, `effort`; `warnings` as in `implementer`, version warning only |
+| `agents.reviewer` | `provider`, `version`, `profile`, `plannedAttemptCount`, `fallbackAllowed`, `plannedAttempts`; `warnings: ['UNPROBED_VERSION']` as for `implementer` |
+| `rounds[].implementer` | `provider`, `output` (the writer's validated result) and `execution` (the writer's execution); both `null` with `--review-only` |
+| `rounds[].reviewer` | `provider`, `output` (the review result, `null` when no review ran) and `execution` (`null` with review lanes; for a skipped review, the record of the skipped review) |
+| `findings.rejectedByImplementer` | findings the implementer rejected |
+| `metadata` event | `implementer` (`provider`, `model`, `effort`), `reviewer` (`provider`, `profile`, `attempts`, `fallbackAllowed`) |
+| writer and reviewer `stage:*` and `activity` events | `actor` (`implementer` or `reviewer`) and `provider`; `badge` `IMPLEMENTER` or `REVIEWER` |
 
-The aliases describe the role, not the provider. With `implementer.provider:
-'claude'`, `sol`, `agents.codex` (the version printed by `claude --version`),
-`agents.codexModel`, `agents.codexReasoning`, `rounds[].codex`,
-`rounds[].solExecution`, `findings.rejectedByCodex`, `solModel`,
-`solEffort`, the badge `SOL` and the role `ASTRA` all refer to the Claude
-Code implementer; `claude*` aliases always refer to the reviewer. Stage
-values name the role for any provider: `implementer` (writer round),
-`post-implementer` (checks after a writer round) and `reviewer` (review).
+The fields describe the role, whatever the provider: with
+`implementer.provider: 'claude'`, `implementer`, `agents.implementer` (the
+version printed by `claude --version`) and `rounds[].implementer` refer to
+the Claude Code implementer. Stage values name the role for any provider:
+`implementer` (writer round), `post-implementer` (checks after a writer
+round) and `reviewer` (review).
 
-The neutral round fields do not copy the agent outputs: they name the alias
-keys of the same round that hold them, so each agent output is serialized
-once in `report.json`, `round-N.json` and the `--json` output.
-
-Because `findings.rejectedByImplementer` and `findings.rejectedByCodex` hold
-the same entries, the finding categories are disjoint only within one of the
-two names. `schemaVersion` is unchanged.
+Each agent output is serialized once in `report.json`, `round-N.json` and
+the `--json` output, under the round's `implementer` or `reviewer`.
 
 `warnings` of a role is optional and absent when empty. `UNPROBED_VERSION`
 (see [providers.md](providers.md#contract)) is set once the preflight has
 read the CLI versions, so a run stopped before that has none; it is a
-warning only and changes no status, stop code or exit code. The field adds
-to the format without changing an existing field, so `schemaVersion`
-stays 1.
+warning only and changes no status, stop code or exit code.
 
 A run with `--review-only` (see [cli.md](cli.md#review-only)) adds
 `runMode: 'review-only'` to the report (`APPROVE` and `STOPPED`), the
 dry-run plan and the `metadata` event; any other run has no `runMode`
 field. In such a run the writer does not run: `implementer` has
 `status: 'NOT_RUN'`, `attemptCount: 0` and `runs: []` (its `model` and
-`effort` are the profile's, unused), `sol.runs` is empty,
-`agents.codex` and `agents.implementer.version` are `null`, the single
-round has no `codex` and `solExecution` keys, and its `implementer` has
-`outputField: null` and `executionField: null`, as `reviewer.outputField`
-is `null` when no review ran. The dry-run plan has `maxRounds: 1`. These
-fields add to the format or take values the format already allows, and a
-run without the option is unchanged, so `schemaVersion` stays 1.
+`effort` are the profile's, unused), `agents.implementer.version` is
+`null`, and the single round's `implementer` has `output: null` and
+`execution: null`, as `reviewer.output` is `null` when no review ran. The
+dry-run plan has `maxRounds: 1`.
 
 A run with `--checkpoint` or `--resume` (see
 [cli.md](cli.md#checkpoints-and-resume)) adds `checkpoint` to the report
@@ -1422,16 +1410,15 @@ and `round` of the last saved checkpoint, and in a stopped run `resumable`
 (`false`, with `path` `null` and an entry in `warnings`, when the stop could
 not be recorded and the checkpoint was removed). A resumed run adds
 `resumedFrom` (the run id it continues); its rounds keep the numbers of the
-lineage, and a round resumed after the writer's phase has no `solExecution`
-key (no writer ran in it). Its gate results always come from gates run in
-that run. A run without these options has none of these fields, so
-`schemaVersion` stays 1.
+lineage, and in a round resumed after the writer's phase
+`implementer.execution` is `null` (no writer ran in it). Its gate results
+always come from gates run in that run. A run without these options has
+none of these fields.
 
 Every run with a run directory adds `ledger` to the report (`APPROVE` and
 `STOPPED`, not the dry-run plan): `path` (the run's `ledger.jsonl` relative
 to the repository), `events` (the number of its events) and `headHash` (the
-SHA-256 of its last line); see [ledger.md](ledger.md). The field is
-additive and no other field changes, so `schemaVersion` stays 1.
+SHA-256 of its last line); see [ledger.md](ledger.md).
 
 A run with [`prompts`](#prompts) adds `promptGuidance` to the report
 (`APPROVE`, `STOPPED` once the preflight read the task's class, and the
@@ -1444,7 +1431,7 @@ the dry-run plan or the ledger. The ledger's `fingerprints` event carries
 the same `promptGuidance`, and [`ringi verify`](cli.md#ringi-verify)
 fails when the report and the ledger differ in it (one has it and the other
 does not, or a hash differs). A run without `prompts` has no such field in
-the report or the ledger and is unchanged, so `schemaVersion` stays 1.
+the report or the ledger.
 
 A run with [`reviewLanes`](#reviewlanes) adds, once a review stage ran:
 `reviewer.lanes` (one entry per lane and review round: `round`, `id`,
@@ -1459,14 +1446,14 @@ lane starts from: every changed file of the full diff for a lane without
 without a diff, as in
 the `analysis` mode)); the ledger's `review-lane` event carries the same
 entry. The reviewer's provider does not report tokens or cost to the
-runner, so the entry has no token or cost fields. In each review round, `claude` is the merged
-result, `reviewLanes` lists each lane's entry with its `execution` (the
-lane's `reviewExecution`), `reviewer.executionField` is `'reviewLanes'` and
-the round has no `reviewExecution` key; every finding has `lanes` (the ids
-of the lanes that reported it, in profile order); `review.runs` has one
+runner, so the entry has no token or cost fields. In each review round,
+`reviewer.output` is the merged result, `reviewLanes` lists each lane's
+entry with its `execution` (the lane's review execution) and
+`reviewer.execution` is `null`; every finding has `lanes` (the ids of the
+lanes that reported it, in profile order); `reviewer.runs` has one
 execution per lane and round, each with its `lane`. A run stopped by a lane
 has `lane` (the lane's id) next to `code`. A run without `reviewLanes` has
-none of these fields and is unchanged, so `schemaVersion` stays 1.
+none of these fields.
 
 A run in the `implementation` mode with [`routing`](#routing) adds
 `routing` to the report (`APPROVE`, `STOPPED` once the preflight applied
@@ -1486,5 +1473,4 @@ it, and the dry-run plan):
 ledger records a `routing` event with the same fields and `round`: `null`
 for the preflight, the round number for each escalation after a writer round
 (see [ledger.md](ledger.md)). A checkpoint stores the routing it was made
-with. A run without `routing` has none of these fields and is unchanged, so
-`schemaVersion` stays 1.
+with. A run without `routing` has none of these fields.

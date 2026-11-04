@@ -211,7 +211,7 @@ export async function runWithPresentation({
       error instanceof AgentWorkflowError && error.report
         ? error.report
         : {
-            schemaVersion: 1,
+            schemaVersion: 2,
             status: 'STOPPED',
             code: 'UNEXPECTED_ERROR',
             error: redactSensitive(message),

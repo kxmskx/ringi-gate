@@ -11,17 +11,14 @@
 // the role rules, the isolated environment passed to the module and the
 // check of what the module returns, guards, schemas, report validation and
 // integrity checks.
-import claudeProvider, { CLAUDE_EFFORTS } from './providers/claude.mjs';
+import claudeProvider from './providers/claude.mjs';
 import codexProvider, { SOL_EFFORTS } from './providers/codex.mjs';
 import { isValidModelId } from './providers/contract.mjs';
 
-// Moved to the provider modules; re-exported for compatibility.
-export { CLAUDE_EFFORTS, SOL_EFFORTS, isValidModelId };
+export { isValidModelId };
 
 // Defaults of the profile sections implementer and reviewer (the values used
 // before the profile could declare them).
-export const CODEX_MODEL = 'gpt-6.1-sol';
-export const DEFAULT_SOL_EFFORT = 'high';
 export const DEFAULT_REVIEW_PROFILE = 'critical';
 export const REVIEW_PROFILES = Object.freeze({
   critical: Object.freeze([
@@ -41,8 +38,8 @@ export const REVIEW_PROFILES = Object.freeze({
 
 export const DEFAULT_IMPLEMENTER = Object.freeze({
   provider: 'codex',
-  model: CODEX_MODEL,
-  effort: DEFAULT_SOL_EFFORT,
+  model: 'gpt-6.1-sol',
+  effort: 'high',
   allowedEfforts: SOL_EFFORTS,
 });
 export const DEFAULT_REVIEWER = Object.freeze({

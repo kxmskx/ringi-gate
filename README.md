@@ -318,8 +318,9 @@ an agent round; the preflight still runs the version check of the
 implementer's CLI (and of the reviewer's CLI when review is required). Other
 options: `--task-mode`, `--review-profile`, `--implementer-model`,
 `--implementer-effort`, `--verbose`, `--no-animation`, `--json`.
-`--codex-model` and `--sol-effort` are deprecated aliases of
-`--implementer-model` and `--implementer-effort`.
+Upgrading from 1.x: the options, report fields and STOP codes with provider
+names were removed or renamed in 2.0; see
+[docs/migration-2.0.md](docs/migration-2.0.md).
 `--review-only` sends a change already in the working tree (uncommitted,
 nothing staged) through the gates and a single independent review without
 starting the writer, for a change written by hand or a second opinion; any

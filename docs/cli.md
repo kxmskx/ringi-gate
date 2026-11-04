@@ -244,10 +244,9 @@ a stop. `ringi init` commits nothing: commit the profile first.
 The options are the options of `scripts/agent-review-loop.mjs`, passed to
 the same parser; their allowed values come from the profile. The usage line
 printed with an argument error is in English; the error itself comes from
-the shared parser. `--codex-model` and `--sol-effort` are deprecated aliases
-of `--implementer-model` and `--implementer-effort` with the same
-validation; giving an alias together with its new option is an argument
-error.
+the shared parser. The options of 1.x removed in 2.0 are an argument error
+whose message names the new option (see
+[migration-2.0.md](migration-2.0.md#cli-options)).
 
 ### Review only
 
@@ -265,8 +264,8 @@ changes relative to `HEAD` (modified, deleted and new, non-ignored files),
 nothing staged.
 
 - The preflight is the same, apart from the writer: its CLI is neither
-  required nor probed (in the dry-run plan `agents.codex` and
-  `agents.implementer.version` are `null`), there is no sandbox check and no
+  required nor probed (in the dry-run plan `agents.implementer.version` is
+  `null`), there is no sandbox check and no
   writer layout check. `ringi
   doctor` is unchanged and still checks the implementer's CLI.
 - The fingerprints (dependencies, the repository manifest, `HEAD`, the
@@ -290,7 +289,7 @@ Stops before the gates: no uncommitted change other than the task file is
 `INVALID_TASK`; a task class that skips the independent review (for example
 `docs-minor`) is `INVALID_TASK_CLASS`; a staged change is `STAGED_CHANGES`.
 `--task-mode analysis`, `--implementer-model` and `--implementer-effort`
-(and their aliases) together with `--review-only` are argument errors (exit
+together with `--review-only` are argument errors (exit
 code `2`); the analysis candidate is the writer's artifact. The report and
 the dry-run plan carry `runMode: 'review-only'`; see
 [profile.md](profile.md#report-fields).
@@ -304,7 +303,7 @@ every lane in parallel in each review round and merges their findings (see
 the review profile of every lane that names none. A lane without a valid
 result stops the run with that lane's stop code; the report's `lane` field
 names it, and `reviewer.lanes` lists every lane with its status. A
-resumable stop (for example `CLAUDE_PROCESS_FAILED` or `TIMEOUT`) resumes
+resumable stop (for example `REVIEWER_PROCESS_FAILED` or `TIMEOUT`) resumes
 like any other: the resumed run runs every lane again. With
 `--review-only`, any finding of any lane is `HUMAN_DECISION_REQUIRED`, with
 the merged findings and their `lanes` in the report. With
@@ -327,7 +326,7 @@ checks, and a candidate path named in the rule's `escalate` switches the
 gates and the review to the strictest matching rule (of another class or an
 escalation rule), only ever upwards; `routing.rule` in the report names it. The options win over the
 rule, which wins over the profile's defaults: `--implementer-effort` and
-`--review-profile` (and their aliases) set the value even when it is lower
+`--review-profile` set the value even when it is lower
 than the rule's, also after an escalation; `--review-profile` does not
 change a lane with its own `profile`. The
 report's `routing.overriddenBy` lists them. Routing never picks a value the
@@ -389,7 +388,7 @@ Refusals (all in the preflight, before any agent):
 
 Resumable stops are an allowlist (`RESUMABLE_STOP_CODES` in the runner):
 `CHECK_FAILED`, `TIMEOUT`, `INTERRUPTED`, `PROCESS_ERROR`, `PROCESS_FAILED`,
-`CLAUDE_PROCESS_FAILED`, `CLAUDE_FALLBACK_FAILED`, `OUTPUT_LIMIT_EXCEEDED`
+`REVIEWER_PROCESS_FAILED`, `REVIEWER_FALLBACK_FAILED`, `OUTPUT_LIMIT_EXCEEDED`
 and `INVALID_AGENT_OUTPUT`. Every other stop code is never resumed, and
 neither is a stop that carries `integrityViolations`. Such a stop also
 revokes every run of the lineage with a marker in the state directory, so
@@ -465,7 +464,8 @@ ringi verify <runId> [--json]
 Verifies the ledger of a run of the Git repository of the current directory,
 read-only:
 
-- every line is a ledger line of `ledgerVersion` 1, `seq` runs from 1
+- every line is a ledger line of `ledgerVersion` 2 (a ledger of
+  `ledgerVersion` 1, written by ringi 1.x, fails), `seq` runs from 1
   without gaps, each `prev` is the SHA-256 of the line before, the first event
   is `preflight`, and with the key every `mac` matches;
 - the report of the run: `report.ledger` names this file, its number of events

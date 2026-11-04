@@ -489,8 +489,8 @@ export default Object.freeze({
     'Opcja {option} wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).',
   'cli.implementerEffortValue': 'Opcja {option} wymaga wartości {choices}.',
   'cli.implementerEffortConflict': 'Opcja {option} ma sprzeczne wartości {first} i {second}.',
-  'cli.optionAliasConflict':
-    'Opcji {option} i jej przestarzałego aliasu {alias} nie można podać razem.',
+  'cli.optionRemoved':
+    'Opcja {option} została usunięta w ringi 2.0; użyj {replacement}.',
   'cli.unknownOption': 'Nieznana opcja: {option}',
   'cli.oneTaskPath': 'Wymagana jest dokładnie jedna ścieżka zadania.',
   'cli.reviewOnlyTaskMode': 'Opcja --review-only działa tylko z --task-mode implementation.',

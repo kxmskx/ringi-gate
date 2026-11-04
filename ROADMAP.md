@@ -128,8 +128,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   [github.com/kxmskx/ringi-gate](https://github.com/kxmskx/ringi-gate).
 - Role names instead of provider names. Report stages `implementer`,
   `post-implementer` and `reviewer`; CLI options `--implementer-model` and
-  `--implementer-effort` (`--codex-model` and `--sol-effort` remain as
-  deprecated aliases); log, dashboard and prompt texts name the role.
+  `--implementer-effort`; log, dashboard and prompt texts name the role.
   Implementer requirements and stability criteria, equal for every module,
   are in [docs/providers.md](docs/providers.md#stability).
 - An agent CLI that exits before reading its whole prompt. The runner no
@@ -203,6 +202,14 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   rule, which it cannot change; the report, the dry-run plan and the ledger
   carry only its SHA-256 (`promptGuidance`), and `ringi verify` checks it.
   See [docs/profile.md](docs/profile.md#prompts).
+- 2.0 (breaking, unreleased): the provider-specific aliases of 1.x are
+  removed (`--codex-model`, `--sol-effort`, the report fields `sol`,
+  `review`, `rounds[].codex`, `rounds[].claude` and their execution keys,
+  the dry-run `agents.codex*` and `agents.claude*`); the round's
+  `implementer` and `reviewer` carry the output and the execution; STOP
+  codes name the role; report, plan and ledger have `schemaVersion` and
+  `ledgerVersion` 2. The terminal dashboard is a presenter behind one
+  presentation boundary. See [docs/migration-2.0.md](docs/migration-2.0.md).
 
 ## Later (after 1.0, not implemented)
 - Provider modules for other agent CLIs, each with a checked security

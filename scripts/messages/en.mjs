@@ -483,8 +483,8 @@ export default Object.freeze({
     'The {option} option requires a single identifier (1 to 128 ASCII characters: letters, digits, dot, underscore, hyphen; starting with a letter or digit).',
   'cli.implementerEffortValue': 'The {option} option requires the value {choices}.',
   'cli.implementerEffortConflict': 'The {option} option has conflicting values {first} and {second}.',
-  'cli.optionAliasConflict':
-    'The {option} option and its deprecated alias {alias} cannot be given together.',
+  'cli.optionRemoved':
+    'The {option} option was removed in ringi 2.0; use {replacement}.',
   'cli.unknownOption': 'Unknown option: {option}',
   'cli.oneTaskPath': 'Exactly one task path is required.',
   'cli.reviewOnlyTaskMode': 'The --review-only option works only with --task-mode implementation.',

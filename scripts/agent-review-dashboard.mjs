@@ -3,11 +3,11 @@ import {
   isValidCodexModel,
   DEFAULT_TASK_MODE,
   REVIEW_PROFILES,
-  SOL_EFFORTS,
   TASK_MODES,
   redactSensitive,
   resolveReviewProfile,
 } from './agent-review-loop-lib.mjs';
+import { DEFAULT_IMPLEMENTER } from './agent-review-providers.mjs';
 import { currentLocale, t } from './messages/index.mjs';
 
 const ANSI = {
@@ -36,7 +36,8 @@ const MIN_INTERACTIVE_WIDTH = 12;
 const INTERACTIVE_RIGHT_MARGIN = 1;
 // Usage values of the core defaults; the CLI lists those of its profile.
 export const REVIEW_PROFILE_USAGE = Object.keys(REVIEW_PROFILES).join('|');
-export const SOL_EFFORT_USAGE = SOL_EFFORTS.join('|');
+export const IMPLEMENTER_EFFORT_USAGE =
+  DEFAULT_IMPLEMENTER.allowedEfforts.join('|');
 export const TASK_MODE_USAGE = TASK_MODES.join('|');
 
 function formatBooleanChoice(value, locale) {
@@ -209,14 +210,14 @@ function validCounts(counts) {
 
 function reviewCounts(state) {
   const reviewed = state.result?.rounds
-    ?.filter((round) => Array.isArray(round.claude?.findings))
+    ?.filter((round) => Array.isArray(round.reviewer?.output?.findings))
     .at(-1);
   if (!state.reviewRound && !reviewed) return undefined;
   if (validCounts(state.result?.findingPolicy?.unresolved))
     return state.result.findingPolicy.unresolved;
   if (reviewed) {
     const counts = Object.fromEntries(SEVERITIES.map((key) => [key, 0]));
-    for (const finding of reviewed.claude.findings) {
+    for (const finding of reviewed.reviewer.output.findings) {
       if (Object.hasOwn(counts, finding.severity)) counts[finding.severity]++;
     }
     return counts;
@@ -267,7 +268,7 @@ export function gateProgress(state) {
 }
 
 function phaseColor(name) {
-  if (name === 'REVIEWER' || name === 'CLAUDE') return ANSI.violet;
+  if (name === 'REVIEWER') return ANSI.violet;
   if (['GATES', 'QUALITY GATES', 'INTEGRITY'].includes(name)) return ANSI.amber;
   return ANSI.cyan;
 }
@@ -296,7 +297,7 @@ function stageLine(stage, nowMs, frame, color, width) {
   const active = stage.status === 'ACTIVE';
   const frames = ['QUALITY GATES', 'GATES'].includes(stage.badge)
     ? GATE_FRAMES
-    : stage.badge === 'CLAUDE'
+    : stage.badge === 'REVIEWER'
       ? CLAUDE_FRAMES
       : SPINNER_FRAMES;
   const mark = active
@@ -314,16 +315,9 @@ function stageLine(stage, nowMs, frame, color, width) {
   );
 }
 
-// The event badges SOL and CLAUDE stand for the implementer and reviewer
-// roles, whichever modules serve them.
-const phaseName = (badge) =>
-  badge === 'SOL'
-    ? 'IMPLEMENTER'
-    : badge === 'CLAUDE'
-      ? 'REVIEWER'
-      : badge === 'QUALITY GATES'
-        ? 'GATES'
-        : badge;
+// The event badges IMPLEMENTER and REVIEWER stand for the roles, whichever
+// modules serve them.
+const phaseName = (badge) => (badge === 'QUALITY GATES' ? 'GATES' : badge);
 
 // A review-only run starts no writer, so the model it would have used is not
 // shown as a plan.
@@ -333,9 +327,9 @@ const isReviewOnly = (state) =>
 const phaseLabel = (name, state) =>
   name === 'IMPLEMENTER' && !isReviewOnly(state)
     ? cleanText(
-        state.solModel ??
-          state.result?.sol?.plannedModel ??
-          state.stages.findLast((stage) => stage.badge === 'SOL' && stage.model)
+        state.implementerModel ??
+          state.result?.implementer?.model ??
+          state.stages.findLast((stage) => stage.badge === 'IMPLEMENTER' && stage.model)
             ?.model ??
           'IMPLEMENTER',
       )
@@ -407,8 +401,8 @@ export function createDashboardState({
     runId: undefined,
     reportPath: undefined,
     branch: undefined,
-    solModel: undefined,
-    solEffort: undefined,
+    implementerModel: undefined,
+    implementerEffort: undefined,
     reviewProfile: undefined,
     reviewAttempts: [],
     unresolved: undefined,
@@ -431,12 +425,12 @@ export function reduceDashboardEvent(state, event, nowMs) {
       branch: event.branch ?? state.branch,
       runId: event.runId ?? state.runId,
       reportPath: event.reportPath ?? state.reportPath,
-      solModel: event.solModel ?? state.solModel,
-      solEffort: event.solEffort ?? state.solEffort,
-      reviewProfile: event.reviewProfile ?? state.reviewProfile,
-      reviewAttempts: event.reviewAttempts ?? state.reviewAttempts,
+      implementerModel: event.implementer?.model ?? state.implementerModel,
+      implementerEffort: event.implementer?.effort ?? state.implementerEffort,
+      reviewProfile: event.reviewer?.profile ?? state.reviewProfile,
+      reviewAttempts: event.reviewer?.attempts ?? state.reviewAttempts,
       reviewFallbackAllowed:
-        event.reviewFallbackAllowed ?? state.reviewFallbackAllowed,
+        event.reviewer?.fallbackAllowed ?? state.reviewFallbackAllowed,
       taskMode: event.taskMode ?? state.taskMode,
       runMode: event.runMode ?? state.runMode,
       quality: event.quality ?? state.quality,
@@ -459,11 +453,11 @@ export function reduceDashboardEvent(state, event, nowMs) {
       round: state.round,
       badge: [
         'PREFLIGHT',
-        'SOL',
+        'IMPLEMENTER',
         'QUALITY GATES',
         'INTEGRITY',
         'SNAPSHOT',
-        'CLAUDE',
+        'REVIEWER',
       ].includes(event.badge)
         ? event.badge
         : 'UNKNOWN',
@@ -473,11 +467,11 @@ export function reduceDashboardEvent(state, event, nowMs) {
       attempt: event.attempt,
       attemptLimit: event.attemptLimit,
       fallback:
-        event.badge === 'CLAUDE' &&
+        event.badge === 'REVIEWER' &&
         state.stages.some(
           (stage) =>
             stage.round === state.round &&
-            stage.badge === 'CLAUDE' &&
+            stage.badge === 'REVIEWER' &&
             stage.status === 'FALLBACK',
         ),
       status: 'ACTIVE',
@@ -621,9 +615,9 @@ export function renderDashboard(
           passed: gates.passed,
           active: cleanText(gates.active?.label),
         });
-  const plan = `Plan implementer ${isReviewOnly(state) ? 'not run (review-only)' : `${cleanText(state.solModel)}/${cleanText(state.solEffort)}`} · review ${cleanText(state.reviewProfile)}`;
+  const plan = `Plan implementer ${isReviewOnly(state) ? 'not run (review-only)' : `${cleanText(state.implementerModel)}/${cleanText(state.implementerEffort)}`} · review ${cleanText(state.reviewProfile)}`;
   const agent =
-    latest && ['SOL', 'CLAUDE'].includes(latest.badge) ? latest : undefined;
+    latest && ['IMPLEMENTER', 'REVIEWER'].includes(latest.badge) ? latest : undefined;
   const agentLine = agent
     ? t(locale, 'dashboard.agentLine', {
         model: cleanText(agent.model),
@@ -714,7 +708,7 @@ export function renderDashboard(
     ...phaseRows,
     '',
     outcome
-      ? state.result?.review?.status === 'NOT_REQUIRED'
+      ? state.result?.reviewer?.status === 'NOT_REQUIRED'
         ? t(locale, 'dashboard.reviewNotRequired')
         : t(locale, 'dashboard.zeroFindings', {
             result: counts
@@ -737,9 +731,9 @@ export function renderDashboard(
     const report = state.result;
     lines.push(...finalDiagnostics);
     if (isReviewOnly(state)) lines.push('Implementer not run (review-only)');
-    else if (report.sol)
+    else if (report.implementer)
       lines.push(
-        `Implementer plan ${cleanText(report.sol.plannedModel)}/${cleanText(report.sol.plannedEffort)} · effective ${cleanText(report.sol.effectiveModel)}/${cleanText(report.sol.effectiveEffort)}`,
+        `Implementer plan ${cleanText(report.implementer.model)}/${cleanText(report.implementer.effort)} · effective ${cleanText(report.implementer.effectiveModel)}/${cleanText(report.implementer.effectiveEffort)}`,
       );
     if (report.quality)
       lines.push(
@@ -750,26 +744,26 @@ export function renderDashboard(
             .join(', '),
         }),
       );
-    if (report.review?.status === 'NOT_REQUIRED') {
+    if (report.reviewer?.status === 'NOT_REQUIRED') {
       lines.push(
         t(locale, 'dashboard.reviewCalls'),
-        cleanText(report.review.reason),
-        cleanText(report.review.remainingAssurance),
+        cleanText(report.reviewer.reason),
+        cleanText(report.reviewer.remainingAssurance),
       );
-    } else if (report.review) {
+    } else if (report.reviewer) {
       lines.push(
-        `Review effective ${cleanText(report.review.effectiveModel)}/${cleanText(report.review.effectiveEffort)}`,
+        `Review effective ${cleanText(report.reviewer.effectiveModel)}/${cleanText(report.reviewer.effectiveEffort)}`,
       );
       lines.push(
         t(locale, 'dashboard.reviewAttempts', {
-          profile: cleanText(report.review.profile),
-          attempts: boundedCount(report.review.attemptCount, 6) ?? '—',
+          profile: cleanText(report.reviewer.profile),
+          attempts: boundedCount(report.reviewer.attemptCount, 6) ?? '—',
         }),
       );
       lines.push(
         t(locale, 'dashboard.fallbackUsed', {
-          allowed: yesNo(report.review.fallbackAllowed),
-          used: yesNo(report.review.fallbackUsed),
+          allowed: yesNo(report.reviewer.fallbackAllowed),
+          used: yesNo(report.reviewer.fallbackUsed),
         }),
       );
     }
@@ -822,7 +816,7 @@ function appendEventLines(state, event, nowMs) {
         : []),
       isReviewOnly(state)
         ? 'IMPLEMENTER  not run (review-only)'
-        : `IMPLEMENTER  plan ${state.solModel && state.solEffort ? `${state.solModel}/${state.solEffort}` : '—'}`,
+        : `IMPLEMENTER  plan ${state.implementerModel && state.implementerEffort ? `${state.implementerModel}/${state.implementerEffort}` : '—'}`,
       t(locale, 'dashboard.appendReview', {
         profile: cleanText(state.reviewProfile),
         attempts: state.reviewAttempts.length,
@@ -940,16 +934,17 @@ export function resolveAgentRoles(profile) {
   return { implementer, reviewer };
 }
 
-// The new option first, then its deprecated alias; both share one
-// validation, and giving both is an argument error.
-const IMPLEMENTER_MODEL_OPTIONS = ['--implementer-model', '--codex-model'];
-const IMPLEMENTER_EFFORT_OPTIONS = ['--implementer-effort', '--sol-effort'];
+const IMPLEMENTER_MODEL_OPTIONS = ['--implementer-model'];
+const IMPLEMENTER_EFFORT_OPTIONS = ['--implementer-effort'];
+// Options of ringi 1.x removed in 2.0, with the option that replaces each;
+// giving one is an argument error that names the replacement.
+const REMOVED_OPTIONS = Object.freeze({
+  '--codex-model': '--implementer-model',
+  '--sol-effort': '--implementer-effort',
+});
 
 const isOption = (argument, name) =>
   argument === name || argument.startsWith(`${name}=`);
-
-const aliasConflict = (locale, [option, alias]) =>
-  t(locale, 'cli.optionAliasConflict', { option, alias });
 
 // Defaults and allowlists come from the profile's implementer and reviewer.
 export function parseAgentArguments(argumentsList, profile) {
@@ -969,6 +964,17 @@ export function parseAgentArguments(argumentsList, profile) {
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (argument === '--') continue;
+    const removedOption = Object.keys(REMOVED_OPTIONS).find((name) =>
+      isOption(argument, name),
+    );
+    if (removedOption) {
+      return {
+        error: t(locale, 'cli.optionRemoved', {
+          option: removedOption,
+          replacement: REMOVED_OPTIONS[removedOption],
+        }),
+      };
+    }
     if (argument === '--task-mode' || argument.startsWith('--task-mode=')) {
       if (taskModeProvided) {
         return { error: t(locale, 'cli.taskModeOnce') };
@@ -1020,10 +1026,7 @@ export function parseAgentArguments(argumentsList, profile) {
     if (modelOption) {
       if (implementerModelOption) {
         return {
-          error:
-            implementerModelOption === modelOption
-              ? t(locale, 'cli.implementerModelOnce', { option: modelOption })
-              : aliasConflict(locale, IMPLEMENTER_MODEL_OPTIONS),
+          error: t(locale, 'cli.implementerModelOnce', { option: modelOption }),
         };
       }
       const value =
@@ -1046,9 +1049,6 @@ export function parseAgentArguments(argumentsList, profile) {
       isOption(argument, name),
     );
     if (effortOption) {
-      if (implementerEffortOption && implementerEffortOption !== effortOption) {
-        return { error: aliasConflict(locale, IMPLEMENTER_EFFORT_OPTIONS) };
-      }
       const value =
         argument === effortOption
           ? argumentsList[(index += 1)]

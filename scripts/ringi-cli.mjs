@@ -302,7 +302,7 @@ async function doctorCommand(args) {
 // same diagnostic as a stopped dry-run, and the JSON report with --json.
 function stopBeforeRun(error, args) {
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: 'STOPPED',
     code: error instanceof AgentWorkflowError ? error.code : 'UNEXPECTED_ERROR',
     stage: error instanceof AgentWorkflowError ? error.stage : 'preflight',

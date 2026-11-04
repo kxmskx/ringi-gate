@@ -16,7 +16,7 @@ import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const LEDGER_FILE = 'ledger.jsonl';
-export const LEDGER_VERSION = 1;
+export const LEDGER_VERSION = 2;
 export const LEDGER_MAC = 'hmac-sha256';
 export const LEDGER_EVENT_TYPES = Object.freeze([
   'preflight',
@@ -198,6 +198,12 @@ export function verifyLedgerText(text, { key = null } = {}) {
     ) {
       return fail(seq, 'line', `Line ${seq} is not a ledger line.`);
     }
+    if (entry.ledgerVersion === 1)
+      return fail(
+        seq,
+        'version',
+        `Line ${seq} has ledgerVersion 1, written by ringi 1.x; this ringi verifies ledgerVersion ${LEDGER_VERSION} only. Verify the run with ringi 1.x.`,
+      );
     if (entry.ledgerVersion !== LEDGER_VERSION)
       return fail(seq, 'version', `Line ${seq} has another ledgerVersion.`);
     if (entry.seq !== seq)

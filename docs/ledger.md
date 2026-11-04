@@ -10,14 +10,18 @@ The ledger documents a run. No decision of the runner depends on its
 content: the gates and the review decide, and a resumed run only refuses a
 checkpoint whose ledger does not verify. See [What the ledger proves](#what-the-ledger-proves).
 
-## Format (`ledgerVersion` 1)
+## Format (`ledgerVersion` 2)
+
+`ringi verify` 2.x refuses a ledger of `ledgerVersion` 1 (written by ringi
+1.x) with `fail`; verify such a run with ringi 1.x (see
+[migration-2.0.md](migration-2.0.md#ledger)).
 
 One JSON object per line (JSON Lines, UTF-8, each line ends with `\n`),
 with exactly these keys in this order:
 
 | Key | Value |
 | --- | --- |
-| `ledgerVersion` | `1` |
+| `ledgerVersion` | `2` |
 | `seq` | the event number, from 1, without gaps |
 | `ts` | the time of the event, ISO 8601 (UTC) |
 | `type` | the event type (below) |
@@ -84,8 +88,7 @@ its `preflight` event says why (`macUnavailable`).
 
 The report (`APPROVE` and `STOPPED`) has
 `ledger: { path, events, headHash }`: the ledger's path relative to the
-repository root, its number of events and the SHA-256 of its last line. The
-field is additive; `schemaVersion` stays 1.
+repository root, its number of events and the SHA-256 of its last line.
 
 An event that cannot be written stops the run with `INTEGRITY_CHECK_FAILED`
 (not resumable), like a checkpoint that cannot be written. When the `stop`

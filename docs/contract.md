@@ -1,7 +1,7 @@
 # Contract
 
-This document says what Ringi Gate promises from version 1.0 on and what
-changes only in a major version. It does not repeat the reference
+This document says what Ringi Gate 2.x promises and what changes only in a
+major version. It does not repeat the reference
 documentation: each item names the place where the details are. The lists
 marked in this file are checked by the contract tests in
 `scripts/agent-review-loop.test.mjs` (tests named `contract: …` and
@@ -19,12 +19,21 @@ This is the contract of 2.0 (the changes from 1.x are in
   a provider module's argv and environment
   ([Provider modules](#provider-modules)), and the guarantees of an
   `experimental` provider ([Provider stability](#provider-stability)).
+  Also major: making a listed STOP code resumable or not resumable; a new
+  value of the report's `status` or of the `ci review` `verdict`.
 - **Minor**: adding something optional whose absence keeps the 2.0
   behaviour: a profile key, a report field, a CLI option, a STOP code for a
-  new situation, a ledger event type.
+  new situation, a ledger event type, a `stage` value, a field of an
+  event's `data`. A new STOP code is not resumable unless the minor version
+  that adds it lists it as resumable ([STOP codes](#stop-codes)) for its
+  new situation only.
 - **Patch**: fixes that keep every listed name and meaning. A fix may stop
   a run that a bug let through (fail-closed); such a stop uses an existing
   code.
+
+The separate `schemaVersion: 1` outputs (`ringi doctor --json`,
+`ringi ci classify --json`, `ci-review.json`) follow the same rules on
+their own.
 
 ## CLI
 
@@ -52,7 +61,8 @@ The `ringi` command and its exit codes are described in [cli.md](cli.md).
 
 Options (of every command together; `ringi run` takes the options of
 `scripts/agent-review-loop.mjs`, which stays a supported entry point with
-the same options, report and codes):
+the same options and codes and the same report apart from
+`projectProfile`):
 
 <!-- contract:cli-options -->
 - `--help`, `-h`: help, exit code `0`.
@@ -74,13 +84,23 @@ the same options, report and codes):
 - `--task-mode`: `implementation` (default) or `analysis`.
 - `--review-only`: [cli.md](cli.md#review-only).
 - `--checkpoint`, `--resume`: [cli.md](cli.md#checkpoints-and-resume).
-- `--review-profile`, `--implementer-model`, `--implementer-effort`: values
-  from the profile's allowlists.
+- `--implementer-model`: an identifier that follows the model rule
+  ([profile.md](profile.md#implementer)).
+- `--implementer-effort`, `--review-profile`: values from the profile's
+  allowlists.
 - `--verbose`, `--no-animation`: presentation only.
 <!-- /contract:cli-options -->
 
-The standard output of `--json` is the report (below). The terminal output
-without `--json` is presentation and outside the contract.
+The standard output of `ringi run --json` is the report (below). The
+`--json` output of `ringi doctor` (`schemaVersion`, `status`, `summary`,
+`checks[]` with `id`, `status`, `detail`, `hint`, `code`, `message`;
+[cli.md](cli.md#ringi-doctor)) and of `ringi verify` (`status`, `runId`,
+`ledger`, `events`, `headHash`, `mac`, `key`, `failure`, `warnings`;
+[cli.md](cli.md#ringi-verify)) is in the contract in the same way: fields
+are only added in 2.x; the check ids and the messages are outside the
+contract. `ringi ci classify --json` is described under
+[CI classification](#ci-classification). The terminal output without
+`--json` is presentation and outside the contract.
 
 ## Profile
 
@@ -179,6 +199,8 @@ fields:
 - `lane`: the review lane that stopped the run.
 - `warnings`: present only when not empty.
 - `task`, `taskMode`, `taskSchemaVersion`.
+- `analysisArtifacts`: a run in the `analysis` mode that wrote its
+  analysis files.
 - `branch`, `head`, `startedAt`, `finishedAt`, `durationMs`, `reportPath`.
 - `runMode`: only `review-only`.
 - `quality`, `rounds`, `findings`, `findingPolicy`.
@@ -187,7 +209,8 @@ fields:
 - `promptGuidance`: with `prompts` in the profile.
 - `checkpoint`, `resumedFrom`: with `--checkpoint` or `--resume`.
 - `ledger`: every run with a run directory.
-- `runner`, `projectProfile`: fingerprints.
+- `runner`, `projectProfile`: fingerprints; `projectProfile` only with
+  `ringi` (absent with `scripts/agent-review-loop.mjs`).
 - `diagnostics`, `diagnosticLog`: the redacted diagnostic logs (their
   contents are outside the contract).
 <!-- /contract:report-fields -->
@@ -195,11 +218,13 @@ fields:
 Each agent's output and execution of a round is in
 `rounds[].implementer` and `rounds[].reviewer` (`provider`, `output`,
 `execution`); each output is stored once (the executions are also in
-`implementer.runs` and `reviewer.runs`). The dry-run plan (`status: 'DRY_RUN_OK'`) is not a run
-report: it has no `publicationApproved`, it carries `agents` (the CLI
-versions and planned attempts, `agents.implementer` and `agents.reviewer`),
-which a run report does not, and its other fields are outside the
-contract. The 1.x provider-specific names are gone; see
+`implementer.runs` and `reviewer.runs`). The dry-run plan is not a run
+report: it has `schemaVersion` `2` and `status: 'DRY_RUN_OK'`, no
+`publicationApproved`, and it carries `agents`, which a run report does not:
+`agents.implementer` (`provider`, `version`, `model`, `effort`),
+`agents.reviewer` (`provider`, `version`, `profile`, `plannedAttemptCount`,
+`fallbackAllowed`, `plannedAttempts`) and, when no review is required,
+`agents.independentReview`. Its other fields are outside the contract. The 1.x provider-specific names are gone; see
 [migration-2.0.md](migration-2.0.md).
 
 Two stop reports of the CLI are not run reports and have neither `runId`
@@ -342,7 +367,7 @@ major change. Messages (`error`) are outside the contract.
 | `PROCESS_ERROR` | yes | A process could not be run, or exited 0 without reading its whole input. |
 | `PROCESS_FAILED` | yes | The implementer process failed. |
 | `PROFILE_MODIFIED` | no | `ringi.config.mjs` or a module it imports changed during the run. |
-| `PROFILE_UNCOMMITTED` | no | `ringi run`, `ringi doctor`, `ringi ci classify`: the profile or a module it imports is not committed or differs from `HEAD`. |
+| `PROFILE_UNCOMMITTED` | no | `ringi run`, `ringi doctor`, `ringi ci classify`, `ringi ci review`: the profile or a module it imports is not committed or differs from `HEAD`. |
 | `PROTECTED_BRANCH` | no | The branch is `main` or `master`. |
 | `PROVIDER_CONTRACT_VIOLATION` | no | A provider module's argv or environment breaks a core check. |
 | `PROVIDER_ROLE_NOT_ALLOWED` | no | A provider module's declaration does not allow the role. |
@@ -425,7 +450,10 @@ review efforts by that order (the contract does not check the order). The
 security declaration ([providers.md](providers.md#security-declaration)),
 the role rules ([providers.md](providers.md#role-rules)) and the
 conformance suite (`scripts/providers/conformance.mjs`) are part of the
-contract. The core may add checks of a module's argv and environment in a
+contract. Module authors import `defineProvider` from
+`scripts/providers/contract.mjs` and `checkProviderConformance` from
+`scripts/providers/conformance.mjs`; both paths and functions are part of
+the contract. The core may add checks of a module's argv and environment in a
 minor or patch version: they only refuse more (fail-closed), as the
 forbidden argument lists do today.
 
@@ -443,8 +471,11 @@ These may change in any version:
 - the text of every message (`error`, hints, help texts) and the message
   catalogs;
 - the `internal` export of `scripts/agent-review-loop-lib.mjs` and every
-  export not named in this document;
-- the dry-run plan apart from its `status`, the round files, the
+  export not named in this document: the JavaScript API of `scripts/`
+  (`runAgentReviewLoop`, its options and exports, the module-level names
+  of the built-in providers) apart from the names above; the supported
+  entry points are `ringi` and `scripts/agent-review-loop.mjs`;
+- the dry-run plan apart from its `schemaVersion`, `status` and `agents`, the round files, the
   diagnostic logs and the checkpoint file;
 - probes and their documentation.
 
@@ -459,7 +490,7 @@ The built-in modules and their state (see
 | `claude` | `experimental` | `experimental` (default) |
 
 No built-in role meets every stability criterion today. For a role
-declared `experimental`, 1.0 promises the interface (how the profile
+declared `experimental`, 2.x promises the interface (how the profile
 selects it, the report fields, the STOP codes) but not its guarantees: its
 argv, its security declaration and its known limits may change in a minor
 version when a probe shows they must, and such a change may stop runs that

@@ -5,7 +5,7 @@ command, gives a working fail-closed agent pipeline on someone else's
 project, with a README that shows what the code does today rather than what
 is planned.
 
-Everything below "Later (after 1.0)" is a plan, not a feature. The
+Everything below "Later (after 2.0)" is a plan, not a feature. The
 [README](README.md) and [docs/](docs/) describe only what is implemented.
 
 ## Done
@@ -202,7 +202,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   rule, which it cannot change; the report, the dry-run plan and the ledger
   carry only its SHA-256 (`promptGuidance`), and `ringi verify` checks it.
   See [docs/profile.md](docs/profile.md#prompts).
-- 2.0 (breaking, unreleased): the provider-specific aliases of 1.x are
+- 2.0 (breaking, 2.0.0): the provider-specific aliases of 1.x are
   removed (`--codex-model`, `--sol-effort`, the report fields `sol`,
   `review`, `rounds[].codex`, `rounds[].claude` and their execution keys,
   the dry-run `agents.codex*` and `agents.claude*`); the round's
@@ -211,7 +211,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   `ledgerVersion` 2. The terminal dashboard is a presenter behind one
   presentation boundary. See [docs/migration-2.0.md](docs/migration-2.0.md).
 
-## Later (after 1.0, not implemented)
+## Later (after 2.0, not implemented)
 - Provider modules for other agent CLIs, each with a checked security
   declaration and conformance fixtures from the real CLI, on the open
   provider interface.
@@ -223,7 +223,7 @@ Everything below "Later (after 1.0)" is a plan, not a feature. The
   reports them to the runner.
 - Remaining hardening of the core; small items are listed in
   [docs/good-first-issues.md](docs/good-first-issues.md).
-- Entry point and branding. The presentation boundary is done (unreleased):
+- Entry point and branding. The presentation boundary is done (2.0.0):
   one flow for both entry points, the terminal dashboard as the built-in
   presenter `terminal`, the `createPresenters` hooks next to it (see
   [docs/architecture.md](docs/architecture.md#presentation-boundary)).

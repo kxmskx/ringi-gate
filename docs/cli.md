@@ -418,7 +418,7 @@ A resumed run continues the ledger of the run it resumes: its first line's
 `prev` is that ledger's last line, and its `resume` event names it. The
 ledger only documents the lineage; the gates and the review still run again.
 
-Exit codes are those of the earlier CLI: `0` for a completed run (`APPROVE`
+Exit codes are those of `scripts/agent-review-loop.mjs`: `0` for a completed run (`APPROVE`
 or `DRY_RUN_OK`), `1` for a stopped run, `2` for invalid arguments or an
 error outside the runner. When `ringi.config.mjs` is missing, cannot be
 loaded or is invalid, the run stops before any agent process with

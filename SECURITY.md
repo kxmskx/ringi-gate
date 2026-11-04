@@ -1,7 +1,4 @@
-# Security policy (draft)
-
-Ringi Gate is at an early stage and has no released versions. This policy is
-a draft and will change before any public release.
+# Security policy
 
 ## Reporting a vulnerability
 

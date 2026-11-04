@@ -1787,6 +1787,7 @@ test('contract: top-level profile keys', async () => {
 // every key must be one of the contract's, and the contract names no key
 // that is not documented in docs/contract.md.
 const CONTRACT_REPORT_FIELDS = [
+  'analysisArtifacts',
   'branch',
   'checkpoint',
   'code',
@@ -1828,6 +1829,7 @@ const CONTRACT_REPORT_FIELDS = [
 // Fields the runs of the test below do not produce (other options or
 // stops); every other field of the contract must appear in one of them.
 const CONTRACT_REPORT_FIELDS_NOT_EXERCISED = [
+  'analysisArtifacts',
   'integrityViolations',
   'lane',
   'projectProfile',

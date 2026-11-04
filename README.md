@@ -438,10 +438,10 @@ Reference and examples: [docs/profile.md](docs/profile.md),
 
 ## Status
 
-- Version 1.0. What it promises (CLI, profile, report, STOP codes, ledger,
+- Version 2.0. What it promises (CLI, profile, report, STOP codes, ledger,
   provider modules) and what stays outside the contract is in
   [docs/contract.md](docs/contract.md); a breaking change of it needs a
-  major version.
+  major version (3.0).
 - The profile chooses the provider of each role, its model, efforts and
   review profiles; any provider module that meets the role's requirements
   can serve it. Two modules are built in as examples and defaults: `codex`

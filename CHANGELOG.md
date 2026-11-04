@@ -7,19 +7,27 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+## 2.0.0 — 2026-11-04
+
+The contract of 2.0 is in [docs/contract.md](docs/contract.md): the
+provider-specific names are removed and the STOP codes name the role; see
+[docs/migration-2.0.md](docs/migration-2.0.md). A breaking change of it
+needs 3.0.
+
 ### Breaking
 
 - The 1.x provider-specific aliases are removed and the provider-named STOP
   codes renamed; see [docs/migration-2.0.md](docs/migration-2.0.md).
   `--codex-model` and `--sol-effort` are argument errors naming
   `--implementer-model` and `--implementer-effort`; the library options
-  `codexModel` and `solEffort` of `runAgentReviewLoop` stop the run with
+  (outside the contract) `codexModel` and `solEffort` of `runAgentReviewLoop` stop the run with
   `INVALID_CONFIGURATION` naming `implementerModel` and
   `implementerEffort`. The report drops `sol`,
   `review`, `rounds[].codex`, `rounds[].claude`, `rounds[].solExecution`,
   `rounds[].reviewExecution` and `findings.rejectedByCodex`:
   `rounds[].implementer` and `rounds[].reviewer` carry `output` and
-  `execution`, and `reviewer` the fields of the former `review`. The dry-run
+  `execution`, and `reviewer` the fields of the former `review`;
+  `rounds[].*.outputField` and `executionField` are removed. The dry-run
   plan drops `agents.codex*` and `agents.claude*`.
 - STOP codes: `CLAUDE_PROCESS_FAILED` → `REVIEWER_PROCESS_FAILED`,
   `CLAUDE_FALLBACK_FAILED` → `REVIEWER_FALLBACK_FAILED`,
@@ -27,11 +35,13 @@ is published by hand, without provenance; later versions are published by
   `INVALID_IMPLEMENTER_MODEL`, `INVALID_SOL_EFFORT` →
   `INVALID_IMPLEMENTER_EFFORT`, `INVALID_CODEX_ENVIRONMENT` →
   `INVALID_IMPLEMENTER_ENVIRONMENT`; resumability unchanged.
-- `schemaVersion: 2` (report, `--json`, stop reports) and `ledgerVersion: 2`;
+- `schemaVersion: 2` (report, `--json`, dry-run plan, stop reports) and `ledgerVersion: 2`;
   `ringi verify` refuses a ledger of version 1 with a message.
-- Removed exports `CODEX_MODEL`, `DEFAULT_SOL_EFFORT`, `SOL_EFFORTS`,
-  `CODEX_REASONING`, `CLAUDE_EFFORTS` (re-export) and `SOL_EFFORT_USAGE`
-  (now `IMPLEMENTER_EFFORT_USAGE`).
+- Removed exports (outside the contract; see the migration): `CODEX_MODEL`,
+  `DEFAULT_SOL_EFFORT`, `SOL_EFFORTS`, `CODEX_REASONING` (library), the
+  same and `CLAUDE_EFFORTS` (`agent-review-providers.mjs`),
+  `SOL_EFFORT_USAGE` (now `IMPLEMENTER_EFFORT_USAGE`). `SOL_EFFORTS` and
+  `CLAUDE_EFFORTS` of `scripts/providers/` stay.
 
 ### Changed
 
@@ -51,6 +61,10 @@ is published by hand, without provenance; later versions are published by
   the `--json` report before; now it changes only its copy, without an
   error. Calls to the dashboard are guarded like the hooks' (an exception
   is swallowed). See [docs/profile.md](docs/profile.md#title-tempprefix-createpresenters).
+- Presenter events (outside the contract) use the role names: the
+  `metadata` fields `implementer` and `reviewer`, the badges `IMPLEMENTER`
+  and `REVIEWER`, and `actor` in `activity`; see
+  [docs/migration-2.0.md](docs/migration-2.0.md#presenter-events-outside-the-contract).
 
 ## 1.2.0 — 2026-11-03
 

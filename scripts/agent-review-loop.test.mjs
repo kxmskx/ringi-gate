@@ -61,11 +61,9 @@ import {
   MAX_ACTIVITY_BYTES,
   MAX_ACTIVITY_ITEMS,
   AgentWorkflowError,
-  CODEX_MODEL,
   createProcessRunner,
   createReviewSnapshot,
   createStreamingRedactor,
-  DEFAULT_SOL_EFFORT,
   DEFAULT_REVIEW_PROFILE,
   DEFAULT_TASK_MODE,
   internal,
@@ -77,11 +75,15 @@ import {
   resolveSolEffort,
   resolveTaskMode,
   runAgentReviewLoop,
-  SOL_EFFORTS,
   TASK_MODES,
   validateTaskMarkdown as validateTaskMarkdownWithProfile,
   loadProjectProfile,
 } from './agent-review-loop-lib.mjs';
+import { DEFAULT_IMPLEMENTER } from './agent-review-providers.mjs';
+// The core's default implementer model and efforts.
+const DEFAULT_IMPLEMENTER_MODEL = DEFAULT_IMPLEMENTER.model;
+const DEFAULT_IMPLEMENTER_EFFORT = DEFAULT_IMPLEMENTER.effort;
+const IMPLEMENTER_EFFORTS = DEFAULT_IMPLEMENTER.allowedEfforts;
 // Tests of the ringi command (bin/ringi.mjs) and of the npm package live in
 // separate files and run with npm test without changing scripts.test.
 import './ringi-cli.test.mjs';
@@ -103,7 +105,7 @@ import {
   REVIEW_PROFILE_USAGE,
   resolveAgentRoles,
   resolveDashboardMode,
-  SOL_EFFORT_USAGE,
+  IMPLEMENTER_EFFORT_USAGE,
   TASK_MODE_USAGE,
   stringWidth,
   stripAnsi,
@@ -650,9 +652,9 @@ ${task.markdown}
 // codex/claude process argv and environment, session ID parsing and fallback
 // classification from the legacy core (providers embedded in lib); used only
 // as an equivalence baseline for the provider adapters.
-const LEGACY_CODEX_MODEL = 'gpt-6.1-sol';
-const LEGACY_SOL_EFFORTS = Object.freeze(['medium', 'high', 'xhigh', 'max']);
-const LEGACY_DEFAULT_SOL_EFFORT = 'high';
+const LEGACY_IMPLEMENTER_MODEL = 'gpt-6.1-sol';
+const LEGACY_IMPLEMENTER_EFFORTS = Object.freeze(['medium', 'high', 'xhigh', 'max']);
+const LEGACY_DEFAULT_IMPLEMENTER_EFFORT = 'high';
 const LEGACY_DEFAULT_REVIEW_PROFILE = 'critical';
 const LEGACY_CLAUDE_FALLBACK_PROFILE = 'critical';
 const LEGACY_REVIEW_PROFILES = deepFreeze({
@@ -701,16 +703,16 @@ function legacyIsValidCodexModel(value) {
 }
 
 // Result or preflight error code of the legacy resolve* functions.
-function legacyResolveCodexModel(model = LEGACY_CODEX_MODEL) {
+function legacyResolveCodexModel(model = LEGACY_IMPLEMENTER_MODEL) {
   return legacyIsValidCodexModel(model)
     ? model
-    : { code: 'INVALID_CODEX_MODEL' };
+    : { code: 'INVALID_IMPLEMENTER_MODEL' };
 }
 
-function legacyResolveSolEffort(effort = LEGACY_DEFAULT_SOL_EFFORT) {
-  return LEGACY_SOL_EFFORTS.includes(effort)
+function legacyResolveSolEffort(effort = LEGACY_DEFAULT_IMPLEMENTER_EFFORT) {
+  return LEGACY_IMPLEMENTER_EFFORTS.includes(effort)
     ? effort
-    : { code: 'INVALID_SOL_EFFORT' };
+    : { code: 'INVALID_IMPLEMENTER_EFFORT' };
 }
 
 function legacyResolveReviewProfile(profile = LEGACY_DEFAULT_REVIEW_PROFILE) {
@@ -726,8 +728,8 @@ function legacyResolveReviewProfile(profile = LEGACY_DEFAULT_REVIEW_PROFILE) {
 // codex argv from the legacy runCodexRound.
 function legacyCodexArgs({
   taskMode = 'implementation',
-  codexModel = LEGACY_CODEX_MODEL,
-  solEffort = LEGACY_DEFAULT_SOL_EFFORT,
+  codexModel = LEGACY_IMPLEMENTER_MODEL,
+  solEffort = LEGACY_DEFAULT_IMPLEMENTER_EFFORT,
   repositoryRoot,
   schemaPath,
   outputPath,
@@ -853,7 +855,7 @@ function legacySafeAgentEnvironment(source = process.env) {
 function legacyClassifyClaudeFallbackReason(error) {
   if (
     !(error instanceof AgentWorkflowError) ||
-    error.code !== 'CLAUDE_PROCESS_FAILED' ||
+    error.code !== 'REVIEWER_PROCESS_FAILED' ||
     error.integrityViolations?.length
   ) {
     return undefined;
@@ -904,9 +906,9 @@ function legacyParseCodexSessionId(stdout) {
 // synthetic roles profile: gate registry as in TEST_PROFILE plus explicit roles.
 const EXPECTED_IMPLEMENTER = deepFreeze({
   provider: 'codex',
-  model: LEGACY_CODEX_MODEL,
-  effort: LEGACY_DEFAULT_SOL_EFFORT,
-  allowedEfforts: [...LEGACY_SOL_EFFORTS],
+  model: LEGACY_IMPLEMENTER_MODEL,
+  effort: LEGACY_DEFAULT_IMPLEMENTER_EFFORT,
+  allowedEfforts: [...LEGACY_IMPLEMENTER_EFFORTS],
 });
 const EXPECTED_REVIEWER = deepFreeze({
   provider: 'claude',
@@ -1103,7 +1105,6 @@ test('runner surface contract: internal keys', () => {
       'buildFindingReport',
       'buildFindingState',
       'buildReviewAudit',
-      'buildSolAudit',
       'classifyClaudeFallbackReason',
       // Prompt wrappers (mode/model validation and analysis constants)
       // exposed in internal for the prompt identity check.
@@ -1187,10 +1188,7 @@ test('runner surface contract: lib named exports', () => {
     Object.keys(loopExports).sort(),
     [
       'AgentWorkflowError',
-      'CODEX_MODEL',
-      'CODEX_REASONING',
       'DEFAULT_REVIEW_PROFILE',
-      'DEFAULT_SOL_EFFORT',
       'DEFAULT_TASK_MODE',
       'MAX_ACTIVITY_BYTES',
       'MAX_ACTIVITY_ITEMS',
@@ -1198,7 +1196,6 @@ test('runner surface contract: lib named exports', () => {
       // The only stops after which a checkpointed run may be resumed.
       'RESUMABLE_STOP_CODES',
       'REVIEW_PROFILES',
-      'SOL_EFFORTS',
       'TASK_CLASSES',
       'TASK_MODES',
       'assertNoSecretContent',
@@ -1239,8 +1236,8 @@ test('runner surface contract: dashboard named exports', () => {
   assertSurfaceContract(
     Object.keys(dashboardExports).sort(),
     [
+      'IMPLEMENTER_EFFORT_USAGE',
       'REVIEW_PROFILE_USAGE',
-      'SOL_EFFORT_USAGE',
       'TASK_MODE_USAGE',
       'createDashboardState',
       'createTerminalDashboard',
@@ -1296,26 +1293,16 @@ test('runner surface contract: providers named exports, no imports and lib re-ex
   assertSurfaceContract(
     Object.keys(providerExports).sort(),
     [
-      'CLAUDE_EFFORTS',
-      'CODEX_MODEL',
       'DEFAULT_IMPLEMENTER',
       'DEFAULT_REVIEWER',
       'DEFAULT_REVIEW_PROFILE',
-      'DEFAULT_SOL_EFFORT',
       'PROVIDERS',
       'REVIEW_PROFILES',
-      'SOL_EFFORTS',
       'isValidModelId',
     ],
     'providers named exports',
   );
-  for (const name of [
-    'CODEX_MODEL',
-    'DEFAULT_REVIEW_PROFILE',
-    'DEFAULT_SOL_EFFORT',
-    'REVIEW_PROFILES',
-    'SOL_EFFORTS',
-  ]) {
+  for (const name of ['DEFAULT_REVIEW_PROFILE', 'REVIEW_PROFILES']) {
     assert.equal(loopExports[name], providerExports[name], name);
   }
   assert.deepEqual(Object.keys(providerExports.PROVIDERS), ['codex', 'claude']);
@@ -1464,10 +1451,11 @@ test('runner surface contract: provider modules, contract and conformance named 
     'claude module named exports',
   );
   // Re-exports: the same values in the provider module and in lib.
-  assert.equal(providerExports.SOL_EFFORTS, codexModuleExports.SOL_EFFORTS);
-  assert.equal(providerExports.CLAUDE_EFFORTS, claudeModuleExports.CLAUDE_EFFORTS);
+  assert.equal(
+    providerExports.DEFAULT_IMPLEMENTER.allowedEfforts,
+    codexModuleExports.SOL_EFFORTS,
+  );
   assert.equal(providerExports.isValidModelId, contractExports.isValidModelId);
-  assert.equal(loopExports.SOL_EFFORTS, codexModuleExports.SOL_EFFORTS);
   // The PROVIDERS view uses the module functions.
   const { codex, claude } = providerExports.PROVIDERS;
   for (const [view, module] of [
@@ -1518,9 +1506,6 @@ test('runner surface contract: error and stop codes', async () => {
       'ANALYSIS_REVIEW_UNCONFIRMED',
       'ANALYSIS_WORKING_TREE_WRITE',
       'CHECK_FAILED',
-      'CLAUDE_FALLBACK_FAILED',
-      'CLAUDE_PROCESS_FAILED',
-      'CLAUDE_REVIEW_FAILED',
       'CLEANUP_FAILED',
       'CONCURRENT_PROCESS',
       'COREPACK_CACHE_CHANGED',
@@ -1558,16 +1543,16 @@ test('runner surface contract: error and stop codes', async () => {
       'INVALID_AGENT_OUTPUT',
       'INVALID_ANALYSIS_INTEGRITY_REPORT',
       'INVALID_ANALYSIS_REVIEW_FILES',
-      'INVALID_CODEX_ENVIRONMENT',
-      'INVALID_CODEX_MODEL',
       'INVALID_CONFIGURATION',
       'INVALID_COREPACK_CACHE',
       'INVALID_DOCKER_HOST',
       'INVALID_GATE_REPORT',
+      'INVALID_IMPLEMENTER_EFFORT',
+      'INVALID_IMPLEMENTER_ENVIRONMENT',
+      'INVALID_IMPLEMENTER_MODEL',
       'INVALID_PACKAGE_MANAGER',
       'INVALID_PROCESS_ARGS',
       'INVALID_REVIEW_PROFILE',
-      'INVALID_SOL_EFFORT',
       'INVALID_TASK',
       'INVALID_TASK_CLASS',
       'INVALID_TASK_MODE',
@@ -1589,8 +1574,11 @@ test('runner surface contract: error and stop codes', async () => {
       // declaration does not allow the role (role rules).
       'PROVIDER_CONTRACT_VIOLATION',
       'PROVIDER_ROLE_NOT_ALLOWED',
+      'REVIEWER_FALLBACK_FAILED',
       // Reviewer adapter preflight (CLI version, platform).
       'REVIEWER_PREFLIGHT_FAILED',
+      'REVIEWER_PROCESS_FAILED',
+      'REVIEW_FAILED',
       // A file of the runner's import graph changed during the run.
       'RUNNER_MODIFIED',
       'SECRET_DETECTED',
@@ -1822,7 +1810,6 @@ const CONTRACT_REPORT_FIELDS = [
   'reportPath',
   'resume',
   'resumedFrom',
-  'review',
   'reviewer',
   'rounds',
   'routing',
@@ -1830,7 +1817,6 @@ const CONTRACT_REPORT_FIELDS = [
   'runMode',
   'runner',
   'schemaVersion',
-  'sol',
   'stage',
   'startedAt',
   'status',
@@ -1908,7 +1894,7 @@ test('contract: ledger event types and version', async () => {
     'stop',
     'result',
   ];
-  assert.equal(ledgerExports.LEDGER_VERSION, 1);
+  assert.equal(ledgerExports.LEDGER_VERSION, 2);
   assertSurfaceContract(
     [...ledgerExports.LEDGER_EVENT_TYPES].sort(),
     [...expected].sort(),
@@ -1934,7 +1920,6 @@ test('contract: CLI commands and options', async () => {
     '--checkpoint',
     '--checks',
     '--classify-job',
-    '--codex-model',
     '--docs-jobs',
     '--dry-run',
     '--enforce-checks',
@@ -1953,13 +1938,18 @@ test('contract: CLI commands and options', async () => {
     '--review-job',
     '--review-only',
     '--review-profile',
-    '--sol-effort',
     '--summary',
     '--task-mode',
     '--verbose',
     '--version',
     '-h',
   ];
+  // Options removed in 2.0 appear in the source only as rejected literals
+  // (REMOVED_OPTIONS); they are not part of the accepted surface.
+  const removed = ['--codex-model', '--sol-effort'];
+  for (const option of removed) {
+    assert.ok(options.delete(option), `removed option ${option} is rejected`);
+  }
   assertSurfaceContract([...options].sort(), expected, 'CLI options');
   assertSurfaceContract(
     [...(await contractDocumentList('cli-options'))].sort(),
@@ -2987,7 +2977,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
     { name: 'APPROVE docs', docs: true, status: 'APPROVE' },
     {
       name: 'STOPPED after preflight',
-      code: 'CODEX_PROCESS_FAILED',
+      code: 'IMPLEMENTER_PROCESS_FAILED',
       status: 'STOPPED',
     },
     {
@@ -2998,14 +2988,14 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
     {
       name: 'STOPPED early',
       early: true,
-      code: 'INVALID_CODEX_MODEL',
+      code: 'INVALID_IMPLEMENTER_MODEL',
       status: 'STOPPED',
     },
     {
       name: 'STOPPED dry-run early',
       early: true,
       dryRun: true,
-      code: 'INVALID_CODEX_MODEL',
+      code: 'INVALID_IMPLEMENTER_MODEL',
       status: 'STOPPED',
     },
     {
@@ -3025,7 +3015,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
       name: 'cleanup warning after STOPPED',
       cleanupFailure: true,
       primaryFailure: true,
-      code: 'CODEX_PROCESS_FAILED',
+      code: 'IMPLEMENTER_PROCESS_FAILED',
       status: 'STOPPED',
     },
   ];
@@ -3052,11 +3042,11 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
               if (scenario.code === 'UNEXPECTED_ERROR')
                 throw new Error('Synthetic unexpected error.');
               if (
-                scenario.code === 'CODEX_PROCESS_FAILED' ||
+                scenario.code === 'IMPLEMENTER_PROCESS_FAILED' ||
                 scenario.primaryFailure
               )
                 throw new AgentWorkflowError('Synthetic primary failure.', {
-                  code: 'CODEX_PROCESS_FAILED',
+                  code: 'IMPLEMENTER_PROCESS_FAILED',
                   stage: 'implementer',
                 });
               return mode === 'analysis'
@@ -3065,7 +3055,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
             },
             workflow: {
               dryRun: scenario.dryRun ?? false,
-              ...(scenario.early ? { codexModel: '' } : {}),
+              ...(scenario.early ? { implementerModel: '' } : {}),
               output: {
                 write: (text) => {
                   stdout += text;
@@ -3086,7 +3076,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
           caught = error;
           report = error.report;
         }
-        assert.equal(report?.schemaVersion, 1);
+        assert.equal(report?.schemaVersion, 2);
         // Additive task schema version field from the profile.
         assert.equal(report.taskSchemaVersion, 1);
         assert.equal(report.status, scenario.status);
@@ -3098,7 +3088,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
           assert.equal(caught, undefined);
         }
         if (scenario.cleanupFailure && !scenario.primaryFailure) {
-          assert.equal(report.partial.schemaVersion, 1);
+          assert.equal(report.partial.schemaVersion, 2);
           assert.equal(report.partial.taskSchemaVersion, 1);
           assert.equal(
             report.partial.status,
@@ -3111,7 +3101,7 @@ test('schemaVersion: result shapes preserve report persistence', async (t) => {
         }
         if (scenario.dryRun && !scenario.early) {
           const printed = JSON.parse(stdout);
-          assert.equal(printed.schemaVersion, 1);
+          assert.equal(printed.schemaVersion, 2);
           assert.equal(printed.status, 'DRY_RUN_OK');
           assert.equal(Object.hasOwn(printed, 'reportPath'), false);
           if (!scenario.cleanupFailure) assert.deepEqual(printed, report);
@@ -3195,7 +3185,7 @@ test('schemaVersion: CLI fallback preserves JSON and exit codes', async () => {
     );
     assert.equal(child.status, workflowError ? 1 : 2, child.stderr);
     assert.deepEqual(JSON.parse(child.stdout), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'STOPPED',
       code: 'UNEXPECTED_ERROR',
       error: 'Synthetic unexpected error.',
@@ -3348,19 +3338,19 @@ test('agent-review-loop.mjs: the first SIGINT cancels a hanging CLI (exit code 1
 
 test('STOP metadata: input matrix and no regression', async (t) => {
   const commonCases = [
-    ['codex-process', 'CODEX_PROCESS_FAILED', 'implementer'],
+    ['codex-process', 'IMPLEMENTER_PROCESS_FAILED', 'implementer'],
     ['needs-human', 'HUMAN_DECISION_REQUIRED', 'implementer'],
     ['head-drift', 'UNEXPECTED_GIT_MUTATION', 'post-implementer'],
     ['branch-drift', 'UNEXPECTED_GIT_MUTATION', 'post-implementer'],
     ['task-drift-review', 'WORKING_TREE_CHANGED', 'reviewer'],
     ['secret', 'SECRET_DETECTED', 'post-implementer'],
     ['snapshot-error', 'INTERRUPTED', 'snapshot'],
-    ['review-error', 'CLAUDE_PROCESS_FAILED', 'reviewer'],
+    ['review-error', 'REVIEWER_PROCESS_FAILED', 'reviewer'],
     ['max-rounds', 'MAX_ROUNDS', 'reviewer'],
     ['cleanup-success', 'CLEANUP_FAILED', 'cleanup'],
-    ['cleanup-stop', 'CODEX_PROCESS_FAILED', 'implementer'],
+    ['cleanup-stop', 'IMPLEMENTER_PROCESS_FAILED', 'implementer'],
     ['cleanup-dry-run', 'CLEANUP_FAILED', 'cleanup'],
-    ['mutated-task', 'CODEX_PROCESS_FAILED', 'implementer'],
+    ['mutated-task', 'IMPLEMENTER_PROCESS_FAILED', 'implementer'],
     ['approve', null, null],
     ['dry-run', null, null],
     ['preflight-invalid', 'INVALID_TASK', 'preflight'],
@@ -3415,7 +3405,7 @@ test('STOP metadata: input matrix and no regression', async (t) => {
         const primaryError = new AgentWorkflowError(
           'Syntetyczny błąd Codexa.',
           {
-            code: 'CODEX_PROCESS_FAILED',
+            code: 'IMPLEMENTER_PROCESS_FAILED',
             stage: 'implementer',
             resume: 'Sprawdź syntetyczny stan przed ponowną decyzją.',
             report: partial,
@@ -3743,7 +3733,7 @@ test('STOP metadata: input matrix and no regression', async (t) => {
             assert.equal(captured, primaryError);
             assert.deepEqual(report.partial, partial);
             assert.equal(report.resume, primaryError.resume);
-            assert.equal(report.sol.runs[0].status, 'FAILED');
+            assert.equal(report.implementer.runs[0].status, 'FAILED');
             assert.match(
               await readFile(join(directory, report.diagnosticLog), 'utf8'),
               /syntetyczna diagnostyka procesu/,
@@ -3778,8 +3768,8 @@ test('STOP metadata: input matrix and no regression', async (t) => {
             assert.equal(report.findingPolicy.satisfied, false);
           }
           if (name === 'review-error') {
-            assert.equal(report.review.attemptCount, 2);
-            assert.equal(report.review.fallbackUsed, true);
+            assert.equal(report.reviewer.attemptCount, 2);
+            assert.equal(report.reviewer.fallbackUsed, true);
           }
           if (name.startsWith('cleanup-')) {
             assert.equal(report.warnings.length, 1);
@@ -3794,7 +3784,7 @@ test('STOP metadata: input matrix and no regression', async (t) => {
           }
           if (isAnalysis) {
             for (const round of report.rounds ?? [])
-              assert.deepEqual(round.codex.changes, []);
+              assert.deepEqual(round.implementer.output.changes, []);
             if (name === 'approve') {
               assert.deepEqual(
                 report.rounds[0].integrity.checks.map(({ name }) => name),
@@ -3909,11 +3899,13 @@ test('APPROVE in the first round ends the workflow without publishing', async ()
     assert.equal(report.status, 'APPROVE');
     assert.equal(report.rounds.length, 1);
     assert.equal(report.publicationApproved, false);
-    assert.deepEqual(report.sol, {
-      plannedModel: 'gpt-6.1-sol',
-      plannedEffort: 'high',
+    assert.deepEqual(report.implementer, {
+      provider: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
       effectiveModel: 'gpt-6.1-sol',
       effectiveEffort: 'high',
+      attemptCount: 1,
       runs: [
         {
           round: 1,
@@ -3925,7 +3917,7 @@ test('APPROVE in the first round ends the workflow without publishing', async ()
         },
       ],
     });
-    assert.deepEqual(report.rounds[0].solExecution, report.sol.runs[0]);
+    assert.deepEqual(report.rounds[0].implementer.execution, report.implementer.runs[0]);
     assert.deepEqual(report.findingPolicy, {
       name: 'ZERO_FINDINGS',
       threshold: { BLOCKER: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
@@ -3936,7 +3928,7 @@ test('APPROVE in the first round ends the workflow without publishing', async ()
       report.rounds[0].gates.gates.every(({ status }) => status === 'PASS'),
     );
     assert.equal(
-      report.rounds[0].codex.findingResponses.some(
+      report.rounds[0].implementer.output.findingResponses.some(
         ({ status }) => status === 'NEEDS_HUMAN',
       ),
       false,
@@ -4034,7 +4026,7 @@ test('analysis writes the full artifact with SHA and passes a minimal package to
       false,
     );
     assert.deepEqual(
-      report.rounds[0].claude.reviewConfirmation,
+      report.rounds[0].reviewer.output.reviewConfirmation,
       fullyReadConfirmation(reviewedSnapshot.expectedConfirmation),
     );
     const applicationGates = new Set([
@@ -4387,11 +4379,11 @@ test('analysis keeps artifact section findings through the correction cycle', as
       report.findings.closedAfterConfirmed[0].response.status,
       'CONFIRMED',
     );
-    const cleanResponse = report.rounds[1].codex.findingResponses[0];
+    const cleanResponse = report.rounds[1].implementer.output.findingResponses[0];
     assert.deepEqual(correctionContext.findingResponses, [cleanResponse]);
     assert.deepEqual(cleanResponse.checks, ['pnpm test:agent-review-loop']);
     assert.equal(Object.hasOwn(cleanResponse, 'fullAnalysis'), false);
-    assert.equal(Object.hasOwn(report.rounds[1].codex, 'fullAnalysis'), false);
+    assert.equal(Object.hasOwn(report.rounds[1].implementer.output, 'fullAnalysis'), false);
     assert.equal(
       JSON.stringify(correctionContext).includes(
         'kontrakt pozostaje read-only',
@@ -4399,7 +4391,7 @@ test('analysis keeps artifact section findings through the correction cycle', as
       false,
     );
     assert.equal(
-      JSON.stringify(report.rounds[1].codex).includes(
+      JSON.stringify(report.rounds[1].implementer.output).includes(
         'kontrakt pozostaje read-only',
       ),
       false,
@@ -5176,7 +5168,7 @@ test('REQUEST_CHANGES hands over a fix and the second round ends with APPROVE', 
 });
 
 for (const [codexModel, solEffort] of [
-  ...SOL_EFFORTS.map((effort) => [CODEX_MODEL, effort]),
+  ...IMPLEMENTER_EFFORTS.map((effort) => [DEFAULT_IMPLEMENTER_MODEL, effort]),
   ['gpt-6-sol', 'medium'],
   ['gpt-6-astra', 'high'],
   ['future-codex_1.2', 'medium'],
@@ -5189,8 +5181,8 @@ for (const [codexModel, solEffort] of [
     try {
       const { report } = await runFixture(directory, {
         workflow: {
-          codexModel,
-          solEffort,
+          implementerModel: codexModel,
+          implementerEffort: solEffort,
           onEvent: (event) => events.push(event),
         },
         codexRound: async ({
@@ -5223,32 +5215,32 @@ for (const [codexModel, solEffort] of [
         [codexModel, codexModel, codexModel],
       );
       assert.equal(receivedEfforts[2].sessionId, receivedEfforts[1].sessionId);
-      assert.equal(report.review.effectiveModel, 'claude-fable-5');
+      assert.equal(report.reviewer.effectiveModel, 'claude-fable-5');
       assert.equal(receivedEfforts[0].sessionId, undefined);
       assert.match(receivedEfforts[1].sessionId, /^[0-9a-f-]{36}$/);
-      assert.equal(report.sol.plannedEffort, solEffort);
-      assert.equal(report.sol.effectiveEffort, solEffort);
-      assert.equal(report.sol.plannedModel, codexModel);
-      assert.equal(report.sol.effectiveModel, codexModel);
+      assert.equal(report.implementer.effort, solEffort);
+      assert.equal(report.implementer.effectiveEffort, solEffort);
+      assert.equal(report.implementer.model, codexModel);
+      assert.equal(report.implementer.effectiveModel, codexModel);
       assert.deepEqual(
-        report.sol.runs.map(({ requestedModel }) => requestedModel),
+        report.implementer.runs.map(({ requestedModel }) => requestedModel),
         [codexModel, codexModel, codexModel],
       );
       assert.deepEqual(
-        report.sol.runs.map(({ requestedEffort }) => requestedEffort),
+        report.implementer.runs.map(({ requestedEffort }) => requestedEffort),
         [solEffort, solEffort, solEffort],
       );
       assert.deepEqual(
-        report.sol.runs.map(({ resumed }) => resumed),
+        report.implementer.runs.map(({ resumed }) => resumed),
         [false, true, true],
       );
       const metadata = events.find(({ type }) => type === 'metadata');
-      assert.equal(metadata.solModel, codexModel);
-      assert.equal(metadata.solEffort, solEffort);
+      assert.equal(metadata.implementer.model, codexModel);
+      assert.equal(metadata.implementer.effort, solEffort);
       assert.deepEqual(
         events
           .filter(
-            (event) => event.type === 'stage:start' && event.badge === 'SOL',
+            (event) => event.type === 'stage:start' && event.badge === 'IMPLEMENTER',
           )
           .map(({ model, effort }) => ({ model, effort })),
         [
@@ -5304,8 +5296,8 @@ test('an incomplete CONFIRMED fix may enter the next round', async () => {
     assert.equal(report.status, 'APPROVE');
     assert.equal(report.rounds.length, 3);
     assert.equal(
-      report.rounds[0].claude.findings[0].findingId,
-      report.rounds[1].claude.findings[0].findingId,
+      report.rounds[0].reviewer.output.findings[0].findingId,
+      report.rounds[1].reviewer.output.findings[0].findingId,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -5921,7 +5913,7 @@ test('REJECTED against a maintained LOW finding causes FINDING_DISPUTE', async (
       }),
       (error) =>
         error.code === 'FINDING_DISPUTE' &&
-        error.report.findings.rejectedByCodex.length === 0 &&
+        error.report.findings.rejectedByImplementer.length === 0 &&
         error.report.findings.unresolved.length === 1,
     );
     assert.equal(reviewRound, 2);
@@ -6087,7 +6079,7 @@ test('mixed B/H/M/L findings go together into one response round', async () => {
       ['BLOCKER', 'HIGH', 'MEDIUM', 'LOW'],
     );
     assert.deepEqual(
-      report.rounds[1].codex.findingResponses.map(({ findingId }) => findingId),
+      report.rounds[1].implementer.output.findingResponses.map(({ findingId }) => findingId),
       receivedFindings[1].map(({ findingId }) => findingId),
     );
     assert.equal(report.findings.closedAfterConfirmed.length, 4);
@@ -6237,13 +6229,13 @@ test('STOPPED report distinguishes closed, rejected and unresolved findings', as
         const findings = error.report.findings;
         const categorizedIds = [
           ...findings.closedAfterConfirmed,
-          ...findings.rejectedByCodex,
+          ...findings.rejectedByImplementer,
           ...findings.unresolved,
         ].map(({ findingId }) => findingId);
         return (
           error.code === 'FINDING_DISPUTE' &&
           findings.closedAfterConfirmed.length === 1 &&
-          findings.rejectedByCodex.length === 1 &&
+          findings.rejectedByImplementer.length === 1 &&
           findings.unresolved.length === 2 &&
           error.report.findingPolicy.satisfied === false &&
           error.report.findingPolicy.unresolved.HIGH === 1 &&
@@ -6266,7 +6258,7 @@ test('report classifies a finding only by its latest response', () => {
   for (const [responses, expectedCategory] of [
     [
       [confirmedResponse(finding), rejectedResponse(finding)],
-      'rejectedByCodex',
+      'rejectedByImplementer',
     ],
     [
       [rejectedResponse(finding), confirmedResponse(finding)],
@@ -6749,13 +6741,13 @@ test('an implementer and reviewer timeout is reported as a separate stop conditi
         (error) => {
           assert.equal(error.code, 'TIMEOUT');
           assert.equal(error.stage, stage);
-          assert.equal(error.report.sol.plannedEffort, 'high');
+          assert.equal(error.report.implementer.effort, 'high');
           assert.equal(
-            error.report.sol.effectiveEffort,
+            error.report.implementer.effectiveEffort,
             stage === 'implementer' ? null : 'high',
           );
           assert.equal(
-            error.report.sol.runs[0].status,
+            error.report.implementer.runs[0].status,
             stage === 'implementer' ? 'FAILED' : 'COMPLETED',
           );
           stoppedReport = error.report;
@@ -6765,7 +6757,7 @@ test('an implementer and reviewer timeout is reported as a separate stop conditi
       const savedReport = JSON.parse(
         await readFile(join(directory, stoppedReport.reportPath), 'utf8'),
       );
-      assert.deepEqual(savedReport.sol, stoppedReport.sol);
+      assert.deepEqual(savedReport.implementer, stoppedReport.implementer);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -6869,28 +6861,30 @@ test('a baseline synthetic URL does not block, but a new secret in the same file
       prepareCheckEnvironment: fakePrepareCheckEnvironment,
     });
     assert.equal(report.status, 'DRY_RUN_OK');
-    assert.equal(report.review.profile, 'critical');
-    assert.deepEqual(report.review.plannedAttempts, [
+    assert.equal(report.reviewer.profile, 'critical');
+    assert.deepEqual(report.reviewer.plannedAttempts, [
       { model: 'claude-fable-5', effort: 'high' },
       { model: 'claude-opus-5', effort: 'xhigh' },
     ]);
-    assert.equal(report.review.plannedAttemptCount, 2);
-    assert.equal(report.review.fallbackAllowed, true);
-    assert.equal(report.review.attemptCount, 0);
-    assert.equal(report.review.fallbackUsed, false);
-    assert.equal(report.agents.codexModel, 'gpt-6.1-sol');
-    assert.equal(report.agents.codexReasoning, 'high');
-    assert.deepEqual(report.sol, {
-      plannedModel: 'gpt-6.1-sol',
-      plannedEffort: 'high',
+    assert.equal(report.reviewer.plannedAttemptCount, 2);
+    assert.equal(report.reviewer.fallbackAllowed, true);
+    assert.equal(report.reviewer.attemptCount, 0);
+    assert.equal(report.reviewer.fallbackUsed, false);
+    assert.equal(report.agents.implementer.model, 'gpt-6.1-sol');
+    assert.equal(report.agents.implementer.effort, 'high');
+    assert.deepEqual(report.implementer, {
+      provider: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
       effectiveModel: null,
       effectiveEffort: null,
+      attemptCount: 0,
       runs: [],
     });
-    assert.equal(report.agents.claudeReviewProfile, 'critical');
-    assert.equal(report.agents.claudeAttemptCount, 2);
-    assert.equal(report.agents.claudeFallbackAllowed, true);
-    assert.deepEqual(report.agents.claudeAttempts, [
+    assert.equal(report.agents.reviewer.profile, 'critical');
+    assert.equal(report.agents.reviewer.plannedAttemptCount, 2);
+    assert.equal(report.agents.reviewer.fallbackAllowed, true);
+    assert.deepEqual(report.agents.reviewer.plannedAttempts, [
       { model: 'claude-fable-5', effort: 'high' },
       { model: 'claude-opus-5', effort: 'xhigh' },
     ]);
@@ -6957,22 +6951,25 @@ test('dry-run critical-opus explicitly reports one Opus xhigh attempt without fa
       prepareCheckEnvironment: fakePrepareCheckEnvironment,
     });
     assert.equal(report.status, 'DRY_RUN_OK');
-    assert.deepEqual(report.review, {
+    assert.deepEqual(report.reviewer, {
+      provider: 'claude',
       profile: 'critical-opus',
+      model: 'claude-opus-5',
+      effort: 'xhigh',
+      effectiveModel: null,
+      effectiveEffort: null,
+      attemptCount: 0,
       plannedAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
       plannedAttemptCount: 1,
       fallbackAllowed: false,
-      attemptCount: 0,
       fallbackUsed: false,
       fallbackReasons: [],
-      effectiveModel: null,
-      effectiveEffort: null,
       runs: [],
     });
-    assert.equal(report.agents.claudeReviewProfile, 'critical-opus');
-    assert.equal(report.agents.claudeAttemptCount, 1);
-    assert.equal(report.agents.claudeFallbackAllowed, false);
-    assert.deepEqual(report.agents.claudeAttempts, [
+    assert.equal(report.agents.reviewer.profile, 'critical-opus');
+    assert.equal(report.agents.reviewer.plannedAttemptCount, 1);
+    assert.equal(report.agents.reviewer.fallbackAllowed, false);
+    assert.deepEqual(report.agents.reviewer.plannedAttempts, [
       { model: 'claude-opus-5', effort: 'xhigh' },
     ]);
     assert.equal(JSON.stringify(report).includes('claude-fable-5'), false);
@@ -6982,8 +6979,8 @@ test('dry-run critical-opus explicitly reports one Opus xhigh attempt without fa
 });
 
 for (const [codexModel, solEffort] of [
-  [CODEX_MODEL, 'medium'],
-  [CODEX_MODEL, 'xhigh'],
+  [DEFAULT_IMPLEMENTER_MODEL, 'medium'],
+  [DEFAULT_IMPLEMENTER_MODEL, 'xhigh'],
   ['gpt-6-sol', 'medium'],
   ['gpt-6-astra', 'high'],
   ['future-codex_1.2', 'max'],
@@ -6997,18 +6994,18 @@ for (const [codexModel, solEffort] of [
         output: { write() {} },
         repositoryRoot: directory,
         taskPath: 'task.md',
-        codexModel,
-        solEffort,
+        implementerModel: codexModel,
+        implementerEffort: solEffort,
         dryRun: true,
         prepareCheckEnvironment: fakePrepareCheckEnvironment,
       });
-      assert.equal(report.agents.codexModel, codexModel);
-      assert.equal(report.agents.codexReasoning, solEffort);
-      assert.equal(report.sol.plannedModel, codexModel);
-      assert.equal(report.sol.effectiveModel, null);
-      assert.equal(report.sol.plannedEffort, solEffort);
-      assert.equal(report.sol.effectiveEffort, null);
-      assert.deepEqual(report.sol.runs, []);
+      assert.equal(report.agents.implementer.model, codexModel);
+      assert.equal(report.agents.implementer.effort, solEffort);
+      assert.equal(report.implementer.model, codexModel);
+      assert.equal(report.implementer.effectiveModel, null);
+      assert.equal(report.implementer.effort, solEffort);
+      assert.equal(report.implementer.effectiveEffort, null);
+      assert.deepEqual(report.implementer.runs, []);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -9820,7 +9817,7 @@ test('prompts: the prompt module produces text byte-identical to the legacy core
   for (const [label, task] of tasks) {
     for (const taskMode of [undefined, 'implementation', 'analysis']) {
       // Writer: first round and corrections (with and without findings).
-      for (const codexModel of [undefined, CODEX_MODEL]) {
+      for (const codexModel of [undefined, DEFAULT_IMPLEMENTER_MODEL]) {
         for (const [round, findings] of [
           [1, []],
           [2, [finding]],
@@ -10071,10 +10068,10 @@ test('Codex args enforce model, reasoning, sandbox, no approval and the Git guar
         findings: [],
       }),
     );
-    assert.equal(CODEX_MODEL, 'gpt-6.1-sol');
+    assert.equal(DEFAULT_IMPLEMENTER_MODEL, 'gpt-6.1-sol');
     assert.deepEqual(
       call.args.slice(call.args.indexOf('-m'), call.args.indexOf('-m') + 2),
-      ['-m', CODEX_MODEL],
+      ['-m', DEFAULT_IMPLEMENTER_MODEL],
     );
     assert.ok(call.args.includes('model_reasoning_effort="high"'));
     assert.match(
@@ -10232,7 +10229,7 @@ test('Codex analysis uses a read-only sandbox and requires the full artifact fie
     );
     assert.deepEqual(
       call.args.slice(call.args.indexOf('-m'), call.args.indexOf('-m') + 2),
-      ['-m', CODEX_MODEL],
+      ['-m', DEFAULT_IMPLEMENTER_MODEL],
     );
     assert.ok(call.args.includes('model_reasoning_effort="high"'));
     assert.match(
@@ -10279,7 +10276,7 @@ test('Codex analysis uses a read-only sandbox and requires the full artifact fie
   }
 });
 
-test('codex exec and both resumes use CODEX_MODEL and the same selected effort', async () => {
+test('codex exec and both resumes use DEFAULT_IMPLEMENTER_MODEL and the same selected effort', async () => {
   const directory = await createRepository();
   const runId = 'resume-args-test';
   const runDirectory = join(directory, '.agent-review-loop', 'runs', runId);
@@ -10321,20 +10318,20 @@ test('codex exec and both resumes use CODEX_MODEL and the same selected effort',
   try {
     const models = [
       undefined,
-      CODEX_MODEL,
+      DEFAULT_IMPLEMENTER_MODEL,
       'gpt-6-sol',
       'gpt-6-astra',
       'future-codex_1.2',
     ];
-    const efforts = [undefined, ...SOL_EFFORTS];
+    const efforts = [undefined, ...IMPLEMENTER_EFFORTS];
     const cases = models.flatMap((codexModel) =>
       efforts.flatMap((solEffort) =>
         [1, 2, 3].map((round) => ({ codexModel, solEffort, round })),
       ),
     );
     for (const { codexModel, solEffort, round } of cases) {
-      const selectedModel = codexModel ?? CODEX_MODEL;
-      const selectedEffort = solEffort ?? DEFAULT_SOL_EFFORT;
+      const selectedModel = codexModel ?? DEFAULT_IMPLEMENTER_MODEL;
+      const selectedEffort = solEffort ?? DEFAULT_IMPLEMENTER_EFFORT;
       if (round === 1) resumedSessionId = undefined;
       expectedFindings =
         round === 1
@@ -10475,9 +10472,9 @@ test('no review profile plans Opus 5 with effort max', () => {
 });
 
 test('the programmatic Sol effort contract allows medium, high, xhigh and max', () => {
-  assert.equal(DEFAULT_SOL_EFFORT, 'high');
-  assert.deepEqual(SOL_EFFORTS, ['medium', 'high', 'xhigh', 'max']);
-  for (const effort of SOL_EFFORTS) {
+  assert.equal(DEFAULT_IMPLEMENTER_EFFORT, 'high');
+  assert.deepEqual(IMPLEMENTER_EFFORTS, ['medium', 'high', 'xhigh', 'max']);
+  for (const effort of IMPLEMENTER_EFFORTS) {
     assert.equal(resolveSolEffort(effort), effort);
   }
   for (const effort of ['', 'none', 'low', 'ultra', 'unknown']) {
@@ -10485,7 +10482,7 @@ test('the programmatic Sol effort contract allows medium, high, xhigh and max', 
       () => resolveSolEffort(effort),
       (error) =>
         error instanceof AgentWorkflowError &&
-        error.code === 'INVALID_SOL_EFFORT' &&
+        error.code === 'INVALID_IMPLEMENTER_EFFORT' &&
         error.stage === 'preflight',
     );
   }
@@ -10570,13 +10567,13 @@ test('an unknown programmatic effort stops preflight before tools', async () => 
         output: { write() {} },
         repositoryRoot: directory,
         taskPath: 'task.md',
-        solEffort: 'ultra',
+        implementerEffort: 'ultra',
         dryRun: true,
       }),
       (error) => {
-        assert.equal(error.code, 'INVALID_SOL_EFFORT');
-        assert.equal(error.report.sol.plannedEffort, null);
-        assert.equal(error.report.sol.effectiveEffort, null);
+        assert.equal(error.code, 'INVALID_IMPLEMENTER_EFFORT');
+        assert.equal(error.report.implementer.effort, null);
+        assert.equal(error.report.implementer.effectiveEffort, null);
         return true;
       },
     );
@@ -10892,7 +10889,7 @@ test('critical-opus passes the exact Opus xhigh argv without Fable or CLI fallba
 // (the legacy core has its own AgentWorkflowError class).
 function syntheticClaudeFailure(
   stderr,
-  code = 'CLAUDE_PROCESS_FAILED',
+  code = 'REVIEWER_PROCESS_FAILED',
   WorkflowError = AgentWorkflowError,
 ) {
   return new WorkflowError('Syntetyczne niepowodzenie Claude.', {
@@ -10964,8 +10961,8 @@ test('critical-opus stops fail-closed after one Opus error without automatic fal
       },
     }),
     (error) => {
-      assert.equal(error.code, 'CLAUDE_PROCESS_FAILED');
-      assert.deepEqual(error.reviewExecution, {
+      assert.equal(error.code, 'REVIEWER_PROCESS_FAILED');
+      assert.deepEqual(error.reviewerExecution, {
         profile: 'critical-opus',
         fallbackAllowed: false,
         attempts: [
@@ -10974,7 +10971,7 @@ test('critical-opus stops fail-closed after one Opus error without automatic fal
             requestedModel: 'claude-opus-5',
             requestedEffort: 'xhigh',
             status: 'FAILED',
-            failureCode: 'CLAUDE_PROCESS_FAILED',
+            failureCode: 'REVIEWER_PROCESS_FAILED',
           },
         ],
         completed: null,
@@ -11082,7 +11079,7 @@ test('disallowed errors stop the review without Opus', async (t) => {
             throw failure;
           },
         }),
-        (error) => error.reviewExecution?.attemptCount === 1,
+        (error) => error.reviewerExecution?.attemptCount === 1,
       );
       assert.equal(calls, 1);
     });
@@ -11101,10 +11098,10 @@ test('a Fable and Opus error stops fail-closed after two attempts', async () => 
       },
     }),
     (error) =>
-      error.code === 'CLAUDE_PROCESS_FAILED' &&
-      error.reviewExecution?.attemptCount === 2 &&
-      error.reviewExecution?.fallbackUsed === true &&
-      error.reviewExecution?.completed === null,
+      error.code === 'REVIEWER_PROCESS_FAILED' &&
+      error.reviewerExecution?.attemptCount === 2 &&
+      error.reviewerExecution?.fallbackUsed === true &&
+      error.reviewerExecution?.completed === null,
   );
   assert.equal(calls, 2);
 });
@@ -11122,12 +11119,12 @@ test('the whole workflow stops fail-closed after both attempts fail', async () =
         },
       }),
       (error) =>
-        error.code === 'CLAUDE_PROCESS_FAILED' &&
+        error.code === 'REVIEWER_PROCESS_FAILED' &&
         error.report?.status === 'STOPPED' &&
-        error.report?.review?.profile === 'critical' &&
-        error.report?.review?.attemptCount === 2 &&
-        error.report?.review?.fallbackUsed === true &&
-        error.report?.review?.effectiveModel === null,
+        error.report?.reviewer?.profile === 'critical' &&
+        error.report?.reviewer?.attemptCount === 2 &&
+        error.report?.reviewer?.fallbackUsed === true &&
+        error.report?.reviewer?.effectiveModel === null,
     );
     assert.equal(calls, 2);
   } finally {
@@ -11148,19 +11145,22 @@ test('the critical-opus workflow reports fail-closed after exactly one attempt',
         workflow: { reviewProfile: 'critical-opus' },
       }),
       (error) => {
-        assert.equal(error.code, 'CLAUDE_PROCESS_FAILED');
+        assert.equal(error.code, 'REVIEWER_PROCESS_FAILED');
         assert.equal(error.report?.status, 'STOPPED');
-        assert.deepEqual(error.report?.review, {
+        assert.deepEqual(error.report?.reviewer, {
+          provider: 'claude',
           profile: 'critical-opus',
+          model: 'claude-opus-5',
+          effort: 'xhigh',
+          effectiveModel: null,
+          effectiveEffort: null,
+          attemptCount: 1,
           plannedAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
           plannedAttemptCount: 1,
           fallbackAllowed: false,
-          attemptCount: 1,
           fallbackUsed: false,
           fallbackReasons: [],
-          effectiveModel: null,
-          effectiveEffort: null,
-          runs: [error.reviewExecution],
+          runs: [error.reviewerExecution],
         });
         return true;
       },
@@ -11183,18 +11183,18 @@ test('the critical-opus report and dashboard show Opus xhigh, one attempt and no
       workflow: { reviewProfile: 'critical-opus' },
     });
     assert.deepEqual(calls, [{ model: 'claude-opus-5', effort: 'xhigh' }]);
-    assert.equal(report.review.profile, 'critical-opus');
-    assert.deepEqual(report.review.plannedAttempts, [
+    assert.equal(report.reviewer.profile, 'critical-opus');
+    assert.deepEqual(report.reviewer.plannedAttempts, [
       { model: 'claude-opus-5', effort: 'xhigh' },
     ]);
-    assert.equal(report.review.plannedAttemptCount, 1);
-    assert.equal(report.review.fallbackAllowed, false);
-    assert.equal(report.review.attemptCount, 1);
-    assert.equal(report.review.fallbackUsed, false);
-    assert.deepEqual(report.review.fallbackReasons, []);
-    assert.equal(report.review.effectiveModel, 'claude-opus-5');
-    assert.equal(report.review.effectiveEffort, 'xhigh');
-    assert.deepEqual(report.rounds[0].reviewExecution, {
+    assert.equal(report.reviewer.plannedAttemptCount, 1);
+    assert.equal(report.reviewer.fallbackAllowed, false);
+    assert.equal(report.reviewer.attemptCount, 1);
+    assert.equal(report.reviewer.fallbackUsed, false);
+    assert.deepEqual(report.reviewer.fallbackReasons, []);
+    assert.equal(report.reviewer.effectiveModel, 'claude-opus-5');
+    assert.equal(report.reviewer.effectiveEffort, 'xhigh');
+    assert.deepEqual(report.rounds[0].reviewer.execution, {
       profile: 'critical-opus',
       fallbackAllowed: false,
       attempts: [
@@ -11222,11 +11222,8 @@ test('the critical-opus report and dashboard show Opus xhigh, one attempt and no
         type: 'metadata',
         branch: 'chore/test-loop',
         runId: 'run-critical-opus',
-        solModel: 'gpt-6.1-sol',
-        solEffort: 'high',
-        reviewProfile: 'critical-opus',
-        reviewAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
-        reviewFallbackAllowed: false,
+        implementer: { model: 'gpt-6.1-sol', effort: 'high' },
+        reviewer: { profile: 'critical-opus', attempts: [{ model: 'claude-opus-5', effort: 'xhigh' }], fallbackAllowed: false },
       },
       0,
     );
@@ -11266,16 +11263,16 @@ test('the report and dashboard disclose the fallback without raw diagnostics', a
         return approveReview();
       },
     });
-    assert.equal(report.review.profile, 'critical');
-    assert.equal(report.review.plannedAttemptCount, 2);
-    assert.equal(report.review.fallbackAllowed, true);
-    assert.equal(report.review.attemptCount, 2);
-    assert.equal(report.review.fallbackUsed, true);
-    assert.deepEqual(report.review.fallbackReasons, ['CAPACITY_UNAVAILABLE']);
-    assert.equal(report.review.effectiveModel, 'claude-opus-5');
-    assert.equal(report.review.effectiveEffort, 'xhigh');
+    assert.equal(report.reviewer.profile, 'critical');
+    assert.equal(report.reviewer.plannedAttemptCount, 2);
+    assert.equal(report.reviewer.fallbackAllowed, true);
+    assert.equal(report.reviewer.attemptCount, 2);
+    assert.equal(report.reviewer.fallbackUsed, true);
+    assert.deepEqual(report.reviewer.fallbackReasons, ['CAPACITY_UNAVAILABLE']);
+    assert.equal(report.reviewer.effectiveModel, 'claude-opus-5');
+    assert.equal(report.reviewer.effectiveEffort, 'xhigh');
     assert.equal(JSON.stringify(report).includes(sensitive), false);
-    assert.deepEqual(report.rounds[0].reviewExecution.attempts, [
+    assert.deepEqual(report.rounds[0].reviewer.execution.attempts, [
       {
         attempt: 1,
         requestedModel: 'claude-fable-5',
@@ -11330,7 +11327,7 @@ test('a snapshot change before or after the fallback blocks the rest of the run'
           }),
           (error) =>
             mutateAttempt === 1
-              ? error.code === 'CLAUDE_PROCESS_FAILED' &&
+              ? error.code === 'REVIEWER_PROCESS_FAILED' &&
                 error.integrityViolations?.some(
                   ({ code }) => code === 'SNAPSHOT_CHANGED',
                 )
@@ -12433,14 +12430,14 @@ function createAutowrapTerminalOutput({ columns }) {
 function emptyFindingCategories() {
   return {
     closedAfterConfirmed: [],
-    rejectedByCodex: [],
+    rejectedByImplementer: [],
     unresolved: [],
   };
 }
 
 test('the CLI parser supports dashboard modes and rejects unknown options', () => {
   assert.equal(REVIEW_PROFILE_USAGE, 'critical|critical-opus|standard|economy');
-  assert.equal(SOL_EFFORT_USAGE, 'medium|high|xhigh|max');
+  assert.equal(IMPLEMENTER_EFFORT_USAGE, 'medium|high|xhigh|max');
   assert.equal(TASK_MODE_USAGE, 'implementation|analysis');
   assert.deepEqual(
     parseAgentArguments([
@@ -12499,18 +12496,18 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
     parseAgentArguments(['--review-profile=economy', 'task.md']).reviewProfile,
     'economy',
   );
-  for (const solEffort of SOL_EFFORTS) {
+  for (const solEffort of IMPLEMENTER_EFFORTS) {
     assert.equal(
-      parseAgentArguments(['task.md', `--sol-effort=${solEffort}`])
+      parseAgentArguments(['task.md', `--implementer-effort=${solEffort}`])
         .implementerEffort,
       solEffort,
     );
     assert.equal(
       parseAgentArguments([
-        '--sol-effort',
+        '--implementer-effort',
         solEffort,
         'task.md',
-        '--sol-effort',
+        '--implementer-effort',
         solEffort,
       ]).implementerEffort,
       solEffort,
@@ -12518,16 +12515,16 @@ test('the CLI parser supports dashboard modes and rejects unknown options', () =
   }
   for (const invalid of ['none', 'low', 'ultra', 'unknown', '']) {
     assert.match(
-      parseAgentArguments(['task.md', `--sol-effort=${invalid}`]).error,
+      parseAgentArguments(['task.md', `--implementer-effort=${invalid}`]).error,
       /medium, high, xhigh albo max/,
     );
   }
   assert.match(
-    parseAgentArguments(['task.md', '--sol-effort']).error,
-    /Opcja --sol-effort wymaga wartości\./,
+    parseAgentArguments(['task.md', '--implementer-effort']).error,
+    /Opcja --implementer-effort wymaga wartości\./,
   );
   assert.match(
-    parseAgentArguments(['task.md', '--sol-effort=high', '--sol-effort=max'])
+    parseAgentArguments(['task.md', '--implementer-effort=high', '--implementer-effort=max'])
       .error,
     /sprzeczne wartości high i max/,
   );
@@ -12564,8 +12561,6 @@ test('a CLI option without a value is an argument error', () => {
     '--task-mode',
     '--implementer-model',
     '--implementer-effort',
-    '--codex-model',
-    '--sol-effort',
     '--review-profile',
   ]) {
     assert.match(
@@ -12605,6 +12600,7 @@ test('CLI usage explicitly lists the implementer effort and critical-opus', asyn
   assert.equal(child.status, 2);
   assert.match(child.stderr, /--implementer-effort medium\|high\|xhigh\|max/);
   assert.match(child.stderr, /--implementer-model <id>/);
+  // Options removed in 2.0 are not offered in the usage line.
   assert.doesNotMatch(child.stderr, /--sol-effort|--codex-model/);
   assert.match(child.stderr, /--task-mode implementation\|analysis/);
   assert.match(
@@ -12776,7 +12772,7 @@ test('the renderer shows real stages, times, testCount and both results', () => 
     {
       type: 'stage:start',
       id: 'sol',
-      badge: 'SOL',
+      badge: 'IMPLEMENTER',
       label: 'Implementacja',
     },
     2_000,
@@ -12789,7 +12785,7 @@ test('the renderer shows real stages, times, testCount and both results', () => 
     {
       type: 'stage:end',
       id: 'sol',
-      badge: 'SOL',
+      badge: 'IMPLEMENTER',
       label: 'Implementacja',
       status: 'PASS',
       durationMs: 2_750,
@@ -12825,7 +12821,9 @@ test('the renderer shows real stages, times, testCount and both results', () => 
   const approved = {
     status: 'APPROVE',
     durationMs: 6_000,
-    rounds: [{ gates: { gates: [{}] }, claude: { findings: [] } }],
+    rounds: [
+      { gates: { gates: [{}] }, reviewer: { output: { findings: [] } } },
+    ],
     findings: {
       ...emptyFindingCategories(),
       closedAfterConfirmed: [
@@ -12989,7 +12987,7 @@ test('the interactive dashboard overwrites its area, restores the cursor and unr
   dashboard.event({
     type: 'stage:start',
     id: 'sol',
-    badge: 'SOL',
+    badge: 'IMPLEMENTER',
     label: 'Implementacja',
   });
   current = 1_000;
@@ -13024,7 +13022,7 @@ test('the interactive dashboard leaves no frames after right-edge autowrap', () 
   dashboard.event({
     type: 'stage:start',
     id: 'sol',
-    badge: 'SOL',
+    badge: 'IMPLEMENTER',
     label: 'Implementacja',
   });
   for (const nowMs of [100, 200, 300, 400, 500]) {
@@ -13103,16 +13101,13 @@ test('append-only has a heartbeat without ANSI, and JSON writes no content', () 
     type: 'metadata',
     branch: 'chore/test-loop',
     runId: 'run-critical-opus',
-    solModel: 'gpt-6-sol',
-    solEffort: 'xhigh',
-    reviewProfile: 'critical-opus',
-    reviewAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
-    reviewFallbackAllowed: false,
+    implementer: { model: 'gpt-6-sol', effort: 'xhigh' },
+    reviewer: { profile: 'critical-opus', attempts: [{ model: 'claude-opus-5', effort: 'xhigh' }], fallbackAllowed: false },
   });
   dashboard.event({
     type: 'stage:start',
     id: 'claude',
-    badge: 'CLAUDE',
+    badge: 'REVIEWER',
     label: 'Niezależne review',
   });
   current = 11_000;
@@ -13138,7 +13133,7 @@ test('append-only has a heartbeat without ANSI, and JSON writes no content', () 
   jsonDashboard.event({
     type: 'stage:start',
     id: 'sol',
-    badge: 'SOL',
+    badge: 'IMPLEMENTER',
     label: 'Implementacja',
   });
   jsonDashboard.finish({
@@ -13256,16 +13251,16 @@ test('the workflow emits the stage sequence and writes bounded redacted logs', a
         .map(({ badge }) => badge),
       [
         'PREFLIGHT',
-        'SOL',
+        'IMPLEMENTER',
         'QUALITY GATES',
         'QUALITY GATES',
         'QUALITY GATES',
         'SNAPSHOT',
-        'CLAUDE',
+        'REVIEWER',
       ],
     );
     const reviewStart = events.find(
-      (event) => event.type === 'stage:start' && event.badge === 'CLAUDE',
+      (event) => event.type === 'stage:start' && event.badge === 'REVIEWER',
     );
     assert.equal(reviewStart.model, 'claude-fable-5');
     assert.equal(reviewStart.effort, 'high');
@@ -13349,9 +13344,9 @@ test('the stable append-only and JSON modes contain no ANSI', () => {
 
 test('HUD RGB: five semantic colors in wide and compact TTY', () => {
   const palette = [
-    ['IMPLEMENTER', 'SOL', '\u001b[38;2;34;211;238m'],
+    ['IMPLEMENTER', 'IMPLEMENTER', '\u001b[38;2;34;211;238m'],
     ['GATES', 'QUALITY GATES', '\u001b[38;2;251;191;36m'],
-    ['REVIEWER', 'CLAUDE', '\u001b[38;2;167;139;250m'],
+    ['REVIEWER', 'REVIEWER', '\u001b[38;2;167;139;250m'],
     ['APPROVE', undefined, '\u001b[38;2;74;222;128m'],
     ['FAILED', undefined, '\u001b[38;2;248;113;113m'],
   ];
@@ -13377,7 +13372,7 @@ test('HUD RGB: five semantic colors in wide and compact TTY', () => {
       if (!badge)
         assert.ok(colored.includes(`\u001b[1m${rgb}${label}\u001b[0m`));
       if (width === 120 && badge) {
-        const waiting = badge === 'CLAUDE' ? 'GATES' : 'REVIEWER';
+        const waiting = badge === 'REVIEWER' ? 'GATES' : 'REVIEWER';
         assert.ok(colored.includes(`\u001b[2m${waiting}\u001b[0m`));
       }
       assert.doesNotMatch(colored, /\u001b\[(?:3[0-7]|9[0-7])m/);
@@ -13400,7 +13395,7 @@ test('HUD RGB: redaction strips truecolor before detecting a secret', () => {
   const hostile = `${secret.slice(0, 8)}\u001b[38;2;1;2;3m${secret.slice(8)}\u001b[0m`;
   assert.equal(stripAnsi(hostile), secret);
   emit({ type: 'metadata', branch: hostile });
-  emit({ type: 'stage:start', id: 'sol', badge: 'SOL', label: hostile });
+  emit({ type: 'stage:start', id: 'sol', badge: 'IMPLEMENTER', label: hostile });
   assert.equal(state.stages.at(-1).label, '***');
   for (const color of [false, true]) {
     const view = renderDashboard(state, { width: 120, height: 30, color });
@@ -13435,7 +13430,7 @@ test('HUD RGB: NO_COLOR, dumb, non-TTY, append-only and JSON stay without ANSI',
       });
       assert.equal(dashboard.mode, options.json ? 'json' : 'append');
       dashboard.start();
-      for (const badge of ['SOL', 'QUALITY GATES', 'CLAUDE']) {
+      for (const badge of ['IMPLEMENTER', 'QUALITY GATES', 'REVIEWER']) {
         const event = {
           id: badge,
           badge,
@@ -13742,16 +13737,17 @@ test('HUD: the plan does not pose as the active model or an actual fallback', ()
   const { state, emit } = hudFixture();
   emit({
     type: 'metadata',
-    solModel: 'gpt-6-astra',
-    solEffort: 'high',
-    reviewAttempts: [
-      { model: 'claude-fable-5', effort: 'high' },
-      { model: 'claude-opus-5', effort: 'xhigh' },
-    ],
-    reviewFallbackAllowed: true,
+    implementer: { model: 'gpt-6-astra', effort: 'high' },
+    reviewer: {
+      attempts: [
+        { model: 'claude-fable-5', effort: 'high' },
+        { model: 'claude-opus-5', effort: 'xhigh' },
+      ],
+      fallbackAllowed: true,
+    },
   });
   emit(
-    { type: 'stage:start', id: 'sol', badge: 'SOL', label: 'Implementacja' },
+    { type: 'stage:start', id: 'sol', badge: 'IMPLEMENTER', label: 'Implementacja' },
     1000,
   );
   let view = renderDashboard(state, { width: 120, nowMs: 2500 });
@@ -13762,7 +13758,7 @@ test('HUD: the plan does not pose as the active model or an actual fallback', ()
     {
       type: 'stage:start',
       id: 'c1',
-      badge: 'CLAUDE',
+      badge: 'REVIEWER',
       model: 'claude-fable-5',
       effort: 'high',
       attempt: 1,
@@ -13780,7 +13776,7 @@ test('HUD: the plan does not pose as the active model or an actual fallback', ()
     {
       type: 'stage:start',
       id: 'c2',
-      badge: 'CLAUDE',
+      badge: 'REVIEWER',
       model: 'claude-opus-5',
       effort: 'xhigh',
       attempt: 2,
@@ -13806,7 +13802,7 @@ test('HUD: dimensions, graphemes, control characters and a bounded feed', () => 
     emit({
       type: 'stage:start',
       id: String(index),
-      badge: 'SOL',
+      badge: 'IMPLEMENTER',
       label: hostile,
     });
     emit({ type: 'stage:end', id: String(index), status: 'PASS' });
@@ -13838,7 +13834,7 @@ test('HUD: compact snapshot and aligned tiles of the wide dashboard', () => {
     {
       type: 'stage:start',
       id: 'sol',
-      badge: 'SOL',
+      badge: 'IMPLEMENTER',
       label: 'Implementacja',
       model: 'gpt-6-astra',
       effort: 'high',
@@ -13900,7 +13896,7 @@ test('HUD: a presentation write failure does not throw and cleans up the timer/l
     assert.doesNotThrow(() => {
       dashboard.start();
       tick?.();
-      dashboard.event({ type: 'stage:start', id: 'sol', badge: 'SOL' });
+      dashboard.event({ type: 'stage:start', id: 'sol', badge: 'IMPLEMENTER' });
       dashboard.finish({ status: 'STOPPED', code: 'CHECK_FAILED' });
       dashboard.dispose();
     });
@@ -13936,7 +13932,7 @@ test('HUD regression: verbose stays readable in a shared TTY after tick and fini
     const secret = ['ghp', 'syntheticverbosevalue123456789'].join('_');
     try {
       dashboard.start();
-      dashboard.event({ type: 'stage:start', id: 'sol', badge: 'SOL' });
+      dashboard.event({ type: 'stage:start', id: 'sol', badge: 'IMPLEMENTER' });
       dashboard.diagnostic(`Pierwsza diagnoza ${secret}\n`);
       dashboard.diagnostic('Druga diagnoza\n');
       now = 16000;
@@ -14013,7 +14009,7 @@ test('HUD: a long label does not push out the measured time, no measurement give
     {
       type: 'stage:start',
       id: 'claude',
-      badge: 'CLAUDE',
+      badge: 'REVIEWER',
       label:
         'Review critical · claude-fable-5 · effort high · próba 1 · ' +
         'x'.repeat(120),
@@ -14232,11 +14228,11 @@ test('activity: writer/consumer projection bounds entries and bytes; summaries c
       text: 'PRIVATE',
       reasoning: 'PRIVATE',
     })),
-    'ASTRA',
+    'implementer',
   );
   assert.ok(feed.length > 0 && feed.length <= MAX_ACTIVITY_ITEMS);
   assert.ok(Buffer.byteLength(JSON.stringify(feed)) <= MAX_ACTIVITY_BYTES);
-  assert.deepEqual(normalizeActivityFeed(feed, 'ASTRA'), feed);
+  assert.deepEqual(normalizeActivityFeed(feed, 'implementer'), feed);
   assert.doesNotMatch(JSON.stringify(feed), /PRIVATE/);
   assert.deepEqual(
     normalizeActivityFeed(
@@ -14248,7 +14244,7 @@ test('activity: writer/consumer projection bounds entries and bytes; summaries c
           summary: 'PRIVATE',
         },
       ],
-      'ASTRA',
+      'implementer',
     ),
     [{ type: 'SUMMARY', status: 'COMPLETED', changes: 2 }],
   );
@@ -14263,7 +14259,7 @@ test('activity: writer/consumer projection bounds entries and bytes; summaries c
           checksText: 'PRIVATE',
         },
       ],
-      'CLAUDE',
+      'reviewer',
     ),
     [{ type: 'SUMMARY', status: 'APPROVE', checks: 3, findings: [0, 0, 0, 0] }],
   );
@@ -14273,7 +14269,7 @@ test('activity: writer/consumer projection bounds entries and bytes; summaries c
     { type: 'SUMMARY', status: 'COMPLETED', changes: -1 },
     { type: 'SUMMARY', status: 'COMPLETED', changes: Infinity },
   ])
-    assert.deepEqual(normalizeActivityFeed([entry], 'ASTRA'), []);
+    assert.deepEqual(normalizeActivityFeed([entry], 'implementer'), []);
 });
 
 test('activity: process byte observer receives fragments and cannot change exit/result', async () => {
@@ -14329,12 +14325,12 @@ test('activity: workflow forwards safe stream observations, required gates and v
     assert.deepEqual(activity[1].entry, {
       type: 'SUMMARY',
       status: 'COMPLETED',
-      changes: report.rounds[0].codex.changes.length,
+      changes: report.rounds[0].implementer.output.changes.length,
     });
     assert.deepEqual(activity[2].entry, {
       type: 'SUMMARY',
       status: 'APPROVE',
-      checks: report.rounds[0].claude.checks.length,
+      checks: report.rounds[0].reviewer.output.checks.length,
       findings: [0, 0, 0, 0],
     });
   } finally {
@@ -14378,8 +14374,8 @@ test('CLI model: default, open identifier, fail-closed and duplicates', () => {
     'a'.repeat(128),
   ]) {
     for (const args of [
-      ['--codex-model', codexModel],
-      [`--codex-model=${codexModel}`],
+      ['--implementer-model', codexModel],
+      [`--implementer-model=${codexModel}`],
     ]) {
       assert.equal(
         parseAgentArguments(['task.md', ...args]).implementerModel,
@@ -14389,33 +14385,32 @@ test('CLI model: default, open identifier, fail-closed and duplicates', () => {
   }
   for (const codexModel of invalidCodexModels) {
     for (const args of [
-      ['--codex-model', codexModel],
-      [`--codex-model=${codexModel}`],
+      ['--implementer-model', codexModel],
+      [`--implementer-model=${codexModel}`],
     ]) {
       assert.match(
         parseAgentArguments(['task.md', ...args]).error,
-        /--codex-model/,
+        /--implementer-model/,
       );
     }
   }
   for (const args of [
-    ['--codex-model'],
-    ['--codex-model', '--dry-run'],
-    ['--codex-model=gpt-6-sol', '--codex-model=gpt-6-sol'],
-    ['--codex-model', 'gpt-6-sol', '--codex-model=gpt-6-astra'],
-    ['--codex-model=gpt-6-astra', '--codex-model', 'gpt-6-astra'],
+    ['--implementer-model'],
+    ['--implementer-model', '--dry-run'],
+    ['--implementer-model=gpt-6-sol', '--implementer-model=gpt-6-sol'],
+    ['--implementer-model', 'gpt-6-sol', '--implementer-model=gpt-6-astra'],
+    ['--implementer-model=gpt-6-astra', '--implementer-model', 'gpt-6-astra'],
   ])
     assert.match(
       parseAgentArguments(['task.md', ...args]).error,
-      /--codex-model/,
+      /--implementer-model/,
     );
 });
 
-test('CLI implementer options: new names, deprecated aliases and their conflict', () => {
+test('CLI implementer options: new names, and the options removed in 2.0', () => {
   for (const args of [
     ['--implementer-model', 'gpt-6-astra'],
     ['--implementer-model=gpt-6-astra'],
-    ['--codex-model', 'gpt-6-astra'],
   ]) {
     assert.equal(
       parseAgentArguments(['task.md', ...args]).implementerModel,
@@ -14427,7 +14422,6 @@ test('CLI implementer options: new names, deprecated aliases and their conflict'
     ['--implementer-effort', 'xhigh'],
     ['--implementer-effort=xhigh'],
     ['--implementer-effort=xhigh', '--implementer-effort=xhigh'],
-    ['--sol-effort', 'xhigh'],
   ]) {
     assert.equal(
       parseAgentArguments(['task.md', ...args]).implementerEffort,
@@ -14464,71 +14458,28 @@ test('CLI implementer options: new names, deprecated aliases and their conflict'
     ]).error,
     'Opcja --implementer-effort ma sprzeczne wartości high i max.',
   );
-  // An alias together with its new option is an argument error, in either
-  // order and also with equal values.
-  for (const args of [
-    ['--implementer-model=a', '--codex-model=a'],
-    ['--codex-model', 'a', '--implementer-model', 'b'],
+  // The options removed in 2.0 are an argument error naming the new option,
+  // alone, with a value or next to the new option.
+  for (const [args, message] of [
+    [['--codex-model', 'a'], 'Opcja --codex-model została usunięta w ringi 2.0; użyj --implementer-model.'],
+    [['--codex-model=a'], 'Opcja --codex-model została usunięta w ringi 2.0; użyj --implementer-model.'],
+    [['--implementer-model=a', '--codex-model=a'], 'Opcja --codex-model została usunięta w ringi 2.0; użyj --implementer-model.'],
+    [['--sol-effort', 'high'], 'Opcja --sol-effort została usunięta w ringi 2.0; użyj --implementer-effort.'],
+    [['--sol-effort'], 'Opcja --sol-effort została usunięta w ringi 2.0; użyj --implementer-effort.'],
   ]) {
     assert.equal(
       parseAgentArguments(['task.md', ...args]).error,
-      'Opcji --implementer-model i jej przestarzałego aliasu --codex-model nie można podać razem.',
-      args.join(' '),
-    );
-  }
-  for (const args of [
-    ['--implementer-effort=high', '--sol-effort=high'],
-    ['--sol-effort', 'high', '--implementer-effort', 'max'],
-  ]) {
-    assert.equal(
-      parseAgentArguments(['task.md', ...args]).error,
-      'Opcji --implementer-effort i jej przestarzałego aliasu --sol-effort nie można podać razem.',
+      message,
       args.join(' '),
     );
   }
   assert.equal(
-    parseAgentArguments(
-      ['task.md', '--implementer-model=a', '--codex-model=a'],
-      { ...TEST_PROFILE, locale: 'en' },
-    ).error,
-    'The --implementer-model option and its deprecated alias --codex-model cannot be given together.',
+    parseAgentArguments(['task.md', '--sol-effort=high'], {
+      ...TEST_PROFILE,
+      locale: 'en',
+    }).error,
+    'The --sol-effort option was removed in ringi 2.0; use --implementer-effort.',
   );
-});
-
-test('programmatic implementer options: new names win over the deprecated aliases', async () => {
-  const directory = await createRepository();
-  try {
-    const report = await runAgentReviewLoop({
-      profile: TEST_PROFILE,
-      runner: createMockRunner(),
-      output: { write() {} },
-      repositoryRoot: directory,
-      taskPath: 'task.md',
-      implementerModel: 'gpt-6-astra',
-      implementerEffort: 'max',
-      codexModel: 'gpt-6-sol',
-      solEffort: 'medium',
-      dryRun: true,
-      prepareCheckEnvironment: fakePrepareCheckEnvironment,
-    });
-    assert.equal(report.implementer.model, 'gpt-6-astra');
-    assert.equal(report.implementer.effort, 'max');
-    const aliasReport = await runAgentReviewLoop({
-      profile: TEST_PROFILE,
-      runner: createMockRunner(),
-      output: { write() {} },
-      repositoryRoot: directory,
-      taskPath: 'task.md',
-      codexModel: 'gpt-6-sol',
-      solEffort: 'medium',
-      dryRun: true,
-      prepareCheckEnvironment: fakePrepareCheckEnvironment,
-    });
-    assert.equal(aliasReport.implementer.model, 'gpt-6-sol');
-    assert.equal(aliasReport.implementer.effort, 'medium');
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 });
 
 test('programmatic model: validation before tools and before the round is written', async () => {
@@ -14546,20 +14497,20 @@ test('programmatic model: validation before tools and before the round is writte
         runner,
         repositoryRoot: tmpdir(),
         taskPath: 'task.md',
-        codexModel,
+        implementerModel: codexModel,
         dryRun: true,
       }),
       (error) => {
-        assert.equal(error.code, 'INVALID_CODEX_MODEL');
+        assert.equal(error.code, 'INVALID_IMPLEMENTER_MODEL');
         assert.equal(error.report.status, 'STOPPED');
-        assert.equal(error.report.sol.plannedModel, null);
-        assert.equal(error.report.sol.effectiveModel, null);
-        assert.deepEqual(error.report.sol.runs, []);
+        assert.equal(error.report.implementer.model, null);
+        assert.equal(error.report.implementer.effectiveModel, null);
+        assert.deepEqual(error.report.implementer.runs, []);
         return true;
       },
     );
     await assert.rejects(internal.runCodexRound({ runner, codexModel }), {
-      code: 'INVALID_CODEX_MODEL',
+      code: 'INVALID_IMPLEMENTER_MODEL',
     });
     assert.equal(runner.calls.length, 0);
   }
@@ -14571,7 +14522,7 @@ test('STOPPED keeps the override and the last finished pair after a resume error
   try {
     await assert.rejects(
       runFixture(directory, {
-        workflow: { codexModel, solEffort: 'medium' },
+        workflow: { implementerModel: codexModel, implementerEffort: 'medium' },
         codexRound: async ({
           round,
           findings,
@@ -14592,10 +14543,10 @@ test('STOPPED keeps the override and the last finished pair after a resume error
       }),
       (error) => {
         assert.equal(error.report.status, 'STOPPED');
-        assert.equal(error.report.sol.plannedModel, codexModel);
-        assert.equal(error.report.sol.effectiveModel, codexModel);
+        assert.equal(error.report.implementer.model, codexModel);
+        assert.equal(error.report.implementer.effectiveModel, codexModel);
         assert.deepEqual(
-          error.report.sol.runs.map(
+          error.report.implementer.runs.map(
             ({ requestedModel, requestedEffort, resumed, status }) => ({
               requestedModel,
               requestedEffort,
@@ -14618,7 +14569,7 @@ test('STOPPED keeps the override and the last finished pair after a resume error
             },
           ],
         );
-        assert.equal(error.report.sol.runs[1].completed, null);
+        assert.equal(error.report.implementer.runs[1].completed, null);
         return true;
       },
     );
@@ -14627,7 +14578,7 @@ test('STOPPED keeps the override and the last finished pair after a resume error
   }
 });
 
-test('HUD shows the selected model and reads a historical Astra report', () => {
+test('HUD shows the selected model and reads the implementer from a report', () => {
   for (const codexModel of [
     'gpt-6.1-sol',
     'gpt-6-sol',
@@ -14636,11 +14587,11 @@ test('HUD shows the selected model and reads a historical Astra report', () => {
     'CLAUDE',
   ]) {
     const { state, emit } = hudFixture();
-    emit({ type: 'metadata', solModel: codexModel, solEffort: 'medium' });
+    emit({ type: 'metadata', implementer: { model: codexModel, effort: 'medium' } });
     emit({
       type: 'stage:start',
       id: 'sol',
-      badge: 'SOL',
+      badge: 'IMPLEMENTER',
       model: codexModel,
       effort: 'medium',
     });
@@ -14662,9 +14613,10 @@ test('HUD shows the selected model and reads a historical Astra report', () => {
     type: 'result',
     report: {
       status: 'STOPPED',
-      sol: {
-        plannedModel: 'gpt-6-astra',
-        plannedEffort: 'high',
+      implementer: {
+        provider: 'codex',
+        model: 'gpt-6-astra',
+        effort: 'high',
         effectiveModel: 'gpt-6-astra',
         effectiveEffort: 'high',
         runs: [],
@@ -14809,14 +14761,14 @@ for (const taskClass of ['docs-minor', 'docs-descriptive', 'docs-contract']) {
       assert.equal(snapshots, reviews);
       assert.equal(report.quality.taskClass, taskClass);
       if (!reviews) {
-        assert.equal(report.review.status, 'NOT_REQUIRED');
-        assert.equal(report.review.attemptCount, 0);
-        assert.equal('effectiveModel' in report.review, false);
+        assert.equal(report.reviewer.status, 'NOT_REQUIRED');
+        assert.equal(report.reviewer.attemptCount, 0);
+        assert.equal(report.reviewer.effectiveModel, null);
         assert.equal('claude' in report.rounds[0], false);
         assert.equal('findingPolicy' in report, false);
         assert.equal(
           events.some(
-            (event) => event.badge === 'CLAUDE' || event.type === 'findings',
+            (event) => event.badge === 'REVIEWER' || event.type === 'findings',
           ),
           false,
         );
@@ -14832,7 +14784,7 @@ for (const taskClass of ['docs-minor', 'docs-descriptive', 'docs-contract']) {
           'NOT_REQUIRED',
         );
       } else {
-        assert.equal(report.rounds[0].claude.verdict, 'APPROVE');
+        assert.equal(report.rounds[0].reviewer.output.verdict, 'APPROVE');
       }
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -14855,10 +14807,10 @@ test('quality: dry run without Claude reports skipped review and effective gates
       runner,
       workflow: { taskPath, dryRun: true },
     });
-    assert.equal(report.review.status, 'NOT_REQUIRED');
-    assert.equal(report.review.attemptCount, 0);
-    assert.equal(report.agents.claudeAttemptCount, 0);
-    assert.deepEqual(report.agents.claudeAttempts, []);
+    assert.equal(report.reviewer.status, 'NOT_REQUIRED');
+    assert.equal(report.reviewer.attemptCount, 0);
+    assert.equal(report.agents.reviewer.plannedAttemptCount, 0);
+    assert.deepEqual(report.agents.reviewer.plannedAttempts, []);
     assert.deepEqual(report.checks, [
       ...TEST_GATES.checkSets.docs,
       'pnpm check',
@@ -15064,7 +15016,7 @@ test('quality: docs-contract correction retains docs gates and really reviews tw
         round.gates.gates.map((gate) => gate.name),
         TEST_GATES.checkSets.docs,
       );
-    assert.equal(report.rounds[1].codex.findingResponses.length, 1);
+    assert.equal(report.rounds[1].implementer.output.findingResponses.length, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -15162,7 +15114,7 @@ test('quality: skipped cleanup failure still has no fabricated finding policy', 
       }),
       (error) => {
         assert.equal(error.code, 'CLEANUP_FAILED');
-        assert.equal(error.report.review.status, 'NOT_REQUIRED');
+        assert.equal(error.report.reviewer.status, 'NOT_REQUIRED');
         assert.equal('findingPolicy' in error.report, false);
         assert.equal(error.report.quality.taskClass, 'docs-minor');
         return true;
@@ -15233,9 +15185,7 @@ for (const taskClass of ['docs-minor', 'docs-descriptive']) {
         type: 'metadata',
         quality: validateTaskMarkdown(qualityTask(taskClass)).quality,
         effectiveGates: TEST_GATES.checkSets.docs,
-        reviewProfile: null,
-        reviewAttempts: [],
-        reviewFallbackAllowed: false,
+        reviewer: { profile: null, attempts: [], fallbackAllowed: false },
       });
       const feed = output.value();
       assert.match(feed, new RegExp(`KLASA ${taskClass}`));
@@ -17055,9 +17005,9 @@ for (const [file, expected] of [
         assert.equal(report.status, 'APPROVE');
         assert.equal(report.quality.taskClass, 'notes-light');
         assert.equal(report.quality.policy, 'handbook/quality.md');
-        assert.equal(report.review.status, 'NOT_REQUIRED');
-        assert.equal(report.review.policy, 'handbook/quality.md');
-        assert.equal(report.review.reason, 'Synthetic light notes policy.');
+        assert.equal(report.reviewer.status, 'NOT_REQUIRED');
+        assert.equal(report.reviewer.policy, 'handbook/quality.md');
+        assert.equal(report.reviewer.reason, 'Synthetic light notes policy.');
         assert.deepEqual(
           report.rounds[0].gates.gates.map((gate) => gate.name),
           TEST_GATES.checkSets.docs,
@@ -17145,10 +17095,10 @@ test('agent roles: default roles reproduce the legacy constants, and an explicit
   assert.equal(Object.isFrozen(explicit.reviewer.profiles), true);
   assert.equal(Object.isFrozen(explicit.reviewer.profiles.critical[1]), true);
   // Default models unchanged.
-  assert.equal(CODEX_MODEL, LEGACY_CODEX_MODEL);
+  assert.equal(DEFAULT_IMPLEMENTER_MODEL, LEGACY_IMPLEMENTER_MODEL);
   assert.deepEqual(REVIEW_PROFILES, LEGACY_REVIEW_PROFILES);
-  assert.deepEqual(SOL_EFFORTS, LEGACY_SOL_EFFORTS);
-  assert.equal(DEFAULT_SOL_EFFORT, LEGACY_DEFAULT_SOL_EFFORT);
+  assert.deepEqual(IMPLEMENTER_EFFORTS, LEGACY_IMPLEMENTER_EFFORTS);
+  assert.equal(DEFAULT_IMPLEMENTER_EFFORT, LEGACY_DEFAULT_IMPLEMENTER_EFFORT);
   assert.equal(DEFAULT_REVIEW_PROFILE, LEGACY_DEFAULT_REVIEW_PROFILE);
 });
 
@@ -17160,12 +17110,12 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
     for (const taskMode of TASK_MODES) {
       for (const codexModel of [
         undefined,
-        CODEX_MODEL,
+        DEFAULT_IMPLEMENTER_MODEL,
         'gpt-6-sol',
         'gpt-6-astra',
         'future-codex_1.2',
       ]) {
-        for (const solEffort of [undefined, ...LEGACY_SOL_EFFORTS]) {
+        for (const solEffort of [undefined, ...LEGACY_IMPLEMENTER_EFFORTS]) {
           for (const sessionId of [undefined, TEST_SESSION_ID]) {
             const paths = {
               repositoryRoot: '/synthetic/repo',
@@ -17314,10 +17264,10 @@ test('adapter compatibility: Codex argv and environment from the adapter are ide
     // Effort and model outside the rules: the existing codes, no process.
     const before = calls.length;
     for (const [options, code] of [
-      [{ solEffort: 'ultra' }, 'INVALID_SOL_EFFORT'],
-      [{ codexModel: 'gpt 6' }, 'INVALID_CODEX_MODEL'],
-      [{ codexModel: null }, 'INVALID_CODEX_MODEL'],
-      [{ solEffort: null }, 'INVALID_SOL_EFFORT'],
+      [{ solEffort: 'ultra' }, 'INVALID_IMPLEMENTER_EFFORT'],
+      [{ codexModel: 'gpt 6' }, 'INVALID_IMPLEMENTER_MODEL'],
+      [{ codexModel: null }, 'INVALID_IMPLEMENTER_MODEL'],
+      [{ solEffort: null }, 'INVALID_IMPLEMENTER_EFFORT'],
     ]) {
       await assert.rejects(
         internal.runCodexRound({
@@ -17474,7 +17424,7 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
   for (const allowed of [undefined, implementer.allowedEfforts]) {
     for (const effort of [
       undefined,
-      ...LEGACY_SOL_EFFORTS,
+      ...LEGACY_IMPLEMENTER_EFFORTS,
       'low',
       'none',
       'ultra',
@@ -17491,7 +17441,7 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
   }
   for (const model of [
     undefined,
-    CODEX_MODEL,
+    DEFAULT_IMPLEMENTER_MODEL,
     'gpt-6-sol',
     'future-codex_1.2',
     'a'.repeat(128),
@@ -17531,11 +17481,11 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
     syntheticClaudeFailure('ordinary failure'),
     syntheticClaudeFailure('overloaded_error', 'INVALID_AGENT_OUTPUT'),
     new AgentWorkflowError('Bez diagnostyki.', {
-      code: 'CLAUDE_PROCESS_FAILED',
+      code: 'REVIEWER_PROCESS_FAILED',
       stage: 'reviewer',
     }),
     new AgentWorkflowError('Timeout.', {
-      code: 'CLAUDE_PROCESS_FAILED',
+      code: 'REVIEWER_PROCESS_FAILED',
       stage: 'reviewer',
       diagnostic: result('', 1, 'overloaded_error', { timedOut: true }),
     }),
@@ -17622,105 +17572,49 @@ test('adapter compatibility: model, effort and review profile selection, fallbac
   );
 });
 
-// Neutral report and event fields equal the sol*, codex*, claude* aliases.
+// The role fields of the report, the plan, the rounds and the events (2.0):
+// each agent output and execution is carried once, by its role.
 function assertNeutralAliases(report, events = []) {
-  const sol = report.sol;
-  if (sol) {
-    assert.deepEqual(report.implementer, {
-      provider: 'codex',
-      model: sol.plannedModel,
-      effort: sol.plannedEffort,
-      effectiveModel: sol.effectiveModel,
-      effectiveEffort: sol.effectiveEffort,
-      attemptCount: sol.runs.length,
-      runs: sol.runs,
-    });
+  if (Array.isArray(report.implementer?.runs)) {
+    assert.equal(report.implementer.provider, 'codex');
+    assert.equal(report.implementer.attemptCount, report.implementer.runs.length);
   }
-  if (report.review) {
-    const [planned] = report.review.plannedAttempts ?? [];
-    assert.deepEqual(report.reviewer, {
-      provider: 'claude',
-      profile: report.review.profile ?? null,
-      model: planned?.model ?? null,
-      effort: planned?.effort ?? null,
-      effectiveModel: report.review.effectiveModel ?? null,
-      effectiveEffort: report.review.effectiveEffort ?? null,
-      attemptCount: report.review.attemptCount,
-    });
+  if (report.reviewer) {
+    const [planned] = report.reviewer.plannedAttempts ?? [];
+    assert.equal(report.reviewer.provider, 'claude');
+    assert.equal(report.reviewer.model, planned?.model ?? null);
+    assert.equal(report.reviewer.effort, planned?.effort ?? null);
   }
   if (report.agents) {
-    const agents = report.agents;
-    assert.deepEqual(agents.implementer, {
-      provider: 'codex',
-      version: agents.codex,
-      model: agents.codexModel,
-      effort: agents.codexReasoning,
-    });
-    assert.deepEqual(agents.reviewer, {
-      provider: 'claude',
-      version: agents.claude ?? null,
-      profile: agents.claudeReviewProfile,
-      plannedAttemptCount: agents.claudeAttemptCount,
-      fallbackAllowed: agents.claudeFallbackAllowed,
-      plannedAttempts: agents.claudeAttempts,
-    });
-  }
-  // Neutral round fields do not copy agent outputs; they point to the alias
-  // keys that hold them, and those keys exist.
-  for (const round of report.rounds ?? []) {
-    assert.deepEqual(round.implementer, {
-      provider: 'codex',
-      outputField: 'codex',
-      executionField: 'solExecution',
-    });
-    assert.deepEqual(round.reviewer, {
-      provider: 'claude',
-      outputField: Object.hasOwn(round, 'claude') ? 'claude' : null,
-      executionField: 'reviewExecution',
-    });
-    for (const field of [
-      round.implementer.outputField,
-      round.implementer.executionField,
-      round.reviewer.outputField ?? 'reviewExecution',
-      round.reviewer.executionField,
-    ])
-      assert.equal(Object.hasOwn(round, field), true, field);
-    for (const removed of [
-      'implementerOutput',
-      'implementerExecution',
-      'reviewerOutput',
-    ])
-      assert.equal(Object.hasOwn(round, removed), false, removed);
-    assert.ok(
-      JSON.stringify(round.implementer).length +
-        JSON.stringify(round.reviewer).length <
-        256,
-    );
-  }
-  if (report.findings) {
     assert.deepEqual(
-      report.findings.rejectedByImplementer,
-      report.findings.rejectedByCodex,
+      Object.keys(report.agents).filter((key) => key !== 'independentReview'),
+      ['implementer', 'reviewer'],
     );
+    assert.equal(report.agents.implementer.provider, 'codex');
+    assert.equal(report.agents.reviewer.provider, 'claude');
+  }
+  for (const round of report.rounds ?? []) {
+    assert.deepEqual(Object.keys(round.implementer), ['provider', 'output', 'execution']);
+    assert.deepEqual(Object.keys(round.reviewer), ['provider', 'output', 'execution']);
+    assert.equal(round.implementer.provider, 'codex');
+    assert.equal(round.reviewer.provider, 'claude');
   }
   for (const event of events) {
     if (event.type === 'metadata') {
-      assert.deepEqual(event.implementer, {
-        provider: 'codex',
-        model: event.solModel,
-        effort: event.solEffort,
-      });
-      assert.deepEqual(event.reviewer, {
-        provider: 'claude',
-        profile: event.reviewProfile,
-        attempts: event.reviewAttempts,
-        fallbackAllowed: event.reviewFallbackAllowed,
-      });
+      assert.deepEqual(Object.keys(event.implementer), ['provider', 'model', 'effort']);
+      assert.deepEqual(Object.keys(event.reviewer), [
+        'provider',
+        'profile',
+        'attempts',
+        'fallbackAllowed',
+      ]);
     }
     const actor =
-      event.badge === 'SOL' || event.role === 'ASTRA'
+      event.badge === 'IMPLEMENTER' ||
+      (event.type === 'activity' && event.actor === 'implementer')
         ? { actor: 'implementer', provider: 'codex' }
-        : event.badge === 'CLAUDE' || event.role === 'CLAUDE'
+        : event.badge === 'REVIEWER' ||
+            (event.type === 'activity' && event.actor === 'reviewer')
           ? { actor: 'reviewer', provider: 'claude' }
           : { actor: undefined, provider: undefined };
     assert.deepEqual(
@@ -17746,8 +17640,8 @@ const RUN_SCENARIOS = [
     workflow: {
       dryRun: true,
       reviewProfile: 'critical-opus',
-      codexModel: 'gpt-6-sol',
-      solEffort: 'max',
+      implementerModel: 'gpt-6-sol',
+      implementerEffort: 'max',
     },
   },
   {
@@ -17756,7 +17650,7 @@ const RUN_SCENARIOS = [
       if (call === 1)
         throw syntheticClaudeFailure(
           'overloaded_error',
-          'CLAUDE_PROCESS_FAILED',
+          'REVIEWER_PROCESS_FAILED',
           WorkflowError,
         );
       return call === 2 ? requestChanges(1) : approveReview();
@@ -17791,9 +17685,9 @@ const RUN_SCENARIOS = [
     expected: 'INVALID_REVIEW_PROFILE',
   },
   {
-    name: 'STOPPED INVALID_SOL_EFFORT',
-    workflow: { solEffort: 'ultra' },
-    expected: 'INVALID_SOL_EFFORT',
+    name: 'STOPPED INVALID_IMPLEMENTER_EFFORT',
+    workflow: { implementerEffort: 'ultra' },
+    expected: 'INVALID_IMPLEMENTER_EFFORT',
   },
 ];
 
@@ -17904,8 +17798,6 @@ for (const scenario of RUN_SCENARIOS) {
   });
 }
 
-// Full runs are compared with the legacy core through the
-// runs-without-role-fields snapshot (below), not only explicit vs default profile.
 // Gate process durations are wall-clock time; zeroed on both sides.
 function stripDurations(value) {
   return JSON.parse(
@@ -17913,42 +17805,10 @@ function stripDurations(value) {
   );
 }
 
-// Removes only the neutral role fields: report (implementer, reviewer,
-// agents.implementer/reviewer, findings.rejectedByImplementer,
-// rounds[].implementer/reviewer; also the report in the result event) and events
-// (actor, provider, metadata.implementer/reviewer).
-function stripNeutralFields(value, kind) {
-  const copy = stripDurations(value);
-  if (kind === 'events') {
-    for (const event of copy) {
-      delete event.actor;
-      delete event.provider;
-      if (event.type === 'metadata') {
-        delete event.implementer;
-        delete event.reviewer;
-      }
-      if (event.report) event.report = stripNeutralFields(event.report);
-    }
-    return copy;
-  }
-  delete copy.implementer;
-  delete copy.reviewer;
-  if (copy.agents) {
-    delete copy.agents.implementer;
-    delete copy.agents.reviewer;
-  }
-  if (copy.findings) delete copy.findings.rejectedByImplementer;
-  for (const round of copy.rounds ?? []) {
-    delete round.implementer;
-    delete round.reviewer;
-  }
-  return copy;
-}
-
 // Removes the report field runner (the fingerprint of the runner files,
 // which changes with every change of the runner code) after checking its
 // format: in the report, its partial report and the report of the result
-// event. value: a copy (stripDurations or stripNeutralFields).
+// event. value: a copy (stripDurations).
 function stripRunnerField(value, kind) {
   const strip = (report) => {
     if (!report || typeof report !== 'object') return;
@@ -18008,8 +17868,6 @@ const GOLDEN_NORMALIZATIONS = deepFreeze({
     'Pierwszy element PATH wywołania procesu (katalog guard-bin tworzony przy każdym wywołaniu) ma wartość <guard-bin>.',
   activityCallback:
     'Opcja procesu onActivityChunk (funkcja) jest pominięta.',
-  neutralRoleFields:
-    'Neutralne pola ról (raport: implementer, reviewer, agents.implementer/reviewer, findings.rejectedByImplementer, rounds[].implementer/reviewer; zdarzenia: actor, provider, metadata.implementer/reviewer) są pominięte, jak w wersji sprzed tych pól.',
   runnerFingerprint:
     'Pole raportu runner (odcisk SHA-256 plików runnera, zmienia się z każdą zmianą kodu runnera; także w raporcie zdarzenia result i w raporcie partial) jest pominięte po sprawdzeniu formatu, jak w wersji sprzed tego pola.',
   ledgerHeadHash:
@@ -18094,18 +17952,6 @@ const GOLDEN_HOST_NAME =
 // Snapshot descriptions: file, test name, the baseline whose output the
 // snapshot describes, and the normalizations used.
 const GOLDEN_SNAPSHOTS = deepFreeze({
-  'runs-without-role-fields': {
-    test: 'run compatibility [golden]: full-run report and events without neutral role fields match the snapshot of the version before those fields',
-    baseline: 'core before neutral role fields',
-    normalizations: [
-      'durationMs',
-      'dependencyMetadataFingerprint',
-      'temporaryPaths',
-      'neutralRoleFields',
-      'runnerFingerprint',
-      'ledgerHeadHash',
-    ],
-  },
   'adapters-codex-claude-reviewer': {
     test: 'adapter compatibility [golden]: codex and claude-reviewer argv, environment and results are unchanged',
     baseline: 'core before the claude implementer',
@@ -18402,30 +18248,24 @@ function goldenRunHeader(report, events) {
     taskMode: report.taskMode ?? null,
     rounds: report.rounds?.length ?? 0,
     head: report.head ?? null,
-    sol: report.sol
-      ? `${report.sol.plannedModel}/${report.sol.plannedEffort}`
-      : null,
     implementer: role(report.implementer),
-    review: report.review
-      ? `${report.review.profile} ${report.review.attemptCount}/${report.review.plannedAttemptCount}`
+    reviewerAttempts: report.reviewer
+      ? `${report.reviewer.profile} ${report.reviewer.attemptCount}/${report.reviewer.plannedAttemptCount}`
       : null,
     events: events.length,
   };
 }
 
 // Run entry: report and events (with key order), optionally the dashboard
-// terminal output. strip: without the neutral role fields.
+// terminal output.
 async function goldenRunEntry(
   scenario,
   profile,
-  { lib = null, runner, dashboard, strip = false } = {},
+  { lib = null, runner, dashboard } = {},
 ) {
   const run = await runGoldenScenario(scenario, profile, lib, runner);
   const view = (kind) =>
-    stripRunnerField(
-      strip ? stripNeutralFields(run[kind], kind) : stripDurations(run[kind]),
-      kind,
-    );
+    stripRunnerField(stripDurations(run[kind]), kind);
   const report = view('report');
   const events = view('events');
   const subtrees = { report, events };
@@ -18458,7 +18298,7 @@ async function goldenRunTest(
   t,
   name,
   profiles,
-  { dashboard, strip = false, check = () => {} } = {},
+  { dashboard, check = () => {} } = {},
 ) {
   const golden = await openGoldenSnapshot(name);
   let comparisons = 0;
@@ -18471,7 +18311,6 @@ async function goldenRunTest(
         const { run, built } = await goldenRunEntry(scenario, profile, {
           runner: runner(),
           dashboard,
-          strip,
         });
         check(run, profile);
         await golden.check(entryName, built);
@@ -18483,27 +18322,12 @@ async function goldenRunTest(
   return comparisons;
 }
 
-test(GOLDEN_SNAPSHOTS['runs-without-role-fields'].test, async (t) => {
-  const comparisons = await goldenRunTest(
-    t,
-    'runs-without-role-fields',
-    [['domyślny', TEST_PROFILE, RUN_SCENARIOS, () => undefined]],
-    {
-      strip: true,
-      // The current code has the neutral fields; the legacy snapshot does not.
-      check: ({ report }) => assert.equal(report.implementer.provider, 'codex'),
-    },
-  );
-  t.diagnostic(`runs-without-role-fields comparisons ${comparisons}`);
-  assert.equal(comparisons, RUN_SCENARIOS.length * 2);
-});
-
 test('agent roles report: schemaVersion, stage values and existing fields unchanged', async () => {
   const directory = await createRepository();
   try {
     const { report } = await runFixture(directory);
-    assert.equal(report.schemaVersion, 1);
-    assert.deepEqual(report.sol.runs, report.implementer.runs);
+    assert.equal(report.schemaVersion, 2);
+    assert.deepEqual(report.implementer.runs, report.implementer.runs);
     assert.equal(report.implementer.provider, 'codex');
     assert.equal(report.reviewer.provider, 'claude');
     assert.equal(report.implementer.model, 'gpt-6.1-sol');
@@ -18511,9 +18335,8 @@ test('agent roles report: schemaVersion, stage values and existing fields unchan
     assert.equal(report.reviewer.profile, 'critical');
     assert.deepEqual(Object.keys(report.findings), [
       'closedAfterConfirmed',
-      'rejectedByCodex',
-      'unresolved',
       'rejectedByImplementer',
+      'unresolved',
     ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -18726,12 +18549,12 @@ test('custom agent roles profile: CLI and programmatic options override roles wi
     json: false,
   });
   assert.equal(
-    parseAgentArguments(['task.md', '--sol-effort=high'], profile)
+    parseAgentArguments(['task.md', '--implementer-effort=high'], profile)
       .implementerEffort,
     'high',
   );
   assert.equal(
-    parseAgentArguments(['task.md', '--codex-model', 'gpt-6-astra'], profile)
+    parseAgentArguments(['task.md', '--implementer-model', 'gpt-6-astra'], profile)
       .implementerModel,
     'gpt-6-astra',
   );
@@ -18741,8 +18564,8 @@ test('custom agent roles profile: CLI and programmatic options override roles wi
     'economy',
   );
   assert.equal(
-    parseAgentArguments(['task.md', '--sol-effort=max'], profile).error,
-    'Opcja --sol-effort wymaga wartości medium albo high.',
+    parseAgentArguments(['task.md', '--implementer-effort=max'], profile).error,
+    'Opcja --implementer-effort wymaga wartości medium albo high.',
   );
   assert.equal(
     parseAgentArguments(['task.md', '--review-profile', 'critical'], profile)
@@ -18776,23 +18599,25 @@ test('custom agent roles profile: CLI and programmatic options override roles wi
         ...workflow,
       });
     const report = await dryRun({});
-    assert.deepEqual(report.sol, {
-      plannedModel: 'gpt-6-sol',
-      plannedEffort: 'medium',
+    assert.deepEqual(report.implementer, {
+      provider: 'codex',
+      model: 'gpt-6-sol',
+      effort: 'medium',
       effectiveModel: null,
       effectiveEffort: null,
+      attemptCount: 0,
       runs: [],
     });
-    assert.deepEqual(report.review.plannedAttempts, [
+    assert.deepEqual(report.reviewer.plannedAttempts, [
       { model: 'claude-opus-5', effort: 'high' },
     ]);
-    assert.equal(report.review.profile, 'standard');
-    assert.equal(report.review.fallbackAllowed, false);
-    assert.equal(report.agents.claudeReviewProfile, 'standard');
+    assert.equal(report.reviewer.profile, 'standard');
+    assert.equal(report.reviewer.fallbackAllowed, false);
+    assert.equal(report.agents.reviewer.profile, 'standard');
     assertNeutralAliases(report);
     const overridden = await dryRun({
-      codexModel: 'gpt-6-astra',
-      solEffort: 'high',
+      implementerModel: 'gpt-6-astra',
+      implementerEffort: 'high',
       reviewProfile: 'economy',
     });
     assert.equal(overridden.implementer.model, 'gpt-6-astra');
@@ -18800,9 +18625,9 @@ test('custom agent roles profile: CLI and programmatic options override roles wi
     assert.equal(overridden.reviewer.profile, 'economy');
     assert.equal(overridden.reviewer.effort, 'medium');
     for (const [workflow, code] of [
-      [{ solEffort: 'max' }, 'INVALID_SOL_EFFORT'],
+      [{ implementerEffort: 'max' }, 'INVALID_IMPLEMENTER_EFFORT'],
       [{ reviewProfile: 'critical' }, 'INVALID_REVIEW_PROFILE'],
-      [{ codexModel: 'gpt 6' }, 'INVALID_CODEX_MODEL'],
+      [{ implementerModel: 'gpt 6' }, 'INVALID_IMPLEMENTER_MODEL'],
     ]) {
       await assert.rejects(dryRun(workflow), (error) => {
         assert.equal(error.code, code);
@@ -18873,9 +18698,9 @@ test('review profile: non-string name, null fallbackProfile and reserved invalid
         }),
         (error) => {
           assert.equal(error.code, 'INVALID_REVIEW_PROFILE');
-          assert.equal(error.report.review.profile, 'invalid');
-          assert.deepEqual(error.report.review.plannedAttempts, []);
-          assert.equal(error.report.review.fallbackAllowed, false);
+          assert.equal(error.report.reviewer.profile, 'invalid');
+          assert.deepEqual(error.report.reviewer.plannedAttempts, []);
+          assert.equal(error.report.reviewer.fallbackAllowed, false);
           assert.equal(error.report.reviewer.profile, 'invalid');
           assert.equal(error.report.reviewer.model, null);
           assertNeutralAliases(error.report);
@@ -19351,10 +19176,10 @@ test('runCodexRound with claude: argv, environment, prompt, result, resume and f
     // Model and effort outside the adapter rules: the existing codes, no process.
     const before = calls.length;
     for (const [options, code] of [
-      [{ solEffort: 'max' }, 'INVALID_SOL_EFFORT'],
-      [{ solEffort: 'low' }, 'INVALID_SOL_EFFORT'],
-      [{ codexModel: '--resume' }, 'INVALID_CODEX_MODEL'],
-      [{ codexModel: 'claude opus' }, 'INVALID_CODEX_MODEL'],
+      [{ solEffort: 'max' }, 'INVALID_IMPLEMENTER_EFFORT'],
+      [{ solEffort: 'low' }, 'INVALID_IMPLEMENTER_EFFORT'],
+      [{ codexModel: '--resume' }, 'INVALID_IMPLEMENTER_MODEL'],
+      [{ codexModel: 'claude opus' }, 'INVALID_IMPLEMENTER_MODEL'],
     ]) {
       await assert.rejects(
         round({ round: 1, ...options }),
@@ -19422,11 +19247,11 @@ test('claude implementer profile: passes validation, model and effort follow the
   }
   // CLI options within the claude profile allowlist.
   assert.equal(
-    parseAgentArguments(['task.md', '--sol-effort=max'], CLAUDE_IMPLEMENTER_PROFILE).error,
-    'Opcja --sol-effort wymaga wartości medium, high albo xhigh.',
+    parseAgentArguments(['task.md', '--implementer-effort=max'], CLAUDE_IMPLEMENTER_PROFILE).error,
+    'Opcja --implementer-effort wymaga wartości medium, high albo xhigh.',
   );
   assert.equal(
-    parseAgentArguments(['task.md', '--codex-model', 'claude-fable-5'], CLAUDE_IMPLEMENTER_PROFILE)
+    parseAgentArguments(['task.md', '--implementer-model', 'claude-fable-5'], CLAUDE_IMPLEMENTER_PROFILE)
       .implementerModel,
     'claude-fable-5',
   );
@@ -19498,7 +19323,7 @@ test('reviewer and codex preflight: CLI version and platform of both roles, STOP
         runner,
         workflow: { dryRun: true },
       });
-      assert.equal(dryRun.agents.claude, version, version);
+      assert.equal(dryRun.agents.reviewer.version, version, version);
       await rm(join(directory, '.agent-review-loop', 'runs'), {
         recursive: true,
         force: true,
@@ -19557,7 +19382,7 @@ test('reviewer and codex preflight: CLI version and platform of both roles, STOP
         workflow: { dryRun: true },
       });
       assert.equal(dryRun.agents.implementer.version, version, version);
-      assert.equal(dryRun.agents.codex, version, version);
+      assert.equal(dryRun.agents.implementer.version, version, version);
       await rm(join(directory, '.agent-review-loop', 'runs'), {
         recursive: true,
         force: true,
@@ -19710,65 +19535,58 @@ test('claude implementer run: neutral fields, sol*/codex* aliases, same-provider
       },
     });
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
-    // The sol* and codex* aliases describe the implementer regardless of provider.
+    assert.equal(report.schemaVersion, 2);
+    // The implementer fields describe the implementer regardless of provider.
     assert.deepEqual(report.implementer, {
       provider: 'claude',
-      model: report.sol.plannedModel,
-      effort: report.sol.plannedEffort,
-      effectiveModel: report.sol.effectiveModel,
-      effectiveEffort: report.sol.effectiveEffort,
-      attemptCount: report.sol.runs.length,
-      runs: report.sol.runs,
+      model: report.implementer.model,
+      effort: report.implementer.effort,
+      effectiveModel: report.implementer.effectiveModel,
+      effectiveEffort: report.implementer.effectiveEffort,
+      attemptCount: report.implementer.runs.length,
+      runs: report.implementer.runs,
     });
     assert.equal(report.implementer.model, 'claude-opus-5');
     assert.equal(report.implementer.effectiveModel, 'claude-opus-5');
     assert.deepEqual(
-      report.sol.runs.map(({ resumed }) => resumed),
+      report.implementer.runs.map(({ resumed }) => resumed),
       [false, true],
     );
     // The same-provider warning is only information in the report.
     const { warnings, ...reviewerAudit } = report.reviewer;
     assert.deepEqual(warnings, ['SAME_PROVIDER_REVIEW']);
-    const [planned] = report.review.plannedAttempts;
-    assert.deepEqual(reviewerAudit, {
-      provider: 'claude',
-      profile: report.review.profile,
-      model: planned.model,
-      effort: planned.effort,
-      effectiveModel: report.review.effectiveModel,
-      effectiveEffort: report.review.effectiveEffort,
-      attemptCount: report.review.attemptCount,
-    });
-    assert.deepEqual(
-      report.findings.rejectedByImplementer,
-      report.findings.rejectedByCodex,
-    );
+    const [planned] = report.reviewer.plannedAttempts;
+    assert.equal(reviewerAudit.provider, 'claude');
+    assert.equal(reviewerAudit.model, planned.model);
+    assert.equal(reviewerAudit.effort, planned.effort);
     assert.equal(report.rounds.length, 2);
     for (const round of report.rounds) {
-      assert.deepEqual(round.implementer, {
-        provider: 'claude',
-        outputField: 'codex',
-        executionField: 'solExecution',
-      });
+      assert.equal(round.implementer.provider, 'claude');
+      assert.ok(round.implementer.output);
+      assert.ok(round.implementer.execution);
       assert.equal(round.reviewer.provider, 'claude');
-      assert.equal(Object.hasOwn(round, 'codex'), true);
     }
     const metadata = events.find(({ type }) => type === 'metadata');
     assert.deepEqual(metadata.implementer, {
       provider: 'claude',
-      model: metadata.solModel,
-      effort: metadata.solEffort,
+      model: report.implementer.model,
+      effort: report.implementer.effort,
     });
     let implementerEvents = 0;
     for (const event of events) {
-      if (event.badge === 'SOL' || event.role === 'ASTRA') {
+      if (
+        event.badge === 'IMPLEMENTER' ||
+        (event.type === 'activity' && event.actor === 'implementer')
+      ) {
         implementerEvents += 1;
         assert.deepEqual(
           { actor: event.actor, provider: event.provider },
           { actor: 'implementer', provider: 'claude' },
         );
-      } else if (event.badge === 'CLAUDE' || event.role === 'CLAUDE') {
+      } else if (
+        event.badge === 'REVIEWER' ||
+        (event.type === 'activity' && event.actor === 'reviewer')
+      ) {
         assert.deepEqual(
           { actor: event.actor, provider: event.provider },
           { actor: 'reviewer', provider: 'claude' },
@@ -19784,8 +19602,7 @@ test('claude implementer run: neutral fields, sol*/codex* aliases, same-provider
     }
     assert.equal(runner.calls.some(({ program }) => program === 'codex'), false);
 
-    // Dry-run: agents describes the claude implementer versions and model; aliases
-    // codex* denote the implementer, claude* the reviewer.
+    // Dry-run: agents describes the claude implementer versions and model.
     await rm(join(directory, '.agent-review-loop', 'runs'), {
       recursive: true,
       force: true,
@@ -19801,11 +19618,8 @@ test('claude implementer run: neutral fields, sol*/codex* aliases, same-provider
       model: 'claude-opus-5',
       effort: 'high',
     });
-    assert.equal(dryRun.agents.codex, dryRun.agents.implementer.version);
-    assert.equal(dryRun.agents.codexModel, dryRun.agents.implementer.model);
-    assert.equal(dryRun.agents.codexReasoning, dryRun.agents.implementer.effort);
     assert.equal(dryRun.agents.reviewer.provider, 'claude');
-    assert.equal(dryRun.agents.claude, CLAUDE_IMPLEMENTER_VERSION);
+    assert.equal(dryRun.agents.reviewer.version, CLAUDE_IMPLEMENTER_VERSION);
     assert.deepEqual(dryRun.reviewer.warnings, ['SAME_PROVIDER_REVIEW']);
     assert.equal(dryRun.implementer.provider, 'claude');
 
@@ -19854,7 +19668,7 @@ test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning i
         runner: versionRunner(versions),
       });
       assert.equal(report.status, 'APPROVE', JSON.stringify(versions));
-      assert.equal(report.schemaVersion, 1);
+      assert.equal(report.schemaVersion, 2);
       assert.deepEqual(report.implementer.warnings, ['UNPROBED_VERSION']);
       assert.deepEqual(report.reviewer.warnings, ['UNPROBED_VERSION']);
       const { warnings: _implementer, ...implementerAudit } = report.implementer;
@@ -19867,7 +19681,7 @@ test('UNPROBED_VERSION: a CLI version outside probedVersions is a role warning i
       assert.equal(dryRun.status, 'DRY_RUN_OK');
       assert.deepEqual(dryRun.agents.implementer.warnings, ['UNPROBED_VERSION']);
       assert.deepEqual(dryRun.agents.reviewer.warnings, ['UNPROBED_VERSION']);
-      assert.equal(dryRun.agents.codex, versions.codex);
+      assert.equal(dryRun.agents.implementer.version, versions.codex);
       assert.deepEqual(dryRun.implementer.warnings, ['UNPROBED_VERSION']);
       assert.deepEqual(dryRun.reviewer.warnings, ['UNPROBED_VERSION']);
     }
@@ -20119,7 +19933,7 @@ test('permission denials: claude envelope permission_denials in the round report
     await rm(directory, { recursive: true, force: true });
   }
 
-  // Loop: denials from the round result go to solExecution (rounds[] and runs).
+  // Loop: denials from the round result go to the implementer's execution (rounds[] and runs).
   const loopDirectory = await createRepository();
   try {
     const permissionDenials = {
@@ -20138,17 +19952,16 @@ test('permission denials: claude envelope permission_denials in the round report
       workflow: { profile: CLAUDE_IMPLEMENTER_PROFILE },
     });
     assert.equal(report.status, 'APPROVE');
-    assert.deepEqual(report.rounds[0].solExecution.permissionDenials, permissionDenials);
+    assert.deepEqual(report.rounds[0].implementer.execution.permissionDenials, permissionDenials);
     assert.deepEqual(report.implementer.runs[0].permissionDenials, permissionDenials);
-    assert.deepEqual(report.sol.runs[0].permissionDenials, permissionDenials);
-    // Round result without the field (codex): solExecution without the new field.
+    // Round result without the field (codex): the execution without the new field.
     await rm(join(loopDirectory, '.agent-review-loop', 'runs'), {
       recursive: true,
       force: true,
     });
     const defaults = await runFixture(loopDirectory);
     assert.equal(
-      Object.hasOwn(defaults.report.rounds[0].solExecution, 'permissionDenials'),
+      Object.hasOwn(defaults.report.rounds[0].implementer.execution, 'permissionDenials'),
       false,
     );
   } finally {
@@ -21782,8 +21595,8 @@ async function codexClaudeReviewerAdapterEntries({ lib, providers, base = false 
   // session read.
   const codexArgs = [];
   for (const taskMode of TASK_MODES) {
-    for (const model of [CODEX_MODEL, 'gpt-6-sol', 'future-codex_1.2']) {
-      for (const effort of SOL_EFFORTS) {
+    for (const model of [DEFAULT_IMPLEMENTER_MODEL, 'gpt-6-sol', 'future-codex_1.2']) {
+      for (const effort of IMPLEMENTER_EFFORTS) {
         for (const sessionId of [undefined, TEST_SESSION_ID]) {
           const input = {
             taskMode,
@@ -22070,8 +21883,8 @@ async function codexClaudeAdapterEntries({ lib, providers, base = false }) {
   // codex: argv and environment.
   const codexArgs = [];
   for (const taskMode of TASK_MODES) {
-    for (const model of [CODEX_MODEL, 'future-codex_1.2']) {
-      for (const effort of SOL_EFFORTS) {
+    for (const model of [DEFAULT_IMPLEMENTER_MODEL, 'future-codex_1.2']) {
+      for (const effort of IMPLEMENTER_EFFORTS) {
         for (const sessionId of [undefined, TEST_SESSION_ID])
           codexArgs.push(
             all.codex.implementer.processArgs({
@@ -22239,14 +22052,14 @@ test(GOLDEN_SNAPSHOTS['adapters-codex-claude'].test, async (t) => {
 // Full-run scenarios with claude as the implementer: model and effort from
 // the claude allowlist instead of gpt-6-sol/max.
 const CLAUDE_IMPLEMENTER_SCENARIOS = RUN_SCENARIOS.map((scenario) =>
-  scenario.workflow?.codexModel === 'gpt-6-sol'
+  scenario.workflow?.implementerModel === 'gpt-6-sol'
     ? {
         ...scenario,
         name: 'dry-run critical-opus/claude-fable-5/xhigh',
         workflow: {
           ...scenario.workflow,
-          codexModel: 'claude-fable-5',
-          solEffort: 'xhigh',
+          implementerModel: 'claude-fable-5',
+          implementerEffort: 'xhigh',
         },
       }
     : scenario,
@@ -22268,7 +22081,7 @@ test(GOLDEN_SNAPSHOTS['runs-claude-implementer'].test, async (t) => {
 
 // Conformance suite fixtures for built-in providers (CLI output format).
 const CODEX_CONFORMANCE_FIXTURES = deepFreeze({
-  model: CODEX_MODEL,
+  model: DEFAULT_IMPLEMENTER_MODEL,
   implementer: {
     stdout: (_report, sessionId) =>
       `${JSON.stringify({ type: 'thread.started', thread_id: sessionId })}\n${JSON.stringify({ type: 'turn.completed' })}\n`,
@@ -23216,7 +23029,7 @@ test('example provider through the core: argv, environment, result and fail-clos
       });
     };
     for (const [options, profile, code, stage] of [
-      [{ round: 1, codexModel: 'claude-opus-5' }, EXAMPLE_PROVIDER_PROFILE, 'INVALID_CODEX_MODEL', 'preflight'],
+      [{ round: 1, codexModel: 'claude-opus-5' }, EXAMPLE_PROVIDER_PROFILE, 'INVALID_IMPLEMENTER_MODEL', 'preflight'],
       [{ round: 1, taskMode: 'analysis' }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [onlyImplementation] }, 'INVALID_TASK_MODE', 'preflight'],
       [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badArgv] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
       [{ round: 1 }, { ...EXAMPLE_PROVIDER_PROFILE, providerModules: [badEnvironment] }, 'PROVIDER_CONTRACT_VIOLATION', 'implementer'],
@@ -24051,12 +23864,12 @@ test('RINGI PROFILE_MODIFIED is the primary code for every round ending: invalid
         claudeReview: async () => {
           await changeProfile(directory);
           throw new AgentWorkflowError('Syntetyczny błąd review.', {
-            code: 'CLAUDE_REVIEW_FAILED',
+            code: 'REVIEW_FAILED',
             stage: 'reviewer',
           });
         },
       }),
-      violations: ['CLAUDE_REVIEW_FAILED'],
+      violations: ['REVIEW_FAILED'],
     },
   ];
   for (const scenario of scenarios) {
@@ -24605,10 +24418,10 @@ const CLI_ERROR_ARGUMENTS = deepFreeze([
   ['task.md', '--task-mode', 'other'],
   ['task.md', '--task-mode=analysis', '--task-mode=analysis'],
   ['task.md', '--review-profile=standard', '--review-profile=economy'],
-  ['task.md', '--codex-model', 'bad model'],
-  ['task.md', '--codex-model=a', '--codex-model=b'],
-  ['task.md', '--sol-effort=bogus'],
-  ['task.md', '--sol-effort=high', '--sol-effort=max'],
+  ['task.md', '--implementer-model', 'bad model'],
+  ['task.md', '--implementer-model=a', '--implementer-model=b'],
+  ['task.md', '--implementer-effort=bogus'],
+  ['task.md', '--implementer-effort=high', '--implementer-effort=max'],
 ]);
 
 // CLI snapshot entries: parser of both profiles, CLI exit code, stdout and
@@ -24845,7 +24658,7 @@ test('Polish literal scan: apart from the exceptions, no scripts/** file has lit
 // Prompts: representative writer and reviewer prompt inputs (both modes,
 // first round and correction, docs classes, first and later reviews).
 // markdown: task text in the prompts (neutral: without fixture text).
-function localePromptInputs({ markdown, codexModel = CODEX_MODEL } = {}) {
+function localePromptInputs({ markdown, codexModel = DEFAULT_IMPLEMENTER_MODEL } = {}) {
   const parsed = (source, taskMode) => ({
     path: 'task.md',
     markdown: markdown ?? source,
@@ -25028,12 +24841,12 @@ test('en prompts: neutral, without Polish letters or words, with the English sec
     localePromptInputs({ markdown: EN_PROMPT_MARKDOWN }),
   );
   for (const [label, value] of [...prompts, ...defaultModelPrompts]) {
-    const rest = value.replaceAll(sentinel, '').replaceAll(CODEX_MODEL, '');
+    const rest = value.replaceAll(sentinel, '').replaceAll(DEFAULT_IMPLEMENTER_MODEL, '');
     assert.doesNotMatch(rest, /(?<![a-z])sol(?![a-z])/iu, label);
     assert.doesNotMatch(rest, EN_PROMPT_FORBIDDEN, label);
   }
   assert.ok(prompts.some(([, value]) => value.includes(sentinel)));
-  assert.ok(defaultModelPrompts.some(([, value]) => value.includes(CODEX_MODEL)));
+  assert.ok(defaultModelPrompts.some(([, value]) => value.includes(DEFAULT_IMPLEMENTER_MODEL)));
   const text = Object.fromEntries(prompts);
   assert.match(text['writer: implementation, runda 1'], /"Starting files" section/);
   assert.match(text['writer: implementation, runda 1'], /"Allowed change area" is/);
@@ -25438,7 +25251,7 @@ test('en locale: in a full run the writer process receives the en prompt', async
     assert.equal(report.status, 'APPROVE', report.error);
     assert.equal(inputs.length, 1);
     const [input] = inputs;
-    assert.match(input, new RegExp(`The writer uses model ${CODEX_MODEL.replaceAll('.', '\\.')}\\.`, 'u'));
+    assert.match(input, new RegExp(`The writer uses model ${DEFAULT_IMPLEMENTER_MODEL.replaceAll('.', '\\.')}\\.`, 'u'));
     assert.match(input, /"Starting files" section/);
     assert.doesNotMatch(input, /Bieżący wykonawca używa modelu/);
     assert.ok(input.includes(taskMarkdown));
@@ -25470,27 +25283,25 @@ test('en and pl locales: dashboard terminal output and summary', () => {
         runId: 'run-1',
         branch: 'feature/example',
         taskMode: 'implementation',
-        solModel: 'gpt-6-sol',
-        solEffort: 'high',
-        reviewProfile: 'critical',
-        reviewAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
-        reviewFallbackAllowed: false,
+        implementer: { model: 'gpt-6-sol', effort: 'high' },
+        reviewer: { profile: 'critical', attempts: [{ model: 'claude-opus-5', effort: 'xhigh' }], fallbackAllowed: false },
       },
       { type: 'round:start', round: 1, gateCount: 1, maxRounds: 3 },
-      { type: 'stage:start', id: 'round-1:sol', badge: 'SOL', label: text('stage.implementation'), model: 'gpt-6-sol', effort: 'high' },
-      { type: 'stage:end', id: 'round-1:sol', badge: 'SOL', label: text('stage.implementation'), status: 'PASS', durationMs: 65_000 },
+      { type: 'stage:start', id: 'round-1:sol', badge: 'IMPLEMENTER', label: text('stage.implementation'), model: 'gpt-6-sol', effort: 'high' },
+      { type: 'stage:end', id: 'round-1:sol', badge: 'IMPLEMENTER', label: text('stage.implementation'), status: 'PASS', durationMs: 65_000 },
     ])
       dashboard.event(event);
     dashboard.finish(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         status: 'STOPPED',
         code: 'MAX_ROUNDS',
         stage: 'reviewer',
         error: text('run.maxRounds', { maxRounds: 3 }),
         resume: text('run.resume'),
         durationMs: 125_000,
-        review: {
+        reviewer: {
+          provider: 'claude',
           profile: 'critical',
           attemptCount: 1,
           fallbackAllowed: false,
@@ -25511,7 +25322,7 @@ test('en locale: error messages of calls outside and inside a run come from the 
   await messages.withLocale('en', async () => {
     const cases = [
       [() => resolveTaskMode('other'), 'INVALID_TASK_MODE', 'config.invalidTaskMode', {}],
-      [() => resolveSolEffort('bogus'), 'INVALID_SOL_EFFORT', 'config.unknownSolEffort', { effort: '"bogus"' }],
+      [() => resolveSolEffort('bogus'), 'INVALID_IMPLEMENTER_EFFORT', 'config.unknownSolEffort', { effort: '"bogus"' }],
       [() => resolveReviewProfile('bogus'), 'INVALID_REVIEW_PROFILE', 'config.unknownReviewProfile', { profile: '"bogus"' }],
       [() => internal.resolveRunnerProfile({ title: 7 }), 'INVALID_CONFIGURATION', 'profile.invalid', {}],
       [() => parseClaudeOutput('not json', {}), 'INVALID_AGENT_OUTPUT', 'output.invalidJson', { label: 'Reviewer output' }],
@@ -25711,8 +25522,8 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     'REVIEW critical · attempts 1 · fallback allowed no',
     'REVIEW plan claude-opus-5/xhigh',
     'ROUND 1/3',
-    'SOL START Implementation',
-    'SOL PASS Implementation · 1m 5s',
+    'IMPLEMENTER START Implementation',
+    'IMPLEMENTER PASS Implementation · 1m 5s',
     '┌──────────────────────────────────────────────────────────────────────────────────────────────────┐',
     '│ EXAMPLE // AGENT WORKFLOW                                                                        │',
     '│ ✗ NEEDS DECISION · 2m 5s                                                                         │',
@@ -25745,8 +25556,8 @@ const EXPECTED_TERMINAL_OUTPUT = deepFreeze({
     'REVIEW critical · próby 1 · fallback dozwolony nie',
     'REVIEW plan claude-opus-5/xhigh',
     'RUNDA 1/3',
-    'SOL START Implementacja',
-    'SOL PASS Implementacja · 1m 5s',
+    'IMPLEMENTER START Implementacja',
+    'IMPLEMENTER PASS Implementacja · 1m 5s',
     '┌──────────────────────────────────────────────────────────────────────────────────────────────────┐',
     '│ EXAMPLE // AGENT WORKFLOW                                                                        │',
     '│ ✗ NEEDS DECISION · 2m 5s                                                                         │',
@@ -26390,7 +26201,7 @@ async function rejectsReviewOnly(directory, overrides, expected) {
       assert.equal(error.report.stage, expected.stage);
       assert.equal(error.report.status, 'STOPPED');
       assert.equal(error.report.runMode, 'review-only');
-      assert.equal(error.report.schemaVersion, 1);
+      assert.equal(error.report.schemaVersion, 2);
       assert.equal(error.report.publicationApproved, false);
       expected.assert?.(error.report);
       return true;
@@ -26449,7 +26260,7 @@ test('review only: the uncommitted changes pass the gates and one review; APPROV
       },
     );
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     assert.equal(report.runMode, 'review-only');
     assert.equal(report.taskMode, 'implementation');
     assert.equal(report.publicationApproved, false);
@@ -26458,12 +26269,9 @@ test('review only: the uncommitted changes pass the gates and one review; APPROV
     assert.equal(runner.sandboxChecks.length, 0);
     assert.equal(report.rounds.length, 1);
     const [round] = report.rounds;
-    assert.equal(Object.hasOwn(round, 'codex'), false);
-    assert.equal(Object.hasOwn(round, 'solExecution'), false);
-    assert.equal(round.implementer.outputField, null);
-    assert.equal(round.implementer.executionField, null);
-    assert.equal(round.reviewer.outputField, 'claude');
-    assert.equal(round.claude.verdict, 'APPROVE');
+    assert.equal(round.implementer.output, null);
+    assert.equal(round.implementer.execution, null);
+    assert.equal(round.reviewer.output.verdict, 'APPROVE');
     assert.deepEqual(
       round.gates.gates.map(({ name }) => name),
       report.quality.effectiveGates,
@@ -26471,11 +26279,10 @@ test('review only: the uncommitted changes pass the gates and one review; APPROV
     assert.equal(report.implementer.status, 'NOT_RUN');
     assert.equal(report.implementer.attemptCount, 0);
     assert.deepEqual(report.implementer.runs, []);
-    assert.deepEqual(report.sol.runs, []);
     assert.equal(report.reviewer.attemptCount, 1);
     assert.equal(report.findingPolicy.satisfied, true);
     assert.deepEqual(snapshotOptions.findingResponses, []);
-    assert.equal(events.some(({ badge }) => badge === 'SOL'), false);
+    assert.equal(events.some(({ badge }) => badge === 'IMPLEMENTER'), false);
     assert.equal(
       events.find(({ type }) => type === 'metadata').runMode,
       'review-only',
@@ -26498,8 +26305,8 @@ test('review only: a run without the option has no runMode and still runs the wr
     assert.equal(codexCalls, 1);
     assert.equal(Object.hasOwn(report, 'runMode'), false);
     assert.equal(Object.hasOwn(report.implementer, 'status'), false);
-    assert.equal(report.rounds[0].implementer.outputField, 'codex');
-    assert.equal(report.rounds[0].implementer.executionField, 'solExecution');
+    assert.ok(report.rounds[0].implementer.output);
+    assert.ok(report.rounds[0].implementer.execution);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -26750,7 +26557,7 @@ test('review only: the dry-run plan shows the sequence without the writer and pr
       { workflow: { dryRun: true } },
     );
     assert.equal(plan.status, 'DRY_RUN_OK');
-    assert.equal(plan.schemaVersion, 1);
+    assert.equal(plan.schemaVersion, 2);
     assert.equal(plan.runMode, 'review-only');
     assert.equal(Object.hasOwn(standard, 'runMode'), false);
     assert.equal(plan.maxRounds, 1);
@@ -26758,9 +26565,8 @@ test('review only: the dry-run plan shows the sequence without the writer and pr
     assert.notEqual(plan.sequence[0], standard.sequence[0]);
     assert.deepEqual(plan.sequence.slice(1, 4), standard.sequence.slice(1, 4));
     assert.notEqual(plan.sequence[4], standard.sequence[4]);
-    assert.equal(plan.agents.codex, null);
     assert.equal(plan.agents.implementer.version, null);
-    assert.equal(typeof plan.agents.claude, 'string');
+    assert.equal(typeof plan.agents.reviewer.version, 'string');
     assert.equal(plan.implementer.status, 'NOT_RUN');
     assert.equal(claudeCalls, 0);
     assert.deepEqual(writerProcessCalls(runner), []);
@@ -26800,7 +26606,7 @@ test('review only: the CLI parser accepts --review-only and refuses the analysis
   for (const argumentsList of [
     ['task.md', '--review-only', '--task-mode', 'analysis'],
     ['task.md', '--review-only', '--implementer-model', 'gpt-6.1-sol'],
-    ['task.md', '--review-only', '--sol-effort=high'],
+    ['task.md', '--review-only', '--implementer-effort=high'],
   ]) {
     assert.match(
       parseAgentArguments(argumentsList).error,
@@ -26817,11 +26623,8 @@ test('review only: the dashboard shows the implementer as not run instead of its
     type: 'metadata',
     branch: 'chore/test-loop',
     runId: 'run-review-only',
-    solModel: 'gpt-6.1-sol',
-    solEffort: 'high',
-    reviewProfile: 'critical',
-    reviewAttempts: [{ model: 'claude-opus-5', effort: 'xhigh' }],
-    reviewFallbackAllowed: false,
+    implementer: { model: 'gpt-6.1-sol', effort: 'high' },
+    reviewer: { profile: 'critical', attempts: [{ model: 'claude-opus-5', effort: 'xhigh' }], fallbackAllowed: false },
   };
   for (const runMode of [undefined, 'review-only']) {
     const reviewOnly = runMode === 'review-only';
@@ -26830,7 +26633,7 @@ test('review only: the dashboard shows the implementer as not run instead of its
     reduceDashboardEvent(state, event, 0);
     reduceDashboardEvent(
       state,
-      { type: 'stage:start', id: 'sol-1', badge: 'SOL', label: 'Implementation' },
+      { type: 'stage:start', id: 'sol-1', badge: 'IMPLEMENTER', label: 'Implementation' },
       0,
     );
     const panel = renderDashboard(state, { width: 100, nowMs: 1 });
@@ -26967,7 +26770,7 @@ test('resume after a failed gate (flaky) runs the gates again without the writer
     );
     assert.equal(report.status, 'APPROVE');
     assert.equal(report.resumedFrom, CHECKPOINT_RUN_ID);
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     assert.equal(codexCalls, 0);
     assert.equal(claudeCalls, 1);
     assert.deepEqual(report.rounds.map(({ round }) => round), [1]);
@@ -27014,7 +26817,7 @@ test('resume after a reviewer without capacity runs the gates of the same round 
   const stateDirectory = await createStateDirectory();
   try {
     const stopped = await stopAtReview(directory, stateDirectory);
-    assert.equal(stopped.code, 'CLAUDE_PROCESS_FAILED');
+    assert.equal(stopped.code, 'REVIEWER_PROCESS_FAILED');
     assert.equal(stopped.report.checkpoint.phase, 'checks');
     assert.equal(stopped.report.checkpoint.resumable, true);
     const payload = JSON.parse(
@@ -27341,7 +27144,7 @@ test('a stop that cannot be recorded fails closed: the lineage is revoked and th
           throw syntheticClaudeFailure('overloaded_error');
         },
       });
-      assert.equal(stopped.code, 'CLAUDE_PROCESS_FAILED');
+      assert.equal(stopped.code, 'REVIEWER_PROCESS_FAILED');
       assert.equal(stopped.report.checkpoint.resumable, false);
       assert.equal(stopped.report.checkpoint.path, null);
       assert.doesNotMatch(stopped.report.resume, /--resume/);
@@ -27413,7 +27216,7 @@ test('resume keeps the ids of findings whose text the checkpoint redacted', asyn
       }),
     );
     assert.equal(stopped.code, 'INTERRUPTED');
-    const firstId = stopped.report.rounds[0].claude.findings[0].findingId;
+    const firstId = stopped.report.rounds[0].reviewer.output.findings[0].findingId;
     const payload = JSON.parse(
       JSON.parse(await readFile(checkpointPath(directory), 'utf8')).payload,
     );
@@ -27425,7 +27228,7 @@ test('resume keeps the ids of findings whose text the checkpoint redacted', asyn
       }),
     );
     assert.notEqual(error.code, 'FINDING_ID_COLLISION');
-    assert.equal(error.report.rounds[0].claude.findings[0].findingId, firstId);
+    assert.equal(error.report.rounds[0].reviewer.output.findings[0].findingId, firstId);
   } finally {
     await removeCheckpointFixture(directory, stateDirectory);
   }
@@ -27617,8 +27420,8 @@ test('resumable stops are an allowlist: every other stop code of the runner, and
     'INTERRUPTED',
     'PROCESS_ERROR',
     'PROCESS_FAILED',
-    'CLAUDE_PROCESS_FAILED',
-    'CLAUDE_FALLBACK_FAILED',
+    'REVIEWER_PROCESS_FAILED',
+    'REVIEWER_FALLBACK_FAILED',
     'OUTPUT_LIMIT_EXCEEDED',
     'INVALID_AGENT_OUTPUT',
   ]);
@@ -27797,7 +27600,7 @@ test('ledger: a run without a key writes a hash chain without mac, only evidence
   try {
     const { report } = await runFixture(directory, { workflow: { stateDirectory } });
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     assert.equal(existsSync(stateDirectory), false);
     const lines = await ledgerLines(directory);
     const entries = lines.map((line) => JSON.parse(line));
@@ -27830,7 +27633,7 @@ test('ledger: a run without a key writes a hash chain without mac, only evidence
         'prev',
         'mac',
       ]);
-      assert.equal(entry.ledgerVersion, 1);
+      assert.equal(entry.ledgerVersion, 2);
       assert.equal(entry.mac, null);
       assert.equal(entry.prev, index === 0 ? null : lineHash(lines[index - 1]));
     }
@@ -27946,8 +27749,17 @@ test('ledger: with the key every line has a mac; changes, removed, swapped or tr
       assert.equal(result.status, 'fail', name);
       assert.deepEqual([result.failure.seq, result.failure.check], [seq, check], name);
     }
+    // A ledger of ringi 1.x (ledgerVersion 1) is refused with a message that
+    // names the version.
+    const legacy = await verifyTampered(directory, stateDirectory, (lines) =>
+      `${lines.map((line) => line.replace('{"ledgerVersion":2,', '{"ledgerVersion":1,')).join('\n')}\n`);
+    assert.deepEqual(
+      [legacy.status, legacy.failure.seq, legacy.failure.check],
+      ['fail', 1, 'version'],
+    );
+    assert.match(JSON.stringify(legacy.failure), /ledgerVersion 1, written by ringi 1\.x/u);
     const partial = await verifyTampered(directory, stateDirectory, (lines) =>
-      `${lines.join('\n')}\n{"ledgerVersion":1`);
+      `${lines.join('\n')}\n{"ledgerVersion":2`);
     assert.deepEqual(
       [partial.status, partial.failure.check],
       ['fail', 'truncated'],
@@ -28600,17 +28412,16 @@ test('review lanes: three lanes without findings approve; every lane runs on the
   try {
     const { report } = await laneFixture(directory, () => approveReview(), { calls });
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     assert.deepEqual(
       calls.map(({ lane }) => lane),
       REVIEW_LANES.map(({ id, focus }) => ({ id, focus })),
     );
     assert.equal(new Set(calls.map(({ snapshot }) => snapshot)).size, 1);
     const [round] = report.rounds;
-    assert.equal(round.claude.verdict, 'APPROVE');
-    assert.deepEqual(round.claude.findings, []);
-    assert.equal(round.reviewer.executionField, 'reviewLanes');
-    assert.equal(Object.hasOwn(round, 'reviewExecution'), false);
+    assert.equal(round.reviewer.output.verdict, 'APPROVE');
+    assert.deepEqual(round.reviewer.output.findings, []);
+    assert.equal(round.reviewer.execution, null);
     assert.deepEqual(round.reviewLanes.map(({ id }) => id), REVIEW_LANE_IDS);
     assert.ok(round.reviewLanes.every(({ execution }) => execution.completed));
     assert.deepEqual(
@@ -28623,7 +28434,7 @@ test('review lanes: three lanes without findings approve; every lane runs on the
       ]),
       REVIEW_LANE_IDS.map((id) => [1, id, 'claude', 'COMPLETED', 0]),
     );
-    assert.deepEqual(report.review.runs.map(({ lane }) => lane), REVIEW_LANE_IDS);
+    assert.deepEqual(report.reviewer.runs.map(({ lane }) => lane), REVIEW_LANE_IDS);
     const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
     assert.deepEqual(
       entries.filter(({ type }) => type === 'review-lane').map(({ data }) => data),
@@ -28678,9 +28489,9 @@ test('review lanes: a finding of one lane starts a correction round with the mer
     );
     assert.equal(report.status, 'APPROVE');
     assert.equal(report.rounds.length, 2);
-    const [finding] = report.rounds[0].claude.findings;
+    const [finding] = report.rounds[0].reviewer.output.findings;
     assert.deepEqual(finding.lanes, ['security']);
-    assert.equal(report.rounds[0].claude.verdict, 'REQUEST_CHANGES');
+    assert.equal(report.rounds[0].reviewer.output.verdict, 'REQUEST_CHANGES');
     assert.deepEqual(writerFindings[1].map(({ findingId, lanes }) => [findingId, lanes]), [
       [finding.findingId, ['security']],
     ]);
@@ -28702,7 +28513,7 @@ test('review lanes: the same finding from two lanes is one finding with the high
         : requestChanges(1, { severity: 'HIGH', impact: 'from security' });
     });
     assert.equal(report.status, 'APPROVE');
-    const { findings } = report.rounds[0].claude;
+    const { findings } = report.rounds[0].reviewer.output;
     assert.equal(findings.length, 1);
     assert.equal(findings[0].severity, 'HIGH');
     assert.equal(findings[0].impact, 'from security');
@@ -28719,7 +28530,7 @@ test('review lanes: the same finding from two lanes is one finding with the high
 
 test('review lanes: a lane without a valid result stops the run with its own code and the lane', async () => {
   const cases = [
-    ['process failure', () => { throw syntheticClaudeFailure('synthetic lane failure'); }, 'CLAUDE_PROCESS_FAILED', 'FAILED'],
+    ['process failure', () => { throw syntheticClaudeFailure('synthetic lane failure'); }, 'REVIEWER_PROCESS_FAILED', 'FAILED'],
     ['timeout', () => { throw new AgentWorkflowError('Synthetic timeout.', { code: 'TIMEOUT', stage: 'reviewer' }); }, 'TIMEOUT', 'FAILED'],
     ['stdout limit', () => { throw new AgentWorkflowError('Synthetic stdout limit.', { code: 'OUTPUT_LIMIT_EXCEEDED', stage: 'reviewer' }); }, 'OUTPUT_LIMIT_EXCEEDED', 'FAILED'],
     ['no result', () => ({ review: undefined, stdout: '', stderr: '' }), 'INVALID_AGENT_OUTPUT', 'INVALID'],
@@ -28807,8 +28618,7 @@ test('review lanes: without reviewLanes the single reviewer, its report and its 
     assert.equal(Object.hasOwn(calls[0], 'lane'), false);
     assert.equal(Object.hasOwn(report.reviewer, 'lanes'), false);
     assert.equal(Object.hasOwn(report.rounds[0], 'reviewLanes'), false);
-    assert.equal(report.rounds[0].reviewer.executionField, 'reviewExecution');
-    assert.ok(report.rounds[0].reviewExecution.completed);
+    assert.ok(report.rounds[0].reviewer.execution.completed);
     const entries = await ledgerEntries(directory, CHECKPOINT_RUN_ID);
     assert.equal(entries.some(({ type }) => type === 'review-lane'), false);
     assert.deepEqual(
@@ -29086,7 +28896,7 @@ test('context packages: a lane with paths gets its part of the diff and every na
       },
     });
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     const code = seen.get('code');
     const rest = seen.get('rest');
     assert.equal(code.options.snapshot, rest.options.snapshot);
@@ -29365,7 +29175,7 @@ test('review lanes: a run stopped by a failed lane resumes and runs every lane a
         workflow: { profile: LANE_PROFILE },
       }),
     );
-    assert.equal(stopped.code, 'CLAUDE_PROCESS_FAILED');
+    assert.equal(stopped.code, 'REVIEWER_PROCESS_FAILED');
     assert.equal(stopped.report.lane, 'security');
     assert.equal(stopped.report.checkpoint.resumable, true);
     const lanes = [];
@@ -29674,7 +29484,7 @@ test('routing: a class rule sets the implementer effort, the review profile, the
       },
     });
     assert.equal(report.status, 'APPROVE');
-    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.schemaVersion, 2);
     const expected = {
       class: 'implementation',
       rule: 'implementation',
@@ -29828,7 +29638,7 @@ test('routing: options win over the rule, a lower value too, and the report name
   };
   for (const [options, expectedEffort, expectedProfile, overriddenBy] of [
     [{ implementerEffort: 'medium', reviewProfile: 'economy' }, 'medium', 'economy', ['--implementer-effort', '--review-profile']],
-    [{ solEffort: 'max' }, 'max', 'standard', ['--implementer-effort']],
+    [{ implementerEffort: 'max' }, 'max', 'standard', ['--implementer-effort']],
     [{ implementerEffort: 'xhigh', reviewProfile: 'standard' }, 'xhigh', 'standard', []],
     [{ reviewProfile: 'critical-opus' }, 'xhigh', 'critical-opus', ['--review-profile']],
   ]) {
@@ -30973,7 +30783,7 @@ async function legacyRunWithPresentation({
       error instanceof AgentWorkflowError && error.report
         ? error.report
         : {
-            schemaVersion: 1,
+            schemaVersion: 2,
             status: 'STOPPED',
             code: 'UNEXPECTED_ERROR',
             error: redactSensitive(message),
@@ -31034,7 +30844,7 @@ const PRESENTED_OUTCOMES = ['approve', 'workflow-error', 'error'];
 function presentedReport(outcome) {
   return outcome === 'approve'
     ? {
-        schemaVersion: 1,
+        schemaVersion: 2,
         status: 'APPROVE',
         runId: 'run-presented',
         reportPath: '.agent-review-loop/runs/run-presented/report.json',
@@ -31043,7 +30853,7 @@ function presentedReport(outcome) {
         rounds: [],
       }
     : {
-        schemaVersion: 1,
+        schemaVersion: 2,
         status: 'STOPPED',
         code: 'INVALID_TASK_PATH',
         stage: 'preflight',
@@ -31058,11 +30868,8 @@ const presentedEvents = () => [
     type: 'metadata',
     runId: 'run-presented',
     branch: 'feat/presented',
-    solModel: 'gpt-6.1-sol',
-    solEffort: 'high',
-    reviewProfile: 'critical',
-    reviewAttempts: [{ model: 'claude-fable-5', effort: 'high' }],
-    reviewFallbackAllowed: false,
+    implementer: { model: 'gpt-6.1-sol', effort: 'high' },
+    reviewer: { profile: 'critical', attempts: [{ model: 'claude-fable-5', effort: 'high' }], fallbackAllowed: false },
   },
   {
     type: 'stage:end',
@@ -31422,7 +31229,7 @@ test('presentation boundary: a presenter that throws in every method changes nei
       const report =
         outcome === 'error'
           ? {
-              schemaVersion: 1,
+              schemaVersion: 2,
               status: 'STOPPED',
               code: 'UNEXPECTED_ERROR',
               error: redactSensitive('Synthetic unexpected token=presented-secret'),
@@ -31454,7 +31261,7 @@ async function presentedInterrupt(flow, signalsToSend) {
       release = resolve;
     });
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'STOPPED',
       code: 'INTERRUPTED',
       stage: 'preflight',
@@ -31661,6 +31468,19 @@ test('presentation boundary: hooks that change their arguments, throw or reject,
 });
 
 // Runs last: no test wrote in the user's state directory.
+test('2.0: the removed library options codexModel and solEffort stop the run with INVALID_CONFIGURATION', async () => {
+  for (const [option, replacement] of [
+    ['codexModel', 'implementerModel'],
+    ['solEffort', 'implementerEffort'],
+  ]) {
+    await assert.rejects(runAgentReviewLoop({ [option]: undefined }), (error) => {
+      assert.equal(error.code, 'INVALID_CONFIGURATION');
+      assert.match(error.message, new RegExp(`${option}.*${replacement}`));
+      return true;
+    });
+  }
+});
+
 test('guard: tests leave the user state directory as it was', () => {
   assert.notEqual(TEST_STATE_HOME, undefined);
   assert.equal(process.env.XDG_STATE_HOME, TEST_STATE_HOME);

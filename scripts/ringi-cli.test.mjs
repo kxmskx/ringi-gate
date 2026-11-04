@@ -656,7 +656,7 @@ test('ringi doctor: every check ok, then each check fails on its own condition',
             'error',
             'resume',
           ]);
-          assert.equal(stopped.schemaVersion, 1);
+          assert.equal(stopped.schemaVersion, 2);
           assert.equal(stopped.status, 'STOPPED');
           assert.equal(stopped.code, 'INVALID_CONFIGURATION');
           assert.equal(stopped.stage, 'preflight');
@@ -1529,14 +1529,14 @@ test('ringi run --review-only: help, argument errors, a plan without the writer 
     assert.equal(stopped.code, 'INVALID_TASK');
     assert.equal(stopped.stage, 'preflight');
     assert.equal(stopped.runMode, 'review-only');
-    assert.equal(stopped.schemaVersion, 1);
+    assert.equal(stopped.schemaVersion, 2);
 
     await writeFile(join(project, 'notes.md'), '# Notes\n\nA change written by hand.\n');
     const child = ringi(project, ['run', EXAMPLE_TASK_PATH, '--review-only', '--dry-run'], env);
     assert.equal(child.status, 0, child.stderr);
     const plan = JSON.parse(child.stdout);
     assert.equal(plan.status, 'DRY_RUN_OK');
-    assert.equal(plan.schemaVersion, 1);
+    assert.equal(plan.schemaVersion, 2);
     assert.equal(plan.runMode, 'review-only');
     assert.equal(plan.taskMode, 'implementation');
     assert.equal(plan.maxRounds, 1);
@@ -1547,9 +1547,8 @@ test('ringi run --review-only: help, argument errors, a plan without the writer 
       'reviewer: diff-first review',
       'no correction round: any finding stops the run for a human decision',
     ]);
-    assert.equal(plan.agents.codex, null);
     assert.equal(plan.agents.implementer.version, null);
-    assert.equal(plan.agents.claude, CLAUDE_VERSION);
+    assert.equal(plan.agents.reviewer.version, CLAUDE_VERSION);
     assert.equal(plan.implementer.status, 'NOT_RUN');
     assert.equal(plan.implementer.attemptCount, 0);
     assert.equal(

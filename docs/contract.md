@@ -10,13 +10,16 @@ this document together.
 
 Version rules:
 
-- **Major** (2.0): removing or renaming anything listed here, or changing
+This is the contract of 2.0 (the changes from 1.x are in
+[migration-2.0.md](migration-2.0.md)).
+
+- **Major** (3.0): removing or renaming anything listed here, or changing
   its meaning; a stricter validation that refuses a profile, task or option
-  that 1.x accepts. Two exceptions are described below: new core checks of
+  that 2.x accepts. Two exceptions are described below: new core checks of
   a provider module's argv and environment
   ([Provider modules](#provider-modules)), and the guarantees of an
   `experimental` provider ([Provider stability](#provider-stability)).
-- **Minor**: adding something optional whose absence keeps the 1.x
+- **Minor**: adding something optional whose absence keeps the 2.0
   behaviour: a profile key, a report field, a CLI option, a STOP code for a
   new situation, a ledger event type.
 - **Patch**: fixes that keep every listed name and meaning. A fix may stop
@@ -73,8 +76,6 @@ the same options, report and codes):
 - `--checkpoint`, `--resume`: [cli.md](cli.md#checkpoints-and-resume).
 - `--review-profile`, `--implementer-model`, `--implementer-effort`: values
   from the profile's allowlists.
-- `--codex-model`, `--sol-effort`: deprecated aliases of
-  `--implementer-model` and `--implementer-effort`; kept in 1.x.
 - `--verbose`, `--no-animation`: presentation only.
 <!-- /contract:cli-options -->
 
@@ -132,7 +133,7 @@ task mode, the scope of the original task, the ban on Git operations and
 publication, the result schema, the zero findings policy, the reviewer's
 read-only rules, the review lanes) and a fixed closing that gives every
 rule above precedence. The `analysis` mode takes no guidance. No version
-of 1.x lets the profile replace or remove a fixed rule of a prompt. Without
+of 2.x lets the profile replace or remove a fixed rule of a prompt. Without
 `prompts` the prompts are unchanged.
 
 Names in `routing.rules` share one namespace with the task classes: a rule
@@ -158,8 +159,8 @@ profile's `taskSchema`. Its `version` appears in the report as
 ## Report
 
 The run report (`.agent-review-loop/runs/<runId>/report.json`, and the
-`--json` output) has `schemaVersion: 1`. Fields are only added in 1.x;
-removing a field or changing its meaning needs `schemaVersion: 2` and a
+`--json` output) has `schemaVersion: 2`. Fields are only added in 2.x;
+removing a field or changing its meaning needs a new `schemaVersion` and a
 major version. The fields are described in
 [architecture.md](architecture.md#report) and
 [profile.md](profile.md#report-fields). Every run report has
@@ -182,7 +183,6 @@ fields:
 - `runMode`: only `review-only`.
 - `quality`, `rounds`, `findings`, `findingPolicy`.
 - `implementer`, `reviewer`: the roles.
-- `sol`, `review`: aliases of the roles (see below).
 - `routing`: with `routing` in the profile.
 - `promptGuidance`: with `prompts` in the profile.
 - `checkpoint`, `resumedFrom`: with `--checkpoint` or `--resume`.
@@ -192,25 +192,26 @@ fields:
   contents are outside the contract).
 <!-- /contract:report-fields -->
 
-The provider-specific aliases (`sol`, `review`, `rounds[].codex`,
-`rounds[].claude`, `rounds[].solExecution`, `rounds[].reviewExecution`,
-`findings.rejectedByCodex`) keep their values in 1.x next to the neutral
-role fields. The dry-run plan (`status: 'DRY_RUN_OK'`) is not a run report:
-it has no `publicationApproved`, it carries `agents` (the CLI versions and
-planned attempts, with the aliases `agents.codex*` and `agents.claude*`),
+Each agent's output and execution of a round is in
+`rounds[].implementer` and `rounds[].reviewer` (`provider`, `output`,
+`execution`); each output is stored once (the executions are also in
+`implementer.runs` and `reviewer.runs`). The dry-run plan (`status: 'DRY_RUN_OK'`) is not a run
+report: it has no `publicationApproved`, it carries `agents` (the CLI
+versions and planned attempts, `agents.implementer` and `agents.reviewer`),
 which a run report does not, and its other fields are outside the
-contract.
+contract. The 1.x provider-specific names are gone; see
+[migration-2.0.md](migration-2.0.md).
 
 Two stop reports of the CLI are not run reports and have neither `runId`
 nor `publicationApproved`:
 
 - A stop before the run of `ringi run` (no run directory yet: the profile
   is missing, invalid or uncommitted, or `GIT_DIR` or `GIT_WORK_TREE` is
-  set) has exactly `schemaVersion` (`1`), `status` (`STOPPED`), `code`,
+  set) has exactly `schemaVersion` (`2`), `status` (`STOPPED`), `code`,
   `stage`, `error` and `resume`; with `--json` it is printed on standard
   output.
 - The last-resort error report (`UNEXPECTED_ERROR` when the runner itself
-  fails without a report of its own) has `schemaVersion` (`1`), `status`
+  fails without a report of its own) has `schemaVersion` (`2`), `status`
   (`STOPPED`), `code` and `error`.
 
 The round files (`round-<n>-*.json`), the diagnostic logs and the
@@ -239,7 +240,7 @@ the output has its own `schemaVersion: 1` and exactly these fields:
 - `reasons`: why the lane is `full`, the distinct reasons of its files or
   `empty-diff`; empty for the docs lane.
 
-Lanes, statuses and reasons are only added in 1.x; a new reason may only
+Lanes, statuses and reasons are only added in 2.x; a new reason may only
 move a change from `docs` to `full`. A classification that does not happen
 is never a lane: with `--json` it prints a stop report with exactly
 `schemaVersion` (`1`), `status` (`STOPPED`), `code` and `error`. The
@@ -252,7 +253,7 @@ lines `verdict=` (`APPROVE` or `STOPPED`), `lane=` and `run-id=`, and
 `code` and `error` (not approved), `pullRequest`, `base`, `head`, `lane`,
 `reviewProfile`, `runId`, `findings` and `measurement` (`durationMs`,
 `runAttempt`, `maxAttempts`, `timeoutMinutes`, `reviewAttempts`,
-`contextBytes`, `costUsd`). Fields are only added in 1.x. The job summary
+`contextBytes`, `costUsd`). Fields are only added in 2.x. The job summary
 is presentation.
 
 ## STOP codes
@@ -284,9 +285,6 @@ major change. Messages (`error`) are outside the contract.
 | `ANALYSIS_REVIEW_UNCONFIRMED` | no | Analysis mode: the reviewer did not confirm what it read. |
 | `ANALYSIS_WORKING_TREE_WRITE` | no | Analysis mode: the working tree changed. |
 | `CHECK_FAILED` | yes | A gate exited with a code other than 0. |
-| `CLAUDE_FALLBACK_FAILED` | yes | The reviewer's fallback attempt failed. |
-| `CLAUDE_PROCESS_FAILED` | yes | The reviewer process failed. |
-| `CLAUDE_REVIEW_FAILED` | no | The review failed for another reason (for example a review lane without a classified failure). |
 | `CLEANUP_FAILED` | no | Cleanup at the end of the run failed. |
 | `CONCURRENT_PROCESS` | no | A second process was started while one was active. |
 | `COREPACK_CACHE_CHANGED` | no | The isolated Corepack cache changed. |
@@ -319,16 +317,16 @@ major change. Messages (`error`) are outside the contract.
 | `INVALID_AGENT_OUTPUT` | yes | An agent's output is not valid. |
 | `INVALID_ANALYSIS_INTEGRITY_REPORT` | no | Analysis mode: the integrity report is not valid. |
 | `INVALID_ANALYSIS_REVIEW_FILES` | no | Analysis mode: the task's `Review files` are not valid. |
-| `INVALID_CODEX_ENVIRONMENT` | no | The implementer's isolated environment cannot be prepared. |
-| `INVALID_CODEX_MODEL` | no | The implementer model is not valid. |
 | `INVALID_CONFIGURATION` | no | The profile, an option or the environment of the command is not valid. |
 | `INVALID_COREPACK_CACHE` | no | The Corepack cache cannot be used. |
 | `INVALID_DOCKER_HOST` | no | `DOCKER_HOST` is not a local socket. |
 | `INVALID_GATE_REPORT` | no | The trusted gate report is not valid. |
+| `INVALID_IMPLEMENTER_EFFORT` | no | The implementer effort is not allowed. |
+| `INVALID_IMPLEMENTER_ENVIRONMENT` | no | The implementer's isolated environment cannot be prepared. |
+| `INVALID_IMPLEMENTER_MODEL` | no | The implementer model is not valid. |
 | `INVALID_PACKAGE_MANAGER` | no | `packageManager` is not an exact pnpm version. |
 | `INVALID_PROCESS_ARGS` | no | A process would get arguments that are not plain strings. |
 | `INVALID_REVIEW_PROFILE` | no | The review profile is not one of the profile's. |
-| `INVALID_SOL_EFFORT` | no | The implementer effort is not allowed. |
 | `INVALID_TASK` | no | The task file is not valid. |
 | `INVALID_TASK_CLASS` | no | The task class is not valid for the run. |
 | `INVALID_TASK_MODE` | no | The task mode is not valid for the run or the provider. |
@@ -348,7 +346,10 @@ major change. Messages (`error`) are outside the contract.
 | `PROTECTED_BRANCH` | no | The branch is `main` or `master`. |
 | `PROVIDER_CONTRACT_VIOLATION` | no | A provider module's argv or environment breaks a core check. |
 | `PROVIDER_ROLE_NOT_ALLOWED` | no | A provider module's declaration does not allow the role. |
+| `REVIEWER_FALLBACK_FAILED` | yes | The reviewer's fallback attempt failed. |
 | `REVIEWER_PREFLIGHT_FAILED` | no | The reviewer's host check failed. |
+| `REVIEWER_PROCESS_FAILED` | yes | The reviewer process failed. |
+| `REVIEW_FAILED` | no | The review failed for another reason (for example a review lane without a classified failure). |
 | `RUNNER_MODIFIED` | no | A module of the runner changed during the run. |
 | `SECRET_DETECTED` | no | New secret-like content. |
 | `SNAPSHOT_CHANGED` | no | The reviewer's read-only snapshot changed. |
@@ -381,7 +382,7 @@ The `stage` values are part of the contract in the same way:
 
 ## Ledger
 
-The run ledger is described in [ledger.md](ledger.md): `ledgerVersion: 1`,
+The run ledger is described in [ledger.md](ledger.md): `ledgerVersion: 2`,
 one JSON line per event with the keys `ledgerVersion`, `seq`, `ts`, `type`,
 `data`, `prev` and `mac`, a SHA-256 chain and an optional HMAC. Event
 types:
@@ -407,7 +408,10 @@ types:
 therefore a minor change for the runner, but a `ringi verify` older than
 the event rejects a ledger that has it: verify a ledger with the same or a
 newer version than the one that wrote it. Fields of an event's `data` are
-only added in 1.x; a change of the line format needs `ledgerVersion: 2`.
+only added in 2.x; a change of the line format needs a new `ledgerVersion`.
+`ringi verify` 2.x refuses a ledger of `ledgerVersion: 1` (ringi 1.x) with
+`fail` and a message that names the version; verify such a run with ringi
+1.x.
 
 ## Provider modules
 

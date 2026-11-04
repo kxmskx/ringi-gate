@@ -67,13 +67,10 @@ import {
   verifyRunLedgerFiles,
 } from './agent-review-ledger.mjs';
 import {
-  CODEX_MODEL,
   DEFAULT_IMPLEMENTER,
   DEFAULT_REVIEW_PROFILE,
   DEFAULT_REVIEWER,
-  DEFAULT_SOL_EFFORT,
   REVIEW_PROFILES,
-  SOL_EFFORTS,
 } from './agent-review-providers.mjs';
 import claudeProvider from './providers/claude.mjs';
 import codexProvider from './providers/codex.mjs';
@@ -98,13 +95,7 @@ import {
 } from './messages/index.mjs';
 
 // Moved to the providers module; re-exported for compatibility.
-export {
-  CODEX_MODEL,
-  DEFAULT_REVIEW_PROFILE,
-  DEFAULT_SOL_EFFORT,
-  REVIEW_PROFILES,
-  SOL_EFFORTS,
-};
+export { DEFAULT_REVIEW_PROFILE, REVIEW_PROFILES };
 
 // Presentation projections are deliberately smaller than validated agent reports.
 // No free-form report text, tool arguments, output or reasoning crosses this API.
@@ -156,15 +147,15 @@ export function normalizeActivityPath(value) {
 }
 
 export function normalizeActivityEntry(value, role) {
-  if (!value || !['ASTRA', 'CLAUDE'].includes(role)) return null;
+  if (!value || !['implementer', 'reviewer'].includes(role)) return null;
   const allowed =
-    role === 'ASTRA'
+    role === 'implementer'
       ? ['WORK', 'COMMAND', 'TEST', 'FILE', 'SEARCH', 'TOOL', 'SUMMARY']
       : ['SNAPSHOT', 'REVIEW', 'SUMMARY'];
   if (!ACTIVITY_TYPES.includes(value.type) || !allowed.includes(value.type))
     return null;
   if (value.type === 'SUMMARY') {
-    if (role === 'ASTRA') {
+    if (role === 'implementer') {
       if (
         !AGENT_COMPLETIONS.includes(value.status) ||
         !Number.isSafeInteger(value.changes) ||
@@ -228,7 +219,7 @@ export function createCodexActivityParser(onActivity = () => {}) {
   let ended = false;
   const emit = (entry) => {
     try {
-      const safe = normalizeActivityEntry(entry, 'ASTRA');
+      const safe = normalizeActivityEntry(entry, 'implementer');
       if (safe) onActivity(safe);
     } catch {
       /* Presentation cannot fail the process. */
@@ -915,7 +906,6 @@ function skippedReviewAudit(quality) {
 
 export const TASK_MODES = Object.freeze(['implementation', 'analysis']);
 export const DEFAULT_TASK_MODE = 'implementation';
-export const CODEX_REASONING = DEFAULT_SOL_EFFORT;
 // Profile sections implementer and reviewer (see agent-review-providers.mjs).
 const IMPLEMENTER_KEYS = new Set([
   'provider',
@@ -2112,11 +2102,11 @@ export function isValidCodexModel(value) {
   return codexProvider.isValidModel(value);
 }
 
-export function resolveCodexModel(model = CODEX_MODEL) {
+export function resolveCodexModel(model = DEFAULT_IMPLEMENTER.model) {
   if (!isValidCodexModel(model)) {
     throw new AgentWorkflowError(
       msg('config.invalidImplementerModel'),
-      { code: 'INVALID_CODEX_MODEL', stage: 'preflight' },
+      { code: 'INVALID_IMPLEMENTER_MODEL', stage: 'preflight' },
     );
   }
   return model;
@@ -2124,13 +2114,13 @@ export function resolveCodexModel(model = CODEX_MODEL) {
 
 // allowedEfforts: the implementer allowlist of a profile; default: the core's.
 export function resolveSolEffort(
-  effort = DEFAULT_SOL_EFFORT,
-  allowedEfforts = SOL_EFFORTS,
+  effort = DEFAULT_IMPLEMENTER.effort,
+  allowedEfforts = DEFAULT_IMPLEMENTER.allowedEfforts,
 ) {
   if (!allowedEfforts.includes(effort)) {
     throw new AgentWorkflowError(
       msg('config.unknownSolEffort', { effort: JSON.stringify(effort) }),
-      { code: 'INVALID_SOL_EFFORT', stage: 'preflight' },
+      { code: 'INVALID_IMPLEMENTER_EFFORT', stage: 'preflight' },
     );
   }
   return effort;
@@ -2151,7 +2141,7 @@ export function resolveTaskMode(mode = DEFAULT_TASK_MODE) {
 function classifyClaudeFallbackReason(error, adapter = claudeProvider) {
   if (
     !(error instanceof AgentWorkflowError) ||
-    error.code !== 'CLAUDE_PROCESS_FAILED' ||
+    error.code !== 'REVIEWER_PROCESS_FAILED' ||
     error.integrityViolations?.length
   ) {
     return undefined;
@@ -5526,7 +5516,7 @@ function codexPrompt({
   round,
   findings,
   taskMode = DEFAULT_TASK_MODE,
-  codexModel = CODEX_MODEL,
+  codexModel = DEFAULT_IMPLEMENTER.model,
   // The implementer's project guidance (isPromptGuidance), implementation
   // mode only; without it the prompt is exactly the fixed one.
   guidance,
@@ -8057,7 +8047,7 @@ function asWorkflowError(
 
 // The stop of a review lane: the lane's own code, its id in error.lane (the
 // report's lane field) and in the message.
-function reviewLaneFailure(error, lane, fallbackCode = 'CLAUDE_REVIEW_FAILED') {
+function reviewLaneFailure(error, lane, fallbackCode = 'REVIEW_FAILED') {
   const failure = asWorkflowError(error, fallbackCode, 'reviewer');
   if (failure.lane === undefined) {
     failure.lane = lane;
@@ -8923,7 +8913,7 @@ async function runCodexRound({
         model: JSON.stringify(selectedCodexModel),
         provider: adapter.id,
       }),
-      { code: 'INVALID_CODEX_MODEL', stage: 'preflight' },
+      { code: 'INVALID_IMPLEMENTER_MODEL', stage: 'preflight' },
     );
   }
   const selectedSolEffort = resolveSolEffort(
@@ -8949,7 +8939,7 @@ async function runCodexRound({
   ) {
     throw new AgentWorkflowError(
       msg('writer.offlineConfig'),
-      { code: 'INVALID_CODEX_ENVIRONMENT', stage: 'preflight' },
+      { code: 'INVALID_IMPLEMENTER_ENVIRONMENT', stage: 'preflight' },
     );
   }
   // The module builds the environment and argv; the core checks both
@@ -9218,7 +9208,7 @@ async function runClaudeReview({
   );
   if (result.code !== 0) {
     throw new AgentWorkflowError(`${msg('reviewer.reviewFailed')}.`, {
-      code: 'CLAUDE_PROCESS_FAILED',
+      code: 'REVIEWER_PROCESS_FAILED',
       stage: 'reviewer',
       diagnostic: result,
     });
@@ -9284,7 +9274,7 @@ async function runClaudeReviewWithPolicy({
         'INTEGRITY_CHECK_FAILED',
         'reviewer',
       );
-      failure.reviewExecution = execution;
+      failure.reviewerExecution = execution;
       throw failure;
     }
     execution.attempts.push(attempt);
@@ -9302,7 +9292,7 @@ async function runClaudeReviewWithPolicy({
         ...attemptProvider,
       });
     } catch (error) {
-      failure = asWorkflowError(error, 'CLAUDE_REVIEW_FAILED', 'reviewer');
+      failure = asWorkflowError(error, 'REVIEW_FAILED', 'reviewer');
     }
     try {
       await afterAttempt({ ...attempt });
@@ -9337,20 +9327,20 @@ async function runClaudeReviewWithPolicy({
       execution.fallbackReason = fallbackReason;
       continue;
     }
-    failure.reviewExecution = execution;
+    failure.reviewerExecution = execution;
     throw failure;
   }
 
   const error = new AgentWorkflowError(
     msg('reviewer.fallbackFailed'),
-    { code: 'CLAUDE_FALLBACK_FAILED', stage: 'reviewer' },
+    { code: 'REVIEWER_FALLBACK_FAILED', stage: 'reviewer' },
   );
-  error.reviewExecution = execution;
+  error.reviewerExecution = execution;
   throw error;
 }
 
-// The fields codex*, claude* and the version keys codex and claude are aliases
-// of the neutral implementer and reviewer fields.
+// agents of the dry-run plan: the implementer and reviewer CLI versions and
+// planned attempts.
 async function environmentReport({
   runner,
   cwd,
@@ -9451,14 +9441,7 @@ async function environmentReport({
   }));
   const fallbackAllowed = independentReviewRequired && policy.fallbackAllowed;
   return {
-    codex,
-    ...(claude !== null ? { claude } : { independentReview: 'NOT_REQUIRED' }),
-    codexModel: implementerModel,
-    codexReasoning: implementerEffort,
-    claudeReviewProfile: independentReviewRequired ? policy.profile : null,
-    claudeAttemptCount: plannedAttempts.length,
-    claudeFallbackAllowed: fallbackAllowed,
-    claudeAttempts: plannedAttempts,
+    ...(claude === null ? { independentReview: 'NOT_REQUIRED' } : {}),
     implementer: {
       provider: implementer.provider,
       version: codex,
@@ -9478,45 +9461,44 @@ async function environmentReport({
   };
 }
 
-// Neutral implementer field of the report; report.sol is its alias with
-// plannedModel = model and plannedEffort = effort.
-function buildImplementerAudit(provider, sol) {
-  return {
-    provider,
-    model: sol.plannedModel,
-    effort: sol.plannedEffort,
-    effectiveModel: sol.effectiveModel,
-    effectiveEffort: sol.effectiveEffort,
-    attemptCount: sol.runs.length,
-    runs: sol.runs,
-  };
-}
-
-// Neutral reviewer field of the report: a summary of report.review. model
-// and effort are the first planned attempt, attemptCount the attempts run.
-function buildReviewerAudit(provider, review) {
-  const [planned] = review.plannedAttempts ?? [];
-  return {
-    provider,
-    profile: review.profile ?? null,
-    model: planned?.model ?? null,
-    effort: planned?.effort ?? null,
-    effectiveModel: review.effectiveModel ?? null,
-    effectiveEffort: review.effectiveEffort ?? null,
-    attemptCount: review.attemptCount,
-  };
-}
-
-function buildSolAudit(effort, runs, model = CODEX_MODEL) {
+// The implementer field of the report: the planned model and effort, the
+// effective ones of the last completed attempt, and every attempt.
+function buildImplementerAudit(provider, effort, runs, model) {
   const completed = [...runs]
     .reverse()
     .find(({ status }) => status === 'COMPLETED')?.completed;
   return {
-    plannedModel: model,
-    plannedEffort: effort,
+    provider,
+    model,
+    effort,
     effectiveModel: completed?.model ?? null,
     effectiveEffort: completed?.effort ?? null,
+    attemptCount: runs.length,
     runs,
+  };
+}
+
+// The reviewer field of the report: the review audit (buildReviewAudit or
+// skippedReviewAudit) with the provider; model and effort are the first
+// planned attempt, attemptCount the attempts run.
+function buildReviewerAudit(provider, review) {
+  const {
+    profile,
+    effectiveModel,
+    effectiveEffort,
+    attemptCount,
+    ...rest
+  } = review;
+  const [planned] = review.plannedAttempts ?? [];
+  return {
+    provider,
+    profile: profile ?? null,
+    model: planned?.model ?? null,
+    effort: planned?.effort ?? null,
+    effectiveModel: effectiveModel ?? null,
+    effectiveEffort: effectiveEffort ?? null,
+    attemptCount,
+    ...rest,
   };
 }
 
@@ -9548,7 +9530,7 @@ function buildFindingReport({ history, responses, latest, pending }) {
   const unresolved = [...unresolvedById.values()].map(wrapFinding);
   const categorizedIds = new Set(unresolved.map(({ findingId }) => findingId));
   const closedAfterConfirmed = [];
-  const rejectedByCodex = [];
+  const rejectedByImplementer = [];
   for (const entry of latestResponses) {
     const [findingId, response] = entry;
     if (categorizedIds.has(findingId)) continue;
@@ -9556,7 +9538,7 @@ function buildFindingReport({ history, responses, latest, pending }) {
       closedAfterConfirmed.push(withFinding(entry));
       categorizedIds.add(findingId);
     } else if (response.status === 'REJECTED') {
-      rejectedByCodex.push(withFinding(entry));
+      rejectedByImplementer.push(withFinding(entry));
       categorizedIds.add(findingId);
     } else {
       const finding = history.get(findingId);
@@ -9568,7 +9550,7 @@ function buildFindingReport({ history, responses, latest, pending }) {
   }
   return {
     closedAfterConfirmed,
-    rejectedByCodex,
+    rejectedByImplementer,
     unresolved,
   };
 }
@@ -9593,15 +9575,10 @@ function buildFindingPolicy(findings) {
   };
 }
 
-// The report adds rejectedByImplementer, the neutral name of rejectedByCodex
-// (the same entries, so the categories are not disjoint across both names).
 function buildFindingState(options) {
   const findings = buildFindingReport(options);
   return {
-    findings: {
-      ...findings,
-      rejectedByImplementer: findings.rejectedByCodex,
-    },
+    findings,
     findingPolicy: buildFindingPolicy(findings),
   };
 }
@@ -10293,8 +10270,8 @@ export const RESUMABLE_STOP_CODES = Object.freeze([
   'INTERRUPTED',
   'PROCESS_ERROR',
   'PROCESS_FAILED',
-  'CLAUDE_PROCESS_FAILED',
-  'CLAUDE_FALLBACK_FAILED',
+  'REVIEWER_PROCESS_FAILED',
+  'REVIEWER_FALLBACK_FAILED',
   'OUTPUT_LIMIT_EXCEEDED',
   'INVALID_AGENT_OUTPUT',
 ]);
@@ -10719,6 +10696,12 @@ async function readCheckpointTreeState({ runner, cwd, stage, manifest }) {
 }
 
 // Every message of the run is in the locale of its profile.
+// Library options removed in 2.0 and their replacements.
+const REMOVED_LIBRARY_OPTIONS = {
+  codexModel: 'implementerModel',
+  solEffort: 'implementerEffort',
+};
+
 export function runAgentReviewLoop(options) {
   return withLocale(profileLocale(options?.profile), () =>
     runWorkflow(options),
@@ -10726,6 +10709,16 @@ export function runAgentReviewLoop(options) {
 }
 
 async function runWorkflow(options) {
+  for (const [option, replacement] of Object.entries(
+    REMOVED_LIBRARY_OPTIONS,
+  )) {
+    if (options && Object.hasOwn(options, option)) {
+      throw new AgentWorkflowError(
+        msg('cli.optionRemoved', { option, replacement }),
+        { code: 'INVALID_CONFIGURATION', stage: 'preflight' },
+      );
+    }
+  }
   const {
     runner: processRunner,
     output = { write() {} },
@@ -10744,9 +10737,6 @@ async function runWorkflow(options) {
     reviewProfile,
     implementerModel: requestedModel,
     implementerEffort: requestedEffort,
-    // Deprecated aliases of implementerModel and implementerEffort.
-    codexModel,
-    solEffort,
     // Review only: no writer; the uncommitted changes relative to HEAD at
     // the start are the candidate of a single review round.
     reviewOnly = false,
@@ -10864,9 +10854,8 @@ async function runWorkflow(options) {
       ? name
       : INVALID_REVIEW_PROFILE_NAME;
   };
-  // report.sol and report.review with their neutral role fields.
+  // report.implementer and report.reviewer.
   const roleAudits = (review) => {
-    const sol = buildSolAudit(selectedSolEffort, solRuns, selectedCodexModel);
     const { implementer, reviewer } = roles();
     // Same provider in both roles: weaker independence, reported, not
     // blocked. The review still runs in a new session.
@@ -10880,10 +10869,13 @@ async function runWorkflow(options) {
     ];
     const implementerWarnings = agentVersionWarnings?.implementer ?? [];
     return {
-      sol,
-      review,
       implementer: {
-        ...buildImplementerAudit(implementer.provider, sol),
+        ...buildImplementerAudit(
+          implementer.provider,
+          selectedSolEffort,
+          solRuns,
+          selectedCodexModel,
+        ),
         ...(implementerWarnings.length > 0 ? { warnings: implementerWarnings } : {}),
         ...(reviewOnly ? { status: 'NOT_RUN' } : {}),
       },
@@ -10896,23 +10888,26 @@ async function runWorkflow(options) {
       },
     };
   };
-  // Neutral round fields are small pointers to the alias keys that hold the
-  // data, so agent outputs are not serialized twice. reviewerOutput: the key
-  // of the reviewer output in the round, or null when no review ran;
-  // reviewerExecution: the key of its execution ('reviewLanes' with review
-  // lanes).
-  const roundRoles = (reviewerOutput, reviewerExecution = 'reviewExecution') => {
+  // The role fields of a round carry each agent's output and execution once.
+  // null: the writer did not run (review only), no review ran (output), or
+  // the review ran in lanes (execution; each lane's is in reviewLanes).
+  const roundRoles = ({
+    implementerOutput = null,
+    implementerExecution = null,
+    reviewerOutput = null,
+    reviewerExecution = null,
+  }) => {
     const { implementer, reviewer } = roles();
     return {
       implementer: {
         provider: implementer.provider,
-        outputField: reviewOnly ? null : 'codex',
-        executionField: reviewOnly ? null : 'solExecution',
+        output: implementerOutput,
+        execution: implementerExecution,
       },
       reviewer: {
         provider: reviewer.provider,
-        outputField: reviewerOutput,
-        executionField: reviewerExecution,
+        output: reviewerOutput,
+        execution: reviewerExecution,
       },
     };
   };
@@ -11101,14 +11096,9 @@ async function runWorkflow(options) {
         stage: 'preflight',
       });
     }
-    // Options override the profile within its allowlists. A new option
-    // given together with its deprecated alias takes precedence.
-    const optionModel =
-      requestedModel === undefined ? codexModel : requestedModel;
-    const optionEffort =
-      requestedEffort === undefined ? solEffort : requestedEffort;
+    // Options override the profile within its allowlists.
     selectedCodexModel = resolveCodexModel(
-      optionModel === undefined ? implementer.model : optionModel,
+      requestedModel === undefined ? implementer.model : requestedModel,
     );
     selectedTaskMode = resolveTaskMode(taskMode);
     // The analysis candidate is the writer's artifact: without a writer
@@ -11126,7 +11116,7 @@ async function runWorkflow(options) {
       });
     }
     selectedSolEffort = resolveSolEffort(
-      optionEffort === undefined ? implementer.effort : optionEffort,
+      requestedEffort === undefined ? implementer.effort : requestedEffort,
       implementer.allowedEfforts,
     );
     // Routing may replace the policy (applyRouting).
@@ -11145,7 +11135,7 @@ async function runWorkflow(options) {
           model: JSON.stringify(selectedCodexModel),
           provider: implementerAdapter.id,
         }),
-        { code: 'INVALID_CODEX_MODEL', stage: 'preflight' },
+        { code: 'INVALID_IMPLEMENTER_MODEL', stage: 'preflight' },
       );
     }
     if (!reviewOnly)
@@ -11155,8 +11145,7 @@ async function runWorkflow(options) {
       'reviewer',
       selectedTaskMode,
     );
-    // Neutral event fields; badge SOL/CLAUDE and role ASTRA/CLAUDE are their
-    // aliases.
+    // The role of the writer and reviewer events (actor, provider).
     const implementerActor = {
       actor: 'implementer',
       provider: implementer.provider,
@@ -11322,9 +11311,9 @@ async function runWorkflow(options) {
         // The options that replaced a value of the rule (lower or higher).
         overriddenBy: [
           ...(!reviewOnly &&
-          optionEffort !== undefined &&
+          requestedEffort !== undefined &&
           classRule?.implementerEffort !== undefined &&
-          optionEffort !== classRule.implementerEffort
+          requestedEffort !== classRule.implementerEffort
             ? ['--implementer-effort']
             : []),
           ...(reviewed &&
@@ -11381,7 +11370,7 @@ async function runWorkflow(options) {
       return { rule, escalatedBy, applied, overriddenBy };
     };
     if (routingRules) {
-      if (classRule?.implementerEffort !== undefined && optionEffort === undefined)
+      if (classRule?.implementerEffort !== undefined && requestedEffort === undefined)
         selectedSolEffort = classRule.implementerEffort;
       applyRouting(null);
       const escalatedBy = await routingEscalation('preflight');
@@ -11399,22 +11388,11 @@ async function runWorkflow(options) {
       branch,
       runId,
       reportPath,
-      reviewProfile: quality.independentReviewRequired
-        ? reviewPolicy.profile
-        : null,
       taskMode: selectedTaskMode,
       ...runModeFields(),
-      solModel: selectedCodexModel,
-      solEffort: selectedSolEffort,
       quality,
       taskClass: task.taskClass,
       effectiveGates: task.checks,
-      reviewAttempts: quality.independentReviewRequired
-        ? reviewPolicy.attempts
-        : [],
-      reviewFallbackAllowed:
-        quality.independentReviewRequired && reviewPolicy.fallbackAllowed,
-      // Neutral role fields; solModel and solEffort are their aliases.
       implementer: {
         provider: implementer.provider,
         model: selectedCodexModel,
@@ -11685,7 +11663,7 @@ async function runWorkflow(options) {
         ...reviewAudit(reviewPolicy.profile),
       });
       report = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         runId,
         dryRun: true,
         status: 'DRY_RUN_OK',
@@ -11700,8 +11678,6 @@ async function runWorkflow(options) {
           mode: selectedTaskMode,
           reviewFiles: task.reviewFiles.map(({ path }) => path),
         },
-        review: audits.review,
-        sol: audits.sol,
         implementer: audits.implementer,
         reviewer: audits.reviewer,
         quality,
@@ -11925,7 +11901,7 @@ async function runWorkflow(options) {
         `post-${fields.phase}`,
       );
     };
-    // The reviewer's attempts of a round, as reviewExecution lists them; with
+    // The reviewer's attempts of a round, as reviewerExecution lists them; with
     // review lanes, the attempts of one lane (its id in lane).
     const recordReviewAttempts = async (round, execution, lane) => {
       for (const attempt of execution?.attempts ?? []) {
@@ -12102,7 +12078,7 @@ async function runWorkflow(options) {
             );
             const stage = (attempt) => ({
               id: `round-${round}:reviewer:${lane.id}:${attempt.attempt}`,
-              badge: 'CLAUDE',
+              badge: 'REVIEWER',
               ...reviewerActor,
               lane: lane.id,
               label: msg('stage.reviewLaneAttempt', {
@@ -12171,7 +12147,7 @@ async function runWorkflow(options) {
               lane,
               policy,
               failure: reviewLaneFailure(error, lane.id),
-              execution: error?.reviewExecution,
+              execution: error?.reviewerExecution,
               durationMs: monotonicNow() - startedAt,
             };
           }
@@ -12343,7 +12319,7 @@ async function runWorkflow(options) {
           return appendIntegrityViolation(failure, integrityError);
         }
       };
-      let solExecution;
+      let implementerExecution;
       let codexResult;
       let analysisArtifact;
       // Resumed after the writer's phase: its validated report comes from
@@ -12356,7 +12332,7 @@ async function runWorkflow(options) {
       if (!reviewOnly && !resumedWriter) {
         const codexStageId = `round-${round}:implementer`;
         const codexStartedAt = monotonicNow();
-        solExecution = {
+        implementerExecution = {
           round,
           resumed: Boolean(sessionId),
           requestedModel: selectedCodexModel,
@@ -12364,12 +12340,12 @@ async function runWorkflow(options) {
           status: 'STARTED',
           completed: null,
         };
-        solRuns.push(solExecution);
+        solRuns.push(implementerExecution);
         let pointerChecked = false;
         emit({
           type: 'stage:start',
           id: codexStageId,
-          badge: 'SOL',
+          badge: 'IMPLEMENTER',
           ...implementerActor,
           model: selectedCodexModel,
           effort: selectedSolEffort,
@@ -12403,21 +12379,21 @@ async function runWorkflow(options) {
             timeoutMs: codexTimeoutMs,
             environment: checkPreparation.codexEnvironment,
             onActivity: (entry) =>
-              emit({ type: 'activity', role: 'ASTRA', ...implementerActor, entry }),
+              emit({ type: 'activity', ...implementerActor, entry }),
             verbose,
           });
           // Before any Git command of the core after the round.
           pointerChecked = true;
           await assertGitPointerUnchanged(gitPointer);
-          solExecution.status = 'COMPLETED';
-          solExecution.completed = {
+          implementerExecution.status = 'COMPLETED';
+          implementerExecution.completed = {
             model: selectedCodexModel,
             effort: selectedSolEffort,
           };
           if (Object.hasOwn(codexResult, 'permissionDenials'))
-            solExecution.permissionDenials = codexResult.permissionDenials;
+            implementerExecution.permissionDenials = codexResult.permissionDenials;
         } catch (error) {
-          solExecution.status = 'FAILED';
+          implementerExecution.status = 'FAILED';
           let failure = error;
           if (!pointerChecked) {
             try {
@@ -12452,7 +12428,7 @@ async function runWorkflow(options) {
         emit({
           type: 'stage:end',
           id: codexStageId,
-          badge: 'SOL',
+          badge: 'IMPLEMENTER',
           ...implementerActor,
           label:
             selectedTaskMode === 'analysis'
@@ -12475,7 +12451,6 @@ async function runWorkflow(options) {
           );
           emit({
             type: 'activity',
-            role: 'ASTRA',
             ...implementerActor,
             entry: {
               type: 'SUMMARY',
@@ -12848,11 +12823,12 @@ async function runWorkflow(options) {
           round,
           taskMode: selectedTaskMode,
           quality,
-          codex: codexResult.report,
-          solExecution,
           gates: gateReport,
-          reviewExecution: review,
-          ...roundRoles(null),
+          ...roundRoles({
+            implementerOutput: codexResult.report,
+            implementerExecution: implementerExecution,
+            reviewerExecution: review,
+          }),
           diagnostics: roundDiagnosticLogs,
         };
         rounds.push(roundReport);
@@ -12864,7 +12840,7 @@ async function runWorkflow(options) {
         );
         const audits = roleAudits(review);
         report = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           runId,
           startedAt,
           finishedAt: now().toISOString(),
@@ -12877,8 +12853,6 @@ async function runWorkflow(options) {
             Math.round(monotonicNow() - workflowStartedAt),
           ),
           ...copyInputMetadata(),
-          sol: audits.sol,
-          review: audits.review,
           implementer: audits.implementer,
           reviewer: audits.reviewer,
           rounds,
@@ -13010,7 +12984,7 @@ async function runWorkflow(options) {
               emit({
                 type: 'stage:start',
                 id,
-                badge: 'CLAUDE',
+                badge: 'REVIEWER',
                 ...reviewerActor,
                 model: attempt.requestedModel,
                 effort: attempt.requestedEffort,
@@ -13029,7 +13003,7 @@ async function runWorkflow(options) {
               emit({
                 type: 'stage:end',
                 id,
-                badge: 'CLAUDE',
+                badge: 'REVIEWER',
                 ...reviewerActor,
                 label: msg('stage.reviewAttempt', {
                   profile: reviewPolicy.profile,
@@ -13051,10 +13025,10 @@ async function runWorkflow(options) {
           });
           reviewRuns.push(claudeResult.execution);
         } catch (error) {
-          if (error?.reviewExecution) reviewRuns.push(error.reviewExecution);
+          if (error?.reviewerExecution) reviewRuns.push(error.reviewerExecution);
           // The stop is recorded next; a failed write here leaves the review's
           // error the stop code (the report then carries a warning).
-          await recordReviewAttempts(round, error?.reviewExecution).catch(
+          await recordReviewAttempts(round, error?.reviewerExecution).catch(
             () => {},
           );
           throw await withImplementerStateViolation(error, 'post-review');
@@ -13130,8 +13104,6 @@ async function runWorkflow(options) {
         round,
         taskMode: selectedTaskMode,
         quality,
-        // Review only: no writer output (implementer.outputField is null).
-        ...(reviewOnly ? {} : { codex: codexResult.report, solExecution }),
         ...(selectedTaskMode === 'implementation'
           ? { gates: gateReport }
           : {
@@ -13139,13 +13111,20 @@ async function runWorkflow(options) {
               analysisArtifact: codexResult.report.analysisArtifact,
             }),
         snapshot: snapshotSummary,
-        claude: claudeResult.review,
-        // With review lanes: claude is the merged result and reviewLanes
-        // holds each lane's execution (reviewer.executionField).
-        ...(laneStage
-          ? { reviewLanes: laneStage.entries }
-          : { reviewExecution: claudeResult.execution }),
-        ...roundRoles('claude', laneStage ? 'reviewLanes' : undefined),
+        // With review lanes: reviewer.output is the merged result and
+        // reviewLanes holds each lane's execution.
+        ...(laneStage ? { reviewLanes: laneStage.entries } : {}),
+        // Review only: no writer output (implementer.output is null).
+        ...roundRoles({
+          ...(reviewOnly
+            ? {}
+            : {
+                implementerOutput: codexResult.report,
+                implementerExecution: implementerExecution,
+              }),
+          reviewerOutput: claudeResult.review,
+          ...(laneStage ? {} : { reviewerExecution: claudeResult.execution }),
+        }),
         diagnostics: roundDiagnosticLogs,
       };
       rounds.push(roundReport);
@@ -13181,7 +13160,6 @@ async function runWorkflow(options) {
       }
       emit({
         type: 'activity',
-        role: 'CLAUDE',
         ...reviewerActor,
         entry: {
           type: 'SUMMARY',
@@ -13242,7 +13220,7 @@ async function runWorkflow(options) {
           'workflow',
         );
         report = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           runId,
           startedAt,
           finishedAt: now().toISOString(),
@@ -13339,7 +13317,7 @@ async function runWorkflow(options) {
       );
     }
     report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId,
       startedAt,
       finishedAt: now().toISOString(),
@@ -13545,7 +13523,7 @@ async function runWorkflow(options) {
             }
           }
           report = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             runId,
             startedAt,
             finishedAt: now().toISOString(),
@@ -13665,7 +13643,6 @@ export const internal = {
   buildFindingReport,
   buildFindingState,
   buildReviewAudit,
-  buildSolAudit,
   createCheckEnvironment,
   createTrustedGateReport,
   createAnalysisIntegrityReport,

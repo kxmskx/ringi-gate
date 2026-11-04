@@ -7,6 +7,32 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+### Breaking
+
+- The 1.x provider-specific aliases are removed and the provider-named STOP
+  codes renamed; see [docs/migration-2.0.md](docs/migration-2.0.md).
+  `--codex-model` and `--sol-effort` are argument errors naming
+  `--implementer-model` and `--implementer-effort`; the library options
+  `codexModel` and `solEffort` of `runAgentReviewLoop` stop the run with
+  `INVALID_CONFIGURATION` naming `implementerModel` and
+  `implementerEffort`. The report drops `sol`,
+  `review`, `rounds[].codex`, `rounds[].claude`, `rounds[].solExecution`,
+  `rounds[].reviewExecution` and `findings.rejectedByCodex`:
+  `rounds[].implementer` and `rounds[].reviewer` carry `output` and
+  `execution`, and `reviewer` the fields of the former `review`. The dry-run
+  plan drops `agents.codex*` and `agents.claude*`.
+- STOP codes: `CLAUDE_PROCESS_FAILED` → `REVIEWER_PROCESS_FAILED`,
+  `CLAUDE_FALLBACK_FAILED` → `REVIEWER_FALLBACK_FAILED`,
+  `CLAUDE_REVIEW_FAILED` → `REVIEW_FAILED`, `INVALID_CODEX_MODEL` →
+  `INVALID_IMPLEMENTER_MODEL`, `INVALID_SOL_EFFORT` →
+  `INVALID_IMPLEMENTER_EFFORT`, `INVALID_CODEX_ENVIRONMENT` →
+  `INVALID_IMPLEMENTER_ENVIRONMENT`; resumability unchanged.
+- `schemaVersion: 2` (report, `--json`, stop reports) and `ledgerVersion: 2`;
+  `ringi verify` refuses a ledger of version 1 with a message.
+- Removed exports `CODEX_MODEL`, `DEFAULT_SOL_EFFORT`, `SOL_EFFORTS`,
+  `CODEX_REASONING`, `CLAUDE_EFFORTS` (re-export) and `SOL_EFFORT_USAGE`
+  (now `IMPLEMENTER_EFFORT_USAGE`).
+
 ### Changed
 
 - Presentation boundary: `ringi run` and `scripts/agent-review-loop.mjs`

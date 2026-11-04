@@ -150,8 +150,7 @@ The profile's `implementer` and `reviewer` sections (see
 [profile.md](profile.md#implementer)) choose the provider, model, effort
 and review profiles; without them the core defaults apply. CLI options
 `--implementer-model`, `--implementer-effort` and `--review-profile`
-override these values within the profile's allowlists (`--codex-model` and
-`--sol-effort` are deprecated aliases of the first two). In the default `reviewer`, the review
+override these values within the profile's allowlists. In the default `reviewer`, the review
 profile `critical` (default) has two attempts and may fall back to the
 second model only for model unavailability, capacity or usage limit errors;
 other profiles have a single attempt.
@@ -325,7 +324,7 @@ writer module from a profile's `providerModules`, whatever it declares; the
   (stage `implementer` before the round, `post-implementer` after it): when Git ignores
   `.claude/`, such files would not be seen by the working-tree checks.
 - **Permission denials.** The `permission_denials` of the result envelope
-  (tool calls the CLI denied) are stored in the round's `solExecution` as
+  (tool calls the CLI denied) are stored in the round's `implementer.execution` as
   `permissionDenials: { count, entries: [{ toolName, toolInput }] }`, at
   most 20 entries, `toolInput` as redacted JSON of at most 500 characters;
   `null` when the envelope has none.
@@ -523,7 +522,7 @@ one reviewer per lane instead of one reviewer:
 - **Completeness.** The stage waits for every lane and expects one valid
   result per lane. A lane whose reviewer failed, timed out or returned no
   valid result stops the run with that lane's own stop code (for example
-  `CLAUDE_PROCESS_FAILED`, `TIMEOUT`, `INVALID_AGENT_OUTPUT`,
+  `REVIEWER_PROCESS_FAILED`, `TIMEOUT`, `INVALID_AGENT_OUTPUT`,
   `SNAPSHOT_CHANGED`) and the report's `lane` field. When several lanes
   fail, a stop that is not resumable comes first, then the profile's lane
   order. No partial result is merged. For `SNAPSHOT_CHANGED` and
@@ -825,7 +824,7 @@ During the writer round, `PATH` starts with a directory of guard scripts:
 
 After the preflight validation, a run (other than `--dry-run`) creates its
 run directory and writes
-`.agent-review-loop/runs/<runId>/report.json` with `schemaVersion: 1`,
+`.agent-review-loop/runs/<runId>/report.json` with `schemaVersion: 2`,
 per-round JSON files and bounded, redacted diagnostic logs. Once the profile
 is valid, the report and the dry-run plan also carry `taskSchemaVersion`, the
 `version` of the profile's task schema. `status` is
@@ -833,13 +832,9 @@ is valid, the report and the dry-run plan also carry `taskSchemaVersion`, the
 The roles appear under the neutral fields `implementer` and `reviewer`
 (provider, model, effort, review profile, attempt count) in the report, in
 the dry-run plan's `agents` (a run report has no `agents`) and in the
-`metadata` event; the earlier provider-specific fields
-(`sol`, `agents.codex*`, `agents.claude*`, `findings.rejectedByCodex`) stay
-as aliases with equal values. In each round, `implementer` and `reviewer`
-only name the keys that hold the agent outputs (`rounds[].codex`,
-`rounds[].claude`), so the outputs are not stored twice. The aliases name
-the role, not the provider: with Claude Code as implementer, `sol` and
-`codex*` describe the Claude Code writer. The full list is in
+`metadata` event. In each round, `implementer` and `reviewer` carry the
+role's `provider`, its validated `output`, stored once, and its `execution`. The provider-specific fields of 1.x are removed (see
+[migration-2.0.md](migration-2.0.md)). The full list is in
 [profile.md](profile.md#report-fields).
 `--dry-run` performs the preflight and prints a plan with status `DRY_RUN_OK`
 without starting agents; this plan has no `publicationApproved` field.
@@ -859,13 +854,13 @@ is in [contract.md](contract.md#stop-codes)):
 
 | Stage | Codes |
 | --- | --- |
-| Options and profile | `INVALID_CONFIGURATION`, `INVALID_TASK_MODE`, `INVALID_REVIEW_PROFILE`, `INVALID_CODEX_MODEL`, `INVALID_SOL_EFFORT`, `PROVIDER_ROLE_NOT_ALLOWED`, `RUNNER_MODIFIED` (a module of the runner's import graph changed during the run or cannot be read; the primary code; see [cli.md](cli.md)), `PROFILE_MODIFIED` (`ringi.config.mjs` or a module it imports changed during the run; see [profile.md](profile.md#protection-of-ringiconfigmjs)), `PROFILE_UNCOMMITTED` (`ringi run` only: `ringi.config.mjs` or a module it imports is not committed or differs from `HEAD`; a stop before the run) |
+| Options and profile | `INVALID_CONFIGURATION`, `INVALID_TASK_MODE`, `INVALID_REVIEW_PROFILE`, `INVALID_IMPLEMENTER_MODEL`, `INVALID_IMPLEMENTER_EFFORT`, `PROVIDER_ROLE_NOT_ALLOWED`, `RUNNER_MODIFIED` (a module of the runner's import graph changed during the run or cannot be read; the primary code; see [cli.md](cli.md)), `PROFILE_MODIFIED` (`ringi.config.mjs` or a module it imports changed during the run; see [profile.md](profile.md#protection-of-ringiconfigmjs)), `PROFILE_UNCOMMITTED` (`ringi run` only: `ringi.config.mjs` or a module it imports is not committed or differs from `HEAD`; a stop before the run) |
 | Repository | `WRONG_REPOSITORY`, `PROTECTED_BRANCH`, `DETACHED_HEAD`, `STAGED_CHANGES`, `UNEXPECTED_GIT_MUTATION` |
 | Task | `INVALID_TASK`, `INVALID_TASK_CLASS`, `INVALID_TASK_PATH`, `TASK_PATH_ESCAPE`, `UNSUPPORTED_CHECK`, `INVALID_ANALYSIS_REVIEW_FILES` |
 | Environment | `MISSING_EXECUTABLE`, `INVALID_PACKAGE_MANAGER`, `PNPM_CACHE_MISSING`, `PNPM_VERSION_MISMATCH`, `DEPENDENCY_STATE_STALE`, `DEPENDENCY_MANIFEST_MISMATCH`, `IMPLEMENTER_PREFLIGHT_FAILED`, `REVIEWER_PREFLIGHT_FAILED` |
 | Integrity | `SECRET_DETECTED`, `DEPENDENCY_INPUT_CHANGED`, `DEPENDENCY_METADATA_CHANGED`, `COREPACK_CACHE_CHANGED`, `WORKING_TREE_CHANGED`, `SNAPSHOT_CHANGED`, `PATH_ESCAPE`, `SYMLINK_ESCAPE`, `SNAPSHOT_TOO_LARGE`, `DOCS_CANDIDATE_REJECTED`, `ANALYSIS_WORKING_TREE_WRITE`, `IMPLEMENTER_SCRATCH_NOT_EMPTY`, `IMPLEMENTER_PROCESS_SURVIVED` |
 | Gates | `CHECK_FAILED`, `TIMEOUT`, `INTERRUPTED` |
-| Agents | `PROCESS_FAILED`, `INVALID_AGENT_OUTPUT`, `OUTPUT_LIMIT_EXCEEDED`, `CLAUDE_PROCESS_FAILED`, `CLAUDE_FALLBACK_FAILED`, `PROVIDER_CONTRACT_VIOLATION` |
+| Agents | `PROCESS_FAILED`, `INVALID_AGENT_OUTPUT`, `OUTPUT_LIMIT_EXCEEDED`, `REVIEWER_PROCESS_FAILED`, `REVIEWER_FALLBACK_FAILED`, `PROVIDER_CONTRACT_VIOLATION` |
 | Decision | `HUMAN_DECISION_REQUIRED`, `FINDING_DISPUTE`, `MAX_ROUNDS` |
 | Other | `CLEANUP_FAILED`, `UNEXPECTED_ERROR` |
 

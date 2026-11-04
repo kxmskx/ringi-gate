@@ -155,83 +155,83 @@
         }
       }
     },
-    "argv [\"task.md\",\"--codex-model\",\"bad model\"]": {
+    "argv [\"task.md\",\"--implementer-model\",\"bad model\"]": {
       "header": {
         "status": 2,
         "errors": [
-          "Opcja --codex-model wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).",
-          "Opcja --codex-model wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny)."
+          "Opcja --implementer-model wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny).",
+          "Opcja --implementer-model wymaga pojedynczego identyfikatora (1–128 znaków ASCII: litery, cyfry, kropka, podkreślenie, myślnik; początek alfanumeryczny)."
         ]
       },
       "subtrees": {
         "parsed": {
-          "sha256": "1cc8a9a00af0a849dc5dc681e1cec70e14781ad0d5938dba3ac8b7a24d94fa8b"
+          "sha256": "a139516e6050ae3c3e9a0808c9b300593fc549ba79293ad5cba970fa897a65e5"
         },
         "stdout": {
           "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
         },
         "stderr": {
-          "sha256": "6e0bca430f062ecb0a6f7f1d19597f1889113374407ce7873049c45aed0c397d"
+          "sha256": "fc12471ea630306714fcd01d4a42411bec6ee588e2a17583df7a7ddd0297879c"
         }
       }
     },
-    "argv [\"task.md\",\"--codex-model=a\",\"--codex-model=b\"]": {
+    "argv [\"task.md\",\"--implementer-model=a\",\"--implementer-model=b\"]": {
       "header": {
         "status": 2,
         "errors": [
-          "Opcję --codex-model można podać tylko raz.",
-          "Opcję --codex-model można podać tylko raz."
+          "Opcję --implementer-model można podać tylko raz.",
+          "Opcję --implementer-model można podać tylko raz."
         ]
       },
       "subtrees": {
         "parsed": {
-          "sha256": "057991fbc73a021d82d7d20fd9785f60d64863661b48882864ec017b7cf5f9fe"
+          "sha256": "028c07c6af3bb84c7e0ded11bba63a8dee6e6cba04cd07cadf9fa0032c29239b"
         },
         "stdout": {
           "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
         },
         "stderr": {
-          "sha256": "c01c4499f989d122f9d877f3d644abc278e03c1cfae7398cfd58ccb12dd78cae"
+          "sha256": "aa32973d89f2d9d7ee8f137f67444ffac89043c9e1a67a92f49b7caa5175ade4"
         }
       }
     },
-    "argv [\"task.md\",\"--sol-effort=bogus\"]": {
+    "argv [\"task.md\",\"--implementer-effort=bogus\"]": {
       "header": {
         "status": 2,
         "errors": [
-          "Opcja --sol-effort wymaga wartości medium, high, xhigh albo max.",
-          "Opcja --sol-effort wymaga wartości medium, high albo xhigh."
+          "Opcja --implementer-effort wymaga wartości medium, high, xhigh albo max.",
+          "Opcja --implementer-effort wymaga wartości medium, high albo xhigh."
         ]
       },
       "subtrees": {
         "parsed": {
-          "sha256": "46c5626b8e3f38644f0f2b71a6dacb149b304dd11626d5e0c1f119a1ab86baa6"
+          "sha256": "2a1e3f55e40b119f995550eda14937db8c12fb8560fe912aca6d9d8f412910a6"
         },
         "stdout": {
           "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
         },
         "stderr": {
-          "sha256": "1da545f18497f365f36deb98fd10c0b0879c4246ab53b01d9e399bb7cff1eba7"
+          "sha256": "06a7521672710d48c129f91c23a8da83b40f04a30d938b8da8193b5bd8544db6"
         }
       }
     },
-    "argv [\"task.md\",\"--sol-effort=high\",\"--sol-effort=max\"]": {
+    "argv [\"task.md\",\"--implementer-effort=high\",\"--implementer-effort=max\"]": {
       "header": {
         "status": 2,
         "errors": [
-          "Opcja --sol-effort ma sprzeczne wartości high i max.",
-          "Opcja --sol-effort wymaga wartości medium, high albo xhigh."
+          "Opcja --implementer-effort ma sprzeczne wartości high i max.",
+          "Opcja --implementer-effort wymaga wartości medium, high albo xhigh."
         ]
       },
       "subtrees": {
         "parsed": {
-          "sha256": "e0d0a12c0ba6e601bb01aa2c73c88c3840a28984516965c3db5c2ca79f456dd3"
+          "sha256": "6b259d498ab9431a806530561370046deb767d5493670bd4a026ac66bdeb23aa"
         },
         "stdout": {
           "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
         },
         "stderr": {
-          "sha256": "9b4c62f31da5a00bec5fbfa7da84b11d70cf7381718a459805b52d213f5acf79"
+          "sha256": "e2b6c789d338093c869dd61a4455c8d1c01af496a0296d5c98085cb8308a41c6"
         }
       }
     },

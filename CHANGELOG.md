@@ -7,6 +7,9 @@ is published by hand, without provenance; later versions are published by
 
 ## Unreleased
 
+- `SECURITY.md` states the supported versions: security fixes only for
+  the latest 2.x release.
+
 ## 2.0.0 — 2026-11-04
 
 The contract of 2.0 is in [docs/contract.md](docs/contract.md): the

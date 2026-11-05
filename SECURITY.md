@@ -1,5 +1,10 @@
 # Security policy
 
+## Supported versions
+
+Security fixes go only into the latest 2.x release. Versions 1.x and 0.x
+get no fixes; upgrade with [docs/migration-2.0.md](docs/migration-2.0.md).
+
 ## Reporting a vulnerability
 
 Do not put exploit details in a public issue, pull request or discussion.
